@@ -40,6 +40,7 @@ export class Buddy {
   private nextWanderAt = Infinity
   private restUntil: number | undefined
   private queuedEmote: EmoteKind | undefined
+  private pendingSleep = false
   private resumeActivity: Activity = 'idle'
   private currentEmote: AnimationKey = 'idle'
   private changeListeners: Array<(v: BuddyView) => void> = []
@@ -101,6 +102,13 @@ export class Buddy {
     for (const l of this.changeListeners) l(v)
   }
   private scheduleWander(): void { this.nextWanderAt = this.now + this.rand(this.wander) }
+  private applyThinkingIfRestful(): void {
+    if (this.mood === 'thinking' && RESTFUL.includes(this.activity)) {
+      this.resumeActivity = this.activity
+      this.currentEmote = 'emote_thinking'
+      this.activity = 'emoting'
+    }
+  }
   private startMove(target: number, run: boolean, commanded: boolean): void {
     this.targetX = clamp01(target)
     this.commanded = commanded
@@ -146,6 +154,16 @@ export class Buddy {
     this.targetX = undefined
     const wasCommanded = this.commanded
     this.commanded = false
+    if (this.pendingSleep) {
+      this.pendingSleep = false
+      this.queuedEmote = undefined
+      this.asleep = true
+      this.activity = 'sleeping'
+      this.restUntil = undefined
+      for (const l of this.arriveListeners) l()
+      this.emit()
+      return
+    }
     if (this.panelOpen) {
       this.activity = 'projecting'
     } else if (this.queuedEmote) {
@@ -156,13 +174,15 @@ export class Buddy {
       this.beginEmote(kind)
     } else if (wasCommanded) {
       this.activity = 'idle'
-      this.scheduleWander()
+      this.applyThinkingIfRestful()
+      if (this.activity === 'idle') this.scheduleWander()
     } else {
       const pick = this.rng()
       const restLen = this.rand(this.rest)
       if (pick < 1 / 3) { this.activity = 'idle'; this.nextWanderAt = this.now + restLen }
       else if (pick < 2 / 3) { this.activity = 'sitting'; this.restUntil = this.now + restLen }
       else { this.activity = 'looking'; this.restUntil = this.now + restLen }
+      this.applyThinkingIfRestful()
     }
     for (const l of this.arriveListeners) l()
     this.emit()
@@ -176,6 +196,7 @@ export class Buddy {
     }
     if (this.activity === 'hopping' || this.activity === 'emoting') {
       this.activity = this.resumeActivity
+      this.applyThinkingIfRestful()
       if (this.activity === 'idle') this.scheduleWander()
       this.emit()
       return
@@ -184,6 +205,7 @@ export class Buddy {
       this.activity = 'idle'
       this.nextWanderAt = this.restUntil ?? this.now + this.rand(this.wander)
       this.restUntil = undefined
+      this.applyThinkingIfRestful()
       this.emit()
     }
   }
@@ -196,8 +218,9 @@ export class Buddy {
   }
 
   emote(kind: EmoteKind): void {
+    if (this.asleep) return
     if (kind === 'thinking') { this.setMood('thinking'); return }
-    if (this.asleep || this.activity === 'projecting') return
+    if (this.activity === 'projecting') return
     if (this.activity === 'walking' || this.activity === 'running') { this.queuedEmote = kind; return }
     this.beginEmote(kind)
     this.emit()
@@ -243,11 +266,19 @@ export class Buddy {
   closePanel(): void {
     this.panelOpen = false
     this.lastInteractionAt = this.now
-    if (this.activity === 'projecting') { this.activity = 'idle'; this.scheduleWander() }
+    if (this.activity === 'projecting') {
+      this.activity = 'idle'
+      this.applyThinkingIfRestful()
+      if (this.activity === 'idle') this.scheduleWander()
+    }
     this.emit()
   }
   sleep(): void {
     if (this.panelOpen) return
+    if (this.activity === 'walking' || this.activity === 'running') {
+      this.pendingSleep = true
+      return
+    }
     this.asleep = true
     this.activity = 'sleeping'
     this.targetX = undefined
@@ -259,7 +290,8 @@ export class Buddy {
     this.asleep = false
     this.activity = 'idle'
     this.lastInteractionAt = this.now
-    this.scheduleWander()
+    this.applyThinkingIfRestful()
+    if (this.activity === 'idle') this.scheduleWander()
     this.emit()
   }
   interact(): void {

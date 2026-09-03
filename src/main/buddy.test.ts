@@ -53,6 +53,19 @@ describe('Buddy wander', () => {
     b.tick(68000)
     expect(['walking', 'running']).toContain(b.view().state.activity)
   })
+  it('a wander rest can land on looking; oneShotDone ends it, then a later wander resumes', () => {
+    // rng order: tick#1 wander interval, wander target, arrival rest kind, arrival rest length, tick(13000) wander target
+    const b = new Buddy({ rng: seq([0, 0.9, 0.9, 0, 0.9]), initialX: 0 })
+    b.tick(0); b.tick(8000)
+    b.arrived()                       // rest kind 0.9 -> looking, rest 0 -> 5000 ms -> restUntil 13000
+    expect(b.view().state.activity).toBe('looking')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('idle')
+    b.tick(12999)
+    expect(b.view().state.activity).toBe('idle')
+    b.tick(13000)
+    expect(['walking', 'running']).toContain(b.view().state.activity)
+  })
 })
 
 describe('Buddy commands', () => {
@@ -147,6 +160,44 @@ describe('Buddy emotes and moods', () => {
     b.oneShotDone()
     expect(b.view().state.activity).toBe('idle')
   })
+  it('emote(look) plays the look pose from idle and returns to idle', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0)
+    b.emote('look')
+    expect(b.view().state.activity).toBe('looking')
+    expect(b.view().animation).toBe('look')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('idle')
+  })
+  it('thinking set while walking becomes visible once he settles on arrival', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0)
+    b.goTo(0.6)
+    expect(b.view().state.activity).toBe('walking')
+    b.setMood('thinking')
+    expect(b.view().state.activity).toBe('walking')   // still finishing the move
+    b.arrived()
+    expect(b.view().animation).toBe('emote_thinking')
+  })
+  it('emote(thinking) while running becomes visible on arrival and clears on calm', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0)
+    b.goTo(0.9, true)
+    expect(b.view().state.activity).toBe('running')
+    b.emote('thinking')
+    b.arrived()
+    expect(b.view().animation).toBe('emote_thinking')
+    b.setMood('calm')
+    expect(b.view().state.activity).toBe('idle')
+  })
+  it('emote(thinking) while asleep is a no-op', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0)
+    b.sleep()
+    expect(b.view().state.asleep).toBe(true)
+    b.emote('thinking')
+    expect(b.view().state.mood).toBe('calm')
+  })
 })
 
 describe('Buddy sleep', () => {
@@ -181,5 +232,22 @@ describe('Buddy sleep', () => {
     expect(n).toBe(0)
     b.goTo(0.9)
     expect(n).toBe(1)
+  })
+  it('sleep() during a move finishes the move, fires onArrive, then sleeps', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    let arrives = 0
+    b.onArrive(() => arrives++)
+    b.tick(0)
+    b.goTo(0.9)
+    expect(b.view().state.activity).toBe('running')
+    b.sleep()
+    expect(b.view().state.activity).toBe('running')
+    expect(b.view().state.asleep).toBe(false)
+    b.arrived()
+    expect(arrives).toBe(1)
+    expect(b.view().state.asleep).toBe(true)
+    expect(b.view().animation).toBe('sleep')
+    b.interact()
+    expect(b.view().state.asleep).toBe(false)
   })
 })
