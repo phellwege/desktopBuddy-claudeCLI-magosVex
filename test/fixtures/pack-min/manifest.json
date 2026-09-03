@@ -1,0 +1,5 @@
+{ "name": "Fixture", "packVersion": 1, "scale": 1,
+  "theme": { "accent": "#fff", "glow": "#eee", "background": "#000", "text": "#fff", "font": "monospace", "glyph": "dot" },
+  "persona": { "promptFile": "persona.md", "defaultMood": "calm",
+               "lines": { "greeting": ["hi"], "wake": ["up"] } },
+  "voice": null }

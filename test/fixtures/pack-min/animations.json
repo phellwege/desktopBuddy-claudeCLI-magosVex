@@ -1,0 +1,3 @@
+{ "idle": { "frames": ["a0", "a1"] },
+  "walk": { "right": ["w0"] },
+  "sit":  { "frames": ["s0"], "fps": 2 } }
