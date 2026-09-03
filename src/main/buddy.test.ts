@@ -1,0 +1,185 @@
+import { describe, it, expect } from 'vitest'
+import { Buddy } from './buddy'
+
+function seq(values: number[]) {
+  let i = 0
+  return () => values[i++ % values.length] ?? 0
+}
+// rng consumption order: tick#1 -> wander interval; wander -> target; arrival -> rest kind, rest length
+
+describe('Buddy wander', () => {
+  it('does nothing before the first wander time, then moves', () => {
+    const b = new Buddy({ rng: seq([0, 0.9]), initialX: 0 })
+    b.tick(0)
+    b.tick(7999)
+    expect(b.view().state.activity).toBe('idle')
+    b.tick(8000)
+    const v = b.view()
+    expect(v.state.activity).toBe('running')
+    expect(v.state.targetX).toBeCloseTo(0.9)
+    expect(v.state.facing).toBe('right')
+    expect(v.animation).toBe('run')
+    expect(v.speed).toBe(0.25)
+  })
+  it('walks when the target is near', () => {
+    const b = new Buddy({ rng: seq([0, 0.1]), initialX: 0 })
+    b.tick(0); b.tick(8000)
+    expect(b.view().state.activity).toBe('walking')
+    expect(b.view().speed).toBe(0.08)
+  })
+  it('rests on arrival then wanders again', () => {
+    const b = new Buddy({ rng: seq([0, 0.9, 0.5, 0, 0, 0.2]), initialX: 0 })
+    b.tick(0); b.tick(8000)
+    b.arrived()                       // rest kind 0.5 -> sitting, rest 0 -> 5000 ms
+    expect(b.view().state.x).toBeCloseTo(0.9)
+    expect(b.view().state.activity).toBe('sitting')
+    expect(b.view().state.targetX).toBeUndefined()
+    b.tick(12999)
+    expect(b.view().state.activity).toBe('sitting')
+    b.tick(13000)                     // rest over -> idle, next wander at +8000
+    expect(b.view().state.activity).toBe('idle')
+    b.tick(21000)
+    expect(['walking', 'running']).toContain(b.view().state.activity)
+  })
+  it('does not wander while the panel is open, resumes after close', () => {
+    const b = new Buddy({ rng: seq([0]), initialX: 0.5 })
+    b.tick(0)
+    b.openPanel()
+    expect(b.view().state.activity).toBe('projecting')
+    b.tick(60000)
+    expect(b.view().state.activity).toBe('projecting')
+    b.closePanel()
+    expect(b.view().state.activity).toBe('idle')
+    b.tick(68000)
+    expect(['walking', 'running']).toContain(b.view().state.activity)
+  })
+})
+
+describe('Buddy commands', () => {
+  it('goTo clamps, faces, runs when asked, and idles on arrival', () => {
+    const b = new Buddy({ rng: seq([0]), initialX: 0.5 })
+    b.tick(0)
+    b.goTo(1.7, true)
+    expect(b.view().state.targetX).toBe(1)
+    expect(b.view().state.activity).toBe('running')
+    expect(b.view().state.facing).toBe('right')
+    b.arrived()
+    expect(b.view().state.activity).toBe('idle')
+    expect(b.view().state.x).toBe(1)
+  })
+  it('goTo without run picks walk or run by distance', () => {
+    const b = new Buddy({ rng: seq([0]), initialX: 0.5 })
+    b.tick(0)
+    b.goTo(0.4)
+    expect(b.view().state.activity).toBe('walking')
+    expect(b.view().state.facing).toBe('left')
+    b.arrived()
+    b.goTo(0.0)
+    expect(b.view().state.activity).toBe('running')
+  })
+  it('fires arrive listeners', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    let n = 0
+    b.onArrive(() => n++)
+    b.tick(0); b.goTo(0.1); b.arrived()
+    expect(n).toBe(1)
+  })
+})
+
+describe('Buddy emotes and moods', () => {
+  it('plays a one-shot emote from idle and returns to idle', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0)
+    b.emote('confused')
+    expect(b.view().state.activity).toBe('emoting')
+    expect(b.view().animation).toBe('emote_confused')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('idle')
+  })
+  it('returns to sitting after an emote started while sitting', () => {
+    const b = new Buddy({ rng: seq([0, 0.9, 0.5, 0]), initialX: 0 })
+    b.tick(0); b.tick(8000); b.arrived()
+    expect(b.view().state.activity).toBe('sitting')
+    b.emote('happy')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('sitting')
+  })
+  it('queues an emote behind movement', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0); b.goTo(0.6)
+    b.emote('alarmed')
+    expect(b.view().state.activity).toBe('walking')
+    b.arrived()
+    expect(b.view().animation).toBe('emote_alarmed')
+  })
+  it('drops emotes while projecting but still changes mood', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0); b.openPanel()
+    b.emote('happy')
+    expect(b.view().animation).toBe('project')
+    b.setMood('happy')
+    expect(b.view().state.mood).toBe('happy')
+    expect(b.view().animation).toBe('project')
+  })
+  it('thinking replaces the project pose while projecting', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0); b.openPanel()
+    b.setMood('thinking')
+    expect(b.view().animation).toBe('emote_thinking')
+    b.setMood('calm')
+    expect(b.view().animation).toBe('project')
+  })
+  it('thinking loops from idle until the mood changes', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0)
+    b.setMood('thinking')
+    expect(b.view().animation).toBe('emote_thinking')
+    expect(b.view().state.activity).toBe('emoting')
+    b.setMood('calm')
+    expect(b.view().state.activity).toBe('idle')
+  })
+  it('hop plays hop then fall', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0); b.emote('hop')
+    expect(b.view().animation).toBe('hop')
+    b.oneShotDone()
+    expect(b.view().animation).toBe('fall')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('idle')
+  })
+})
+
+describe('Buddy sleep', () => {
+  it('sleeps after the quiet period and wakes on interaction', () => {
+    const b = new Buddy({ rng: seq([0]), wanderIntervalMs: [1e9, 1e9] })   // never wanders in this test
+    b.tick(0)
+    b.tick(599999)
+    expect(b.view().state.asleep).toBe(false)
+    b.tick(600000)
+    expect(b.view().state.asleep).toBe(true)
+    expect(b.view().animation).toBe('sleep')
+    b.tick(700000)
+    expect(b.view().state.activity).toBe('sleeping')
+    b.interact()
+    expect(b.view().state.asleep).toBe(false)
+    expect(b.view().state.activity).toBe('idle')
+  })
+  it('sleep() is ignored while the panel is open, wake() restores idle', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    b.tick(0); b.openPanel(); b.sleep()
+    expect(b.view().state.asleep).toBe(false)
+    b.closePanel(); b.sleep()
+    expect(b.view().state.asleep).toBe(true)
+    b.wake()
+    expect(b.view().state.activity).toBe('idle')
+  })
+  it('emits change events only when the view changes', () => {
+    const b = new Buddy({ rng: seq([0]) })
+    let n = 0
+    b.onChange(() => n++)
+    b.tick(0); b.tick(100); b.tick(200)
+    expect(n).toBe(0)
+    b.goTo(0.9)
+    expect(n).toBe(1)
+  })
+})
