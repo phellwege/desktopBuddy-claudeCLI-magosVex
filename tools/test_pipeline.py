@@ -236,6 +236,7 @@ def test_real_sheet_bands_match_rows(tmp_path):
     for name, f in atlas["frames"].items():
         assert 0 < f["ay"] <= f["h"] and 0 <= f["ax"] <= f["w"], name
     assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"] and "run_left_3" in atlas["frames"]
+    assert "rest_3" in atlas["frames"]
 
     # at 2x nearest-upscale, the "each" mode bands (faces, props) must not pick up
     # antialiasing/glow specks that only clear the min_px floor because of the upscale.
