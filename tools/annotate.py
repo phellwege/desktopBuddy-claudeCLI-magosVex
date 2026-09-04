@@ -29,6 +29,7 @@ HOST = "127.0.0.1"
 PORT = 7861
 UPSCALE = 3
 MARGIN = segment_sam.MARGIN_1X  # 40px - same margin used for the viewer crop and re-segment
+VIEW_MARGIN = 28  # px around the selected frame in the viewer crop; neighbors only show at the edges
 
 COLORS = [(255, 80, 80), (80, 200, 255), (120, 255, 120), (255, 220, 80),
           (200, 120, 255), (255, 150, 60), (100, 255, 220), (255, 100, 200)]
@@ -133,6 +134,20 @@ class App:
         return (max(0, int(x0) - MARGIN), max(0, int(y0) - MARGIN),
                 min(w, int(x1) + MARGIN), min(h, int(y1) + MARGIN))
 
+    def view_rect(self, name: str) -> tuple[int, int, int, int]:
+        """The viewer's crop for one frame: its current mask's bounding box (or its prompt
+        box if the mask is empty) plus VIEW_MARGIN px, clamped to the sheet. Tight enough
+        that the selected frame fills the view and neighbors only appear at the edges."""
+        h, w = self.alpha.shape
+        mask = self.frame_mask(name)
+        ys, xs = np.where(mask)
+        if ys.size:
+            x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+        else:
+            x0, y0, x1, y1 = (int(round(v)) for v in self.data["frames"][name]["box"])
+        return (max(0, x0 - VIEW_MARGIN), max(0, y0 - VIEW_MARGIN),
+                min(w, x1 + VIEW_MARGIN), min(h, y1 + VIEW_MARGIN))
+
     # -- SAM re-segment ----------------------------------------------------------------
 
     def resegment(self, name: str) -> None:
@@ -203,7 +218,7 @@ def _tint(crop: np.ndarray, mask: np.ndarray, color: tuple[int, int, int], amoun
 
 def render_band_crop(app: App, name: str) -> np.ndarray:
     band = app.frame_band[name]
-    cx0, cy0, cx1, cy1 = app.band_crop_rect(band)
+    cx0, cy0, cx1, cy1 = app.view_rect(name)
     crop = app.rgb[cy0:cy1, cx0:cx1].copy()
     for i in range(band["count"]):
         fname = f"{band['name']}_{i}"
@@ -272,8 +287,7 @@ def on_next(name: str) -> str:
 
 def on_image_click(name: str, click_type: str, evt: gr.SelectData):
     app = APP
-    band = app.frame_band[name]
-    cx0, cy0, cx1, cy1 = app.band_crop_rect(band)
+    cx0, cy0, cx1, cy1 = app.view_rect(name)
     dx, dy = evt.index
     sx = cx0 + dx / UPSCALE
     sy = cy0 + dy / UPSCALE
