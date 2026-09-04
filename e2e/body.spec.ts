@@ -1,4 +1,13 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { OVERLAY_HEIGHT } from '../src/main/geometry'
+
+// Mirrors overlayBounds()'s own max(OVERLAY_HEIGHT, charH + 24) so this assertion tracks
+// the pack's real atlas instead of hard-coding a height that only held for the old,
+// always-260 window (which clipped this very pack's 326px-tall 2x frames).
+const atlas = JSON.parse(readFileSync(join(__dirname, '../packs/mechanicus/atlas.json'), 'utf8')) as { maxFrameSize: [number, number] }
+const expectedOverlayHeight = Math.max(OVERLAY_HEIGHT, atlas.maxFrameSize[1] + 24)
 
 async function windowByUrl(app: ElectronApplication, part: string): Promise<Page> {
   await expect.poll(() => app.windows().filter(w => w.url().includes(part)).length, { timeout: 15000 }).toBe(1)
@@ -31,7 +40,7 @@ test('overlay sits on the work area bottom, panel opens, /goto moves him, Escape
     return { b: w.getBounds(), wa: screen.getPrimaryDisplay().workArea }
   })
   expect(geo.b.width).toBe(geo.wa.width)
-  expect(geo.b.height).toBe(260)
+  expect(geo.b.height).toBe(expectedOverlayHeight)
   expect(geo.b.y + geo.b.height).toBe(geo.wa.y + geo.wa.height)
 
   await electronApp.evaluate(({ ipcMain }) => { ipcMain.emit('overlay:click') })
