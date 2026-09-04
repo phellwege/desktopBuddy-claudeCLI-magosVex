@@ -619,3 +619,16 @@ displayed. Consequences:
   feature. Summaries are cached per message. Cost is one Haiku turn per click.
 - Canned pack lines (greeting, permission card, errors) remain in character; they
   never come from Claude.
+
+## 20. Amendment 2026-09-04: projection cone from the servo skull
+
+The hologram is cast from the character's floating servo skull. Each atlas frame carries
+an optional `origin: [ox, oy]` (crop-local) found by the pipeline as the highest
+bone-colored blob and overridable per frame in the annotator. The overlay reports the
+origin's screen position while the panel is open; main converts it to hologram-window
+coordinates. The hologram window spans from above the panel down into the character's
+upper body, is click-through outside the panel, and draws a canvas cone of jittered
+light lines from the origin to the panel edge in the pack's accent color, ported from
+the user's portfolio `ProjectionOverlay.js` (flicker, distance fade, scan pulse,
+interior mask, source-oriented border glow, source glow). Plan:
+`docs/superpowers/plans/2026-09-04-projection-cone.md`.
