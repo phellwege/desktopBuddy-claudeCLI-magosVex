@@ -36,3 +36,10 @@ Items the final whole-branch review and the per-task reviews deferred. Address i
 - Persona readback (spec section 19): displayed text unaltered; speaker button summarizes in character via a one-shot claude -p --model haiku, spoken by the voice layer.
 - segment_sam._safe_crop_bounds clamps the automatic SAM crop to sibling bands; allow overlap up to the panel border.
 - hide_1 annotation is nearly empty (unused by animations).
+
+## Projection cone addendum (merged 2026-09-04 at 22047c6)
+Deferred minors from its reviews:
+- minor (deferred): cone mask/glow radius 12 vs panel border-radius 4; #panel top:0 clips shadows; canvas not DPR-scaled; 280 gradients per frame; overlay forces layout per frame while panel open; work areas narrower than 720 px overflow; panel overlaps character on work areas under ~706 px tall; rAF stop relies on document.hidden only; reopen shows the previous origin for one frame; cone.test perimeter check weak; e2e width assertion restates the constant; baked flipped origin uses w-1-ox vs renderer w-ox (1 px, moot with explicit left frames).
+- Final fixes 91a60df, 85d7d79 re-reviewed clean. minor (deferred): stale renderer hover flag on reopen with the pointer already over the panel (first click falls through until a mouse move). Pack commits e1ca075, 22047c6 from Peter's annotation saves. Branch ready to merge at 22047c6.
+- Stale renderer hover flag on reopen with the pointer already over the panel (first click falls through until a mouse move).
+- Auto origin detection picks bone-colored effects (the ? bubble, sparkles) over the skull in a few frames; annotator overrides cover the current pack.
