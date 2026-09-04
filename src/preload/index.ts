@@ -1,9 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { CH, type BuddyBridge } from '../shared/ipc'
+import { makeOn } from './bridge'
 
-const on = <T,>(channel: string) => (cb: (p: T) => void) => {
-  ipcRenderer.on(channel, (_e, payload: T) => cb(payload))
-}
+const on = makeOn(ipcRenderer)
 
 const bridge: BuddyBridge = {
   onPackLoaded: on(CH.packLoaded),

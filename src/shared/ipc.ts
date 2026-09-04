@@ -34,21 +34,21 @@ export interface ChatSystemPayload { text: string }
 export interface ThemePayload extends PackTheme { name: string }
 
 export interface BuddyBridge {
-  onPackLoaded(cb: (p: PackLoadedPayload) => void): void
-  onBuddyState(cb: (p: BuddyStatePayload) => void): void
+  onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
+  onBuddyState(cb: (p: BuddyStatePayload) => void): () => void
   overlayReady(): void
   hover(over: boolean): void
   click(): void
   contextMenu(x: number, y: number): void
   arrived(): void
   oneShotDone(): void
-  onTheme(cb: (p: ThemePayload) => void): void
-  onChatDelta(cb: (p: ChatDeltaPayload) => void): void
-  onChatActivity(cb: (p: ChatActivityPayload) => void): void
-  onChatDone(cb: (p: ChatDonePayload) => void): void
-  onChatPermission(cb: (p: ChatPermissionPayload) => void): void
-  onChatStatus(cb: (p: ChatStatusPayload) => void): void
-  onChatSystem(cb: (p: ChatSystemPayload) => void): void
+  onTheme(cb: (p: ThemePayload) => void): () => void
+  onChatDelta(cb: (p: ChatDeltaPayload) => void): () => void
+  onChatActivity(cb: (p: ChatActivityPayload) => void): () => void
+  onChatDone(cb: (p: ChatDonePayload) => void): () => void
+  onChatPermission(cb: (p: ChatPermissionPayload) => void): () => void
+  onChatStatus(cb: (p: ChatStatusPayload) => void): () => void
+  onChatSystem(cb: (p: ChatSystemPayload) => void): () => void
   hologramReady(): void
   prompt(text: string): void
   permissionAnswer(id: string, allow: boolean): void
