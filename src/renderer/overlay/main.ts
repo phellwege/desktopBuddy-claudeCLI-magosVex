@@ -112,7 +112,9 @@ document.addEventListener('mouseleave', () => { if (hovering) { hovering = false
 canvas.addEventListener('mousedown', (e) => { if (e.button === 0 && isOver(e.clientX, e.clientY)) window.buddy.click() })
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault()
-  if (isOver(e.clientX, e.clientY)) window.buddy.contextMenu(e.screenX, e.screenY)
+  // menu.popup({ window, x, y }) expects coordinates relative to the window's own content
+  // area, not the screen, so this must send clientX/clientY, not screenX/screenY.
+  if (isOver(e.clientX, e.clientY)) window.buddy.contextMenu(e.clientX, e.clientY)
 })
 
 window.buddy.overlayReady()

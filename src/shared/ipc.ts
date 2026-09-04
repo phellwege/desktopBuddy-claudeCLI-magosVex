@@ -39,6 +39,8 @@ export interface BuddyBridge {
   overlayReady(): void
   hover(over: boolean): void
   click(): void
+  /** x, y are window-content (client) coordinates, not screen coordinates - main passes
+   * them straight through to Menu.popup({ window, x, y }), which expects the former. */
   contextMenu(x: number, y: number): void
   arrived(): void
   oneShotDone(): void
