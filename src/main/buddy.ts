@@ -211,8 +211,10 @@ export class Buddy {
   }
 
   private beginEmote(kind: EmoteKind): void {
-    if (!RESTFUL.includes(this.activity) && this.activity !== 'emoting' && this.activity !== 'hopping') return
-    if (RESTFUL.includes(this.activity)) this.resumeActivity = this.activity
+    const from = this.activity
+    const eligible = RESTFUL.includes(from) || from === 'projecting' || from === 'emoting' || from === 'hopping'
+    if (!eligible) return
+    if (RESTFUL.includes(from) || from === 'projecting') this.resumeActivity = from
     this.currentEmote = EMOTE_ANIM[kind]
     this.activity = kind === 'hop' ? 'hopping' : kind === 'look' ? 'looking' : 'emoting'
   }
@@ -224,7 +226,6 @@ export class Buddy {
       this.setMood('thinking')
       return this.animation() !== before ? 'started' : 'dropped'
     }
-    if (this.activity === 'projecting') return 'dropped'
     if (this.activity === 'walking' || this.activity === 'running') { this.queuedEmote = kind; return 'queued' }
     this.beginEmote(kind)
     this.emit()
@@ -279,7 +280,7 @@ export class Buddy {
     this.emit()
   }
   sleep(): void {
-    if (this.panelOpen) return
+    if (this.panelOpen) this.closePanel()
     if (this.activity === 'walking' || this.activity === 'running') {
       this.pendingSleep = true
       return

@@ -20,7 +20,7 @@ export class ChatController implements ChatPort {
   private turnSerial = 0
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
-    settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void }) {
+    settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void; lines?: Record<string, string[]> }) {
     this.settings = { ...deps.settings }
   }
   get busy(): boolean { return this.running }
@@ -30,6 +30,13 @@ export class ChatController implements ChatPort {
   private settingsChanged(): void {
     this.deps.onSettingsChange?.({ ...this.settings })
     this.deps.out.status(this.status())
+  }
+  // Same random-pick semantics as pickLine (pack.ts), for the optional pack-line overrides
+  // on command confirmations (currently just /stop's "stopped" line).
+  private line(key: string, fallback: string): string {
+    const list = this.deps.lines?.[key]
+    if (!list || list.length === 0) return fallback
+    return list[Math.min(list.length - 1, Math.floor(Math.random() * list.length))] ?? fallback
   }
 
   prompt(text: string): void {
@@ -43,16 +50,43 @@ export class ChatController implements ChatPort {
   private run(cmd: Command): void {
     const a = this.deps.actions
     switch (cmd.kind) {
-      case 'goto': void a.goTo(cmd.x, { run: cmd.run }); break
-      case 'mood': a.setMood(cmd.mood); break
-      case 'emote': void a.emote(cmd.emote); break
-      case 'sleep': a.sleep(); break
-      case 'wake': a.wake(); break
-      case 'stop': this.stop(); break
+      case 'goto':
+        void a.goTo(cmd.x, { run: cmd.run })
+        this.deps.out.system(`${cmd.run ? 'running' : 'moving'} to ${Math.round(cmd.x * 100)}%`)
+        break
+      case 'mood':
+        a.setMood(cmd.mood)
+        this.deps.out.system(`mood: ${cmd.mood}`)
+        break
+      case 'emote':
+        void a.emote(cmd.emote)
+        this.deps.out.system(`emote: ${cmd.emote}`)
+        break
+      case 'sleep':
+        a.sleep()
+        this.deps.out.system('sleeping')
+        break
+      case 'wake':
+        a.wake()
+        this.deps.out.system('awake')
+        break
+      case 'stop':
+        this.stop()
+        this.deps.out.system(this.line('stopped', 'stopped'))
+        break
       case 'help': this.deps.out.system(HELP_TEXT); break
-      case 'new': this.turnSerial++; this.settings.sessionId = null; this.settingsChanged(); break
-      case 'cd': this.settings.workspace = cmd.path; this.settingsChanged(); break
-      case 'model': this.settings.model = cmd.model; this.settingsChanged(); break
+      case 'new':
+        this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
+        this.deps.out.system('new session')
+        break
+      case 'cd':
+        this.settings.workspace = cmd.path; this.settingsChanged()
+        this.deps.out.system(`workspace: ${cmd.path}`)
+        break
+      case 'model':
+        this.settings.model = cmd.model; this.settingsChanged()
+        this.deps.out.system(`model: ${cmd.model ?? 'default'}`)
+        break
     }
   }
 

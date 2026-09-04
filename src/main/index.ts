@@ -124,6 +124,10 @@ async function main(): Promise<void> {
   buddy.onChange((v) => {
     overlay.webContents.send(CH.buddyState, v)
     if (v.state.panelOpen && hologram.isVisible()) placeHologram()
+    // Buddy.sleep() can close the panel itself (panelOpen flips false) without going through
+    // Actions.closePanel, e.g. /sleep while a chat panel is open - the hologram window still
+    // needs hiding in that case.
+    else if (!v.state.panelOpen && hologram.isVisible()) host.hidePanel()
   })
   setInterval(() => buddy.tick(Date.now()), 250)
   buddy.tick(Date.now())

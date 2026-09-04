@@ -62,14 +62,14 @@ describe('Actions', () => {
     await p
     expect(resolved).toBe(true)
   })
-  it('emote while projecting resolves immediately', async () => {
+  it('emote while projecting plays, then resolves and returns to the project pose', async () => {
     const b = new Buddy({ rng: () => 0 }); b.tick(0)
     b.openPanel()
     const a = new Actions(b, host())
-    let resolved = false
-    const p = a.emote('happy').then(() => { resolved = true })
-    await Promise.resolve()
-    expect(resolved).toBe(true)
+    const p = a.emote('happy')
+    expect(b.view().animation).toBe('emote_happy')
+    b.oneShotDone()
     await p
+    expect(b.getState().activity).toBe('projecting')
   })
 })
