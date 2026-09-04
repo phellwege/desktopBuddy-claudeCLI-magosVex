@@ -166,11 +166,20 @@ class App:
         import torch
         band = self.frame_band[name]
         model, processor = self.model()
-        cx0, cy0, cx1, cy1 = self.band_crop_rect(band)
-        crop_rgb = self.rgb[cy0:cy1, cx0:cx1]
-        crop_h, crop_w = crop_rgb.shape[:2]
         meta = self.data["frames"][name]
         bx0, by0, bx1, by1 = self.prompt_box(name)
+        # The SAM crop is the band crop grown to cover the prompt box and every point,
+        # plus MARGIN, so a figure hugging a panel edge (or a click past it) is never
+        # cut off by the crop itself.
+        h, w = self.alpha.shape
+        cx0, cy0, cx1, cy1 = self.band_crop_rect(band)
+        ex0, ey0, ex1, ey1 = bx0, by0, bx1, by1
+        for px, py, _ in meta["points"]:
+            ex0, ey0, ex1, ey1 = min(ex0, px), min(ey0, py), max(ex1, px), max(ey1, py)
+        cx0, cy0 = min(cx0, max(0, int(ex0) - MARGIN)), min(cy0, max(0, int(ey0) - MARGIN))
+        cx1, cy1 = max(cx1, min(w, int(ex1) + MARGIN)), max(cy1, min(h, int(ey1) + MARGIN))
+        crop_rgb = self.rgb[cy0:cy1, cx0:cx1]
+        crop_h, crop_w = crop_rgb.shape[:2]
         local_box = [max(0.0, bx0 - cx0), max(0.0, by0 - cy0),
                      min(float(crop_w), bx1 - cx0), min(float(crop_h), by1 - cy0)]
         pts = [[p[0] - cx0, p[1] - cy0] for p in meta["points"]]
