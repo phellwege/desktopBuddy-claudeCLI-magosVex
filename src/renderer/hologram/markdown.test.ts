@@ -47,4 +47,9 @@ describe('renderMarkdown', () => {
     expect(html).not.toContain('<a ')
     expect(html).toContain('docs (https://example.com)')
   })
+  it('images render as plain text with the url, never an img tag', () => {
+    const html = renderMarkdown('look ![pic](https://example.com/a.png) and <img src="https://example.com/b.png">')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('pic (https://example.com/a.png)')
+  })
 })

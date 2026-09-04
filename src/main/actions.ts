@@ -27,28 +27,39 @@ const EMOTE_ANIMS = new Set(['emote_happy', 'emote_thinking', 'emote_confused', 
 export class Actions implements BuddyActions {
   constructor(private readonly buddy: Buddy, private readonly host: ActionHost) {}
 
+  // The move currently awaiting arrival, if any: a new commanded move supersedes it,
+  // which settles its promise and drops its timer and listener so a stale timeout can
+  // never force-complete the move that replaced it.
+  private pendingMove: (() => void) | undefined
+
   // Resolves on the overlay's arrival event, or after arrivalTimeoutMs if it never comes
   // (the overlay hidden, or a report lost): the wander scheduler must not stay stuck in
   // walking forever, so on timeout this settles the move itself and logs one line.
   goTo(xFraction: number, opts?: { run?: boolean }): Promise<void> {
     return new Promise((resolve) => {
+      this.pendingMove?.()
       const startX = this.buddy.getState().x
       let timer: ReturnType<typeof setTimeout> | undefined
-      const off = this.buddy.onArrive(() => {
+      let settled = false
+      const settle = (): void => {
+        if (settled) return
+        settled = true
         if (timer !== undefined) clearTimeout(timer)
         off()
+        if (this.pendingMove === settle) this.pendingMove = undefined
         resolve()
-      })
+      }
+      const off = this.buddy.onArrive(settle)
+      this.pendingMove = settle
       this.buddy.goTo(xFraction, opts?.run)
       const targetX = this.buddy.getState().targetX
-      if (targetX === undefined) { off(); resolve(); return }
+      if (targetX === undefined) { settle(); return }
       const distance = Math.abs(targetX - startX)
       const speed = this.buddy.view().speed
       timer = setTimeout(() => {
-        off()
-        this.buddy.arrived()
         this.host.log(`arrival timeout: goTo(${xFraction}) never reported arrival (distance ${distance.toFixed(3)}, speed ${speed})`)
-        resolve()
+        settle()
+        this.buddy.arrived()
       }, arrivalTimeoutMs(distance, speed))
     })
   }

@@ -92,4 +92,20 @@ describe('Actions', () => {
     expect(h.log).toHaveBeenCalledWith(expect.stringContaining('arrival timeout'))
     vi.useRealTimers()
   })
+  it('a new goTo supersedes the previous move: its promise settles and its timer never fires', async () => {
+    vi.useFakeTimers()
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    const h = host(); const a = new Actions(b, h)
+    const first = a.goTo(0.9)
+    const second = a.goTo(0.05)
+    await first
+    vi.advanceTimersByTime(arrivalTimeoutMs(0.4, RUN_SPEED) + 1)
+    expect(b.getState().activity).not.toBe('idle')
+    expect(b.getState().targetX).toBe(0.05)
+    expect(h.log).not.toHaveBeenCalled()
+    b.arrived()
+    await second
+    expect(b.getState().x).toBe(0.05)
+    vi.useRealTimers()
+  })
 })

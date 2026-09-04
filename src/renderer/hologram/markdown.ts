@@ -25,6 +25,10 @@ marked.use({
     link({ href, text }: { href: string; text: string }) {
       return `${text} (${href})`
     },
+    // Images would be a real fetch to whatever url the text named; show them the same way.
+    image({ href, text }: { href: string; text: string }) {
+      return `${text || 'image'} (${href})`
+    },
   },
 })
 
@@ -112,5 +116,5 @@ function escapeOutsideCode(md: string): string {
 
 export function renderMarkdown(md: string): string {
   const html = marked.parse(escapeOutsideCode(md), { async: false }) as string
-  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } })
+  return DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, FORBID_TAGS: ['img', 'picture', 'source', 'video', 'audio'] })
 }
