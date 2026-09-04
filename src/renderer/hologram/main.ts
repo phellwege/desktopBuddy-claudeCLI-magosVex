@@ -115,7 +115,10 @@ window.buddy.onChatDelta(({ text }) => {
 window.buddy.onChatActivity((a) => {
   let el = activities.get(a.id)
   if (!el) { el = document.createElement('div'); el.className = 'activity'; activities.set(a.id, el); (current ?? add('buddy', '')).insertAdjacentElement('afterend', el) }
-  el.textContent = a.label
+  // The tool_result event that marks a row done carries no label of its own (stream.ts's
+  // parseUser always emits label: ''); keep the running label visible instead of blanking
+  // the row out right as it finishes.
+  if (a.label) el.textContent = a.label
   if (a.done) el.classList.add('done')
 })
 window.buddy.onChatDone((p: ChatDonePayload) => {

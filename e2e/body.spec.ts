@@ -20,7 +20,11 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
 let app: ElectronApplication | undefined
 
 test.beforeEach(async () => {
-  app = await electron.launch({ args: ['.'], env: { ...process.env, BUDDY_TEST: '1' } })
+  // Pin the echo brain explicitly: this test's own "hello" reply assumes the echo brain's
+  // behavior, and without this override the app falls back to it only when it cannot find a
+  // real CLI at config.cliPath - on a machine where the real Claude Code CLI is installed at
+  // the default path, this test would otherwise spawn it for real, spending quota.
+  app = await electron.launch({ args: ['.'], env: { ...process.env, BUDDY_TEST: '1', BUDDY_BRAIN: 'echo' } })
 })
 
 test.afterEach(async () => {
