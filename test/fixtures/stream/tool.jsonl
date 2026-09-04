@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"s1","model":"m"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/a.ts"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"file contents"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"mcp__buddy__set_mood","input":{"mood":"happy"}}]}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"s1","result":"ok"}
