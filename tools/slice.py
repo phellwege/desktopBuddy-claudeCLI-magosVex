@@ -43,7 +43,13 @@ def components(alpha: np.ndarray, thr: int = 128, min_px: int = 4) -> list[Box]:
 def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict) -> list[tuple[Box, float]]:
     x0, x1 = (int(round(v * scale)) for v in band["x"])
     y0, y1 = (int(round(v * scale)) for v in band["y"])
+    ov = overrides.get(band["name"], {})
     sub = alpha[y0:y1, x0:x1]
+    if ov.get("erase"):
+        sub = sub.copy()
+        for ex0, ey0, ex1, ey1 in ov["erase"]:
+            ex0, ey0, ex1, ey1 = (int(round(v * scale)) for v in (ex0, ey0, ex1, ey1))
+            sub[max(0, ey0 - y0):ey1 - y0, max(0, ex0 - x0):ex1 - x0] = 0
     min_px = max(4, int(round(4 * scale * scale)))
     boxes = [b.shifted(x0, y0) for b in components(sub, min_px=min_px)]
     if band.get("each"):
@@ -53,7 +59,6 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict) -
     max_dx = MAX_DX_1X * scale
     bodies = sorted([b for b in boxes if b.h >= min_body_h], key=lambda b: b.cx)
     fragments = [b for b in boxes if b.h < min_body_h and b.w / max(b.h, 1) <= MAX_FRAGMENT_ASPECT]
-    ov = overrides.get(band["name"], {})
     keep = [i for i in range(len(bodies)) if i not in set(ov.get("drop", []))]
     groups: list[list[int]] = [[i] for i in keep]
     for merge in ov.get("merge", []):

@@ -103,6 +103,23 @@ def test_group_frames_each_mode():
     assert any(b.x0 == 55 and b.y0 == 10 and b.x1 == 95 and b.y1 == 18 for b in boxes)
 
 
+def test_group_frames_each_mode_erase_override_splits_touching_icons():
+    """Two 20x20 icons touching via a 1px-wide, 2px-tall bridge look like one component
+    by default; an "erase" override that blanks the bridge in the labeling copy (not the
+    source pixels) must split them back into two, since "each" mode has no merge/drop path."""
+    a = np.zeros((40, 60), dtype=np.uint8)
+    a[10:30, 5:25] = 255
+    a[10:30, 26:46] = 255
+    a[19:21, 25:26] = 255
+    band = {"name": "icons", "x": [0, 60], "y": [0, 40], "count": 0, "each": True}
+    frames = group_frames(a, band, 1.0, {})
+    assert len(frames) == 1
+    frames_erased = group_frames(a, band, 1.0, {"icons": {"erase": [[24, 18, 27, 22]]}})
+    assert len(frames_erased) == 2
+    # erase only affects the labeling copy: the source array is untouched
+    assert a[19, 25] == 255
+
+
 def test_build_each_mode_band(tmp_path):
     from PIL import Image
     a = synthetic_sheet()
@@ -204,24 +221,26 @@ RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
 @pytest.mark.skipif(not os.path.exists(RAW), reason="raw sheet not present")
 def test_real_sheet_bands_match_rows(tmp_path):
     from PIL import Image
-    rgb = np.array(Image.open(RAW).convert("RGB"))
-    alpha = key_background(rgb)
-    keyed = tmp_path / "keyed.png"; Image.fromarray(np.dstack([rgb, alpha])).save(keyed)
     rows_path = os.path.join(os.path.dirname(__file__), "rows.json")
     ov_path = os.path.join(os.path.dirname(__file__), "overrides.json")
+    rows = json.load(open(rows_path))
+    tolerance = rows.get("keyTolerance", 36)
+    rgb = np.array(Image.open(RAW).convert("RGB"))
+    alpha = key_background(rgb, tolerance)
+    keyed = tmp_path / "keyed.png"; Image.fromarray(np.dstack([rgb, alpha])).save(keyed)
     counts = build(str(keyed), rows_path, ov_path, str(tmp_path / "out"), 1.0)
-    expected = {b["name"]: b["count"] for b in json.load(open(rows_path))["bands"] if not b.get("each")}
+    expected = {b["name"]: b["count"] for b in rows["bands"] if not b.get("each")}
     assert {k: counts[k] for k in expected} == expected
-    assert counts["faces"] == 8
+    assert counts["faces"] == 10
     atlas = json.loads((tmp_path / "out" / "atlas.json").read_text())
     for name, f in atlas["frames"].items():
         assert 0 < f["ay"] <= f["h"] and 0 <= f["ax"] <= f["w"], name
-    assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"]
+    assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"] and "run_left_3" in atlas["frames"]
 
     # at 2x nearest-upscale, the "each" mode bands (faces, props) must not pick up
     # antialiasing/glow specks that only clear the min_px floor because of the upscale.
     keyed_2x = tmp_path / "keyed@2x.png"
     assert upscale(str(keyed), str(keyed_2x), 2, "nearest") == "nearest"
     counts_2x = build(str(keyed_2x), rows_path, ov_path, str(tmp_path / "out2x"), 2.0)
-    assert counts_2x["faces"] == 8
+    assert counts_2x["faces"] == 10
     assert counts_2x["props"] == counts["props"]
