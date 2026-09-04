@@ -80,7 +80,7 @@ function draw(): void {
     const p = originScreenPosition(f, mirror, scale, canvas, canvas.getBoundingClientRect(), { x: window.screenX, y: window.screenY })
     if (p && (!lastOrigin || Math.abs(p.x - lastOrigin.x) >= 1 || Math.abs(p.y - lastOrigin.y) >= 1)) {
       lastOrigin = p
-      window.buddy.origin(p.x, p.y)
+      window.buddy.origin(p.x, p.y, motion.x)
     }
   } else {
     // Reset so the first frame after reopening the panel reports again.

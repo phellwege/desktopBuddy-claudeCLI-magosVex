@@ -30,3 +30,12 @@ export function hologramBounds(wa: Rect, xFraction: number, charW: number, charH
 export function originToWindow(origin: { x: number; y: number }, b: Rect): { x: number; y: number } {
   return { x: origin.x - b.x, y: origin.y - b.y }
 }
+
+// Minimum x-fraction movement before the hologram is worth re-placing mid-walk. Small
+// enough to track a walking character, large enough not to thrash setBounds on every
+// per-frame origin report (which fires whenever the drawn origin moves by a pixel or more).
+export const HOLOGRAM_REPLACE_THRESHOLD = 0.005
+
+export function shouldReplaceHologramX(lastPlacedX: number, xFraction: number): boolean {
+  return Math.abs(xFraction - lastPlacedX) > HOLOGRAM_REPLACE_THRESHOLD
+}

@@ -35,7 +35,7 @@ export interface ChatPermissionPayload { id: string; toolName: string; summary: 
 export interface ChatStatusPayload { model: string | null; workspace: string; session: string; error?: string }
 export interface ChatSystemPayload { text: string }
 export interface ThemePayload extends PackTheme { name: string }
-export interface OriginPayload { x: number; y: number }
+export interface OriginPayload { x: number; y: number; xFraction: number }
 
 export interface BuddyBridge {
   onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
@@ -49,8 +49,11 @@ export interface BuddyBridge {
   arrived(): void
   oneShotDone(): void
   /** x, y are screen coordinates - the overlay's own window position plus the drawn
-   * origin point, so main can translate it into any other window's content coordinates. */
-  origin(x: number, y: number): void
+   * origin point, so main can translate it into any other window's content coordinates.
+   * xFraction is the character's live x fraction (motion.x), which may be mid-walk and
+   * ahead of Buddy.x (which only updates on arrival) - it lets main re-place the hologram
+   * under a walking character instead of waiting for the walk to finish. */
+  origin(x: number, y: number, xFraction: number): void
   onOrigin(cb: (p: OriginPayload) => void): () => void
   onTheme(cb: (p: ThemePayload) => void): () => void
   onChatDelta(cb: (p: ChatDeltaPayload) => void): () => void

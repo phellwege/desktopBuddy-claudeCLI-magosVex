@@ -13,7 +13,7 @@ const bridge: BuddyBridge = {
   contextMenu: (x, y) => ipcRenderer.send(CH.overlayContextMenu, { x, y }),
   arrived: () => ipcRenderer.send(CH.overlayArrived),
   oneShotDone: () => ipcRenderer.send(CH.overlayOneShotDone),
-  origin: (x, y) => ipcRenderer.send(CH.overlayOrigin, { x, y }),
+  origin: (x, y, xFraction) => ipcRenderer.send(CH.overlayOrigin, { x, y, xFraction }),
   onOrigin: on(CH.hologramOrigin),
   onTheme: on(CH.theme),
   onChatDelta: on(CH.chatDelta),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hologramBounds, overlayBounds, originToWindow, PANEL_SIZE, OVERLAY_HEIGHT } from './geometry'
+import { hologramBounds, overlayBounds, originToWindow, shouldReplaceHologramX, PANEL_SIZE, OVERLAY_HEIGHT } from './geometry'
 
 const wa = { x: 0, y: 0, width: 2560, height: 1392 }
 describe('geometry', () => {
@@ -58,5 +58,16 @@ describe('geometry', () => {
 
   it('originToWindow subtracts the window position', () => {
     expect(originToWindow({ x: 500, y: 700 }, { x: 400, y: 600, width: 10, height: 10 })).toEqual({ x: 100, y: 100 })
+  })
+
+  describe('shouldReplaceHologramX', () => {
+    it('is false for no movement or movement under the threshold', () => {
+      expect(shouldReplaceHologramX(0.5, 0.5)).toBe(false)
+      expect(shouldReplaceHologramX(0.5, 0.502)).toBe(false)
+    })
+    it('is true once movement clearly exceeds the threshold, in either direction', () => {
+      expect(shouldReplaceHologramX(0.5, 0.51)).toBe(true)
+      expect(shouldReplaceHologramX(0.5, 0.49)).toBe(true)
+    })
   })
 })

@@ -3,7 +3,7 @@ import { CH, type ChatStatusPayload, type OriginPayload, type PackLoadedPayload,
 import type { Buddy } from './buddy'
 import type { Actions } from './actions'
 import { setHologramInteractive, setOverlayInteractive } from './windows'
-import { originToWindow } from './geometry'
+import { originToWindow, shouldReplaceHologramX } from './geometry'
 
 export interface ChatPort { prompt(text: string): void; permissionAnswer(id: string, allow: boolean): void; stop(): void }
 export interface IpcDeps {
@@ -13,6 +13,11 @@ export interface IpcDeps {
    * can re-send the origin (translated into the new window's coordinates) whenever the
    * hologram window is repositioned or shown. */
   origin: { current: OriginPayload | null }
+  /** Re-places the hologram window, optionally at a given x fraction instead of
+   * Buddy.getState().x (used mid-walk, since that only updates on arrival). */
+  placeHologram(xFraction?: number): void
+  /** The x fraction the hologram was last placed at, kept in sync by placeHologram. */
+  lastPlacedX: { current: number }
   status(): ChatStatusPayload; showContextMenu(x: number, y: number): void
 }
 
@@ -31,7 +36,14 @@ export function wireIpc(d: IpcDeps): void {
   ipcMain.on(CH.overlayOneShotDone, () => d.buddy.oneShotDone())
   ipcMain.on(CH.overlayOrigin, (_e, p: OriginPayload) => {
     d.origin.current = p
-    if (d.hologram.isVisible()) d.hologram.webContents.send(CH.hologramOrigin, originToWindow(p, d.hologram.getBounds()))
+    if (d.hologram.isVisible()) {
+      // Mid-walk, Buddy.x only updates on arrival, so the cone would otherwise be cast
+      // from wherever the character last stood still. Re-place under the live x fraction
+      // the overlay reports instead, before translating the origin into the (possibly
+      // just-moved) hologram window's coordinates.
+      if (shouldReplaceHologramX(d.lastPlacedX.current, p.xFraction)) d.placeHologram(p.xFraction)
+      d.hologram.webContents.send(CH.hologramOrigin, originToWindow(p, d.hologram.getBounds()))
+    }
   })
   ipcMain.on(CH.hologramHover, (_e, p: { over: boolean }) => setHologramInteractive(d.hologram, p.over))
   ipcMain.on(CH.hologramReady, () => {

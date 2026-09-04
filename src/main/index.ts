@@ -68,8 +68,15 @@ async function main(): Promise<void> {
   }
 
   const originRef: { current: OriginPayload | null } = { current: null }
-  const placeHologram = () => {
-    hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, buddy.getState().x, charW, charH))
+  // The x fraction the hologram was last placed at. During a commanded walk, Buddy.x only
+  // updates on arrival, so the overlay's per-frame origin report carries the character's
+  // live x (xFraction) instead - the ipc origin handler compares against this to decide
+  // whether to re-place the hologram mid-walk rather than waiting for arrival.
+  const lastPlacedX: { current: number } = { current: buddy.getState().x }
+  const placeHologram = (xFraction?: number) => {
+    const x = xFraction ?? buddy.getState().x
+    lastPlacedX.current = x
+    hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, x, charW, charH))
     if (originRef.current) hologram.webContents.send(CH.hologramOrigin, originToWindow(originRef.current, hologram.getBounds()))
   }
   const out = {
@@ -105,6 +112,7 @@ async function main(): Promise<void> {
       animations: pack.animations, scale, name: pack.name },
     theme: { ...pack.theme, name: pack.name },
     origin: originRef,
+    placeHologram, lastPlacedX,
     chat, status: () => chat.status(),
     showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
   })
