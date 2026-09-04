@@ -1,0 +1,27 @@
+:root { --accent: #37c4ff; --glow: #1a8fd1; --bg: rgba(6, 20, 32, 0.82); --text: #d8f4ff; --font: 'Cascadia Mono', Consolas, monospace; }
+html, body { margin: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; font-family: var(--font); color: var(--text); font-size: 13px; }
+#root { position: relative; width: 100%; height: 100%; }
+#cone { position: absolute; left: 0; bottom: 0; width: 100%; height: 100%; pointer-events: none;
+  background: linear-gradient(to top, color-mix(in srgb, var(--accent) 35%, transparent), transparent 60%);
+  clip-path: polygon(46% 100%, 54% 100%, 100% 12%, 0 12%); opacity: 0.6; }
+#panel { position: absolute; left: 8px; right: 8px; top: 8px; bottom: 44px; display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--accent); box-shadow: 0 0 18px var(--glow), inset 0 0 40px rgba(0,0,0,0.35); border-radius: 4px; overflow: hidden; }
+#panel::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,0.12) 2px 3px); }
+#title { display: flex; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+#status { opacity: 0.7; }
+#log { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.msg { max-width: 92%; padding: 6px 8px; border-radius: 4px; line-height: 1.35; word-wrap: break-word; }
+.msg.user { align-self: flex-end; background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.msg.buddy { align-self: flex-start; background: rgba(255,255,255,0.05); }
+.msg.system { align-self: center; opacity: 0.75; font-size: 12px; white-space: pre-wrap; }
+.msg pre { background: rgba(0,0,0,0.45); padding: 6px; border-radius: 3px; overflow-x: auto; }
+.msg code { font-family: var(--font); font-size: 12px; }
+.activity { font-size: 11px; opacity: 0.7; padding-left: 8px; }
+.activity.done { opacity: 0.45; }
+.activity::before { content: '▸ '; color: var(--accent); }
+#permission { padding: 8px; border-top: 1px solid var(--accent); background: rgba(255, 120, 40, 0.12); }
+#perm-detail { font-size: 12px; opacity: 0.85; margin: 4px 0; white-space: pre-wrap; }
+.perm-buttons button { font-family: var(--font); background: transparent; color: var(--text); border: 1px solid var(--accent); padding: 3px 10px; margin-right: 6px; cursor: pointer; }
+#input { border: none; border-top: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: rgba(0,0,0,0.3); color: var(--text); font-family: var(--font); font-size: 13px; padding: 6px 8px; resize: none; outline: none; }
+.hljs-keyword { color: #ff9f6b; } .hljs-string { color: #9bffb0; } .hljs-comment { color: #7a8c99; } .hljs-number { color: #ffd479; } .hljs-title { color: #7fdcff; }

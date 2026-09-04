@@ -1,3 +1,26 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>hologram</title></head>
-<body><script type="module" src="./main.ts"></script></body></html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' http://localhost:* ws://localhost:*; img-src 'self' pack: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:">
+  <title>hologram</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div id="root">
+    <div id="cone"></div>
+    <div id="panel">
+      <div id="title"><span id="name"></span><span id="status"></span></div>
+      <div id="log"></div>
+      <div id="permission" hidden>
+        <div id="perm-line"></div>
+        <div id="perm-detail"></div>
+        <div class="perm-buttons"><button id="perm-allow">Sanction</button><button id="perm-deny">Deny</button></div>
+      </div>
+      <textarea id="input" rows="1" placeholder="Speak, operator. /help for rites."></textarea>
+    </div>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
