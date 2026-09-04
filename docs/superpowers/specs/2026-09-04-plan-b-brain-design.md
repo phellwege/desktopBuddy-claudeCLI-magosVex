@@ -89,6 +89,8 @@ longer implies a face.
 
 ```
 -p --output-format stream-json --include-partial-messages --verbose
+--setting-sources project      (the user's own hooks and plugins stay out of his turns;
+                                `--bare` is not an option, it drops the subscription login)
 --session-id <uuid>            (first turn)   |   --resume <uuid>   (later turns)
 --append-system-prompt <tools note>
 --mcp-config <inline JSON: buddy http server with bearer token>
@@ -163,7 +165,10 @@ into the hologram's permission card (opening the panel if closed), with the pack
 resolves the call; a timeout of `permissionTimeoutSec` denies, dismisses the card, and
 posts one status line. Reads, globs, greps, and buddy tools never prompt because they
 are in `allowedTools`. There is no hook script, no `--settings` argument, and no
-`/permission` HTTP endpoint. The former hook design (a `PermissionRequest` hook posting
+`/permission` HTTP endpoint. Verified 2026-09-04 against CLI 2.1.220: allow with
+`updatedInput` writes the file, deny leaves it unwritten, `mcp__buddy__*` in
+`--allowedTools` lets buddy tools run without a prompt, and `--setting-sources project`
+keeps the user's plugin hooks out of the stream while the login still works. The former hook design (a `PermissionRequest` hook posting
 to `POST /permission`) is withdrawn.
 
 ### 6.5 Sessions, workspace, config
