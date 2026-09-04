@@ -61,11 +61,18 @@ window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
 window.buddy.onBuddyState((s) => { lastState = s; apply(s) })
 window.addEventListener('resize', layout)
 
+const missingFrames = new Set<string>()
+
 function draw(): void {
   if (!animator || !atlas || !image) return
   const { frame: name, mirror } = animator.current()
   const f = atlas.frames[name]
-  if (!f) return
+  if (!f) {
+    // A missing frame used to leave the overlay silently blank; say so once per name so
+    // the renderer log explains an invisible character.
+    if (!missingFrames.has(name)) { missingFrames.add(name); console.warn(`overlay: atlas has no frame "${name}"`) }
+    return
+  }
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   const baselineY = canvas.height - 4
   const dx = canvas.width / 2 - f.ax * scale
