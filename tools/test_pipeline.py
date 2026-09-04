@@ -120,3 +120,82 @@ def test_build_each_mode_band(tmp_path):
     assert set(atlas["frames"]) == {"props_0", "props_1", "props_2", "props_3"}
     draft = json.loads((out / "animations.draft.json").read_text())
     assert "props" not in draft
+
+
+from key import key_background
+from upscale import upscale
+
+
+def test_key_background_removes_connected_background_only():
+    # 60x60 RGB: 1px black frame, gray interior, a red 20x20 block in the middle,
+    # and a gray 4x4 "hole" inside the block that must stay opaque.
+    im = np.full((60, 60, 3), (50, 48, 46), dtype=np.uint8)
+    im[0, :] = im[-1, :] = im[:, 0] = im[:, -1] = (4, 3, 3)
+    im[20:40, 20:40] = (180, 30, 30)
+    im[28:32, 28:32] = (50, 48, 46)
+    alpha = key_background(im, tolerance=36, inset=4)
+    assert alpha.dtype == np.uint8 and alpha.shape == (60, 60)
+    assert alpha[5, 5] == 0 and alpha[0, 0] == 0
+    assert alpha[25, 25] == 255
+    assert alpha[30, 30] == 255          # enclosed gray is not connected to the border
+
+
+def test_key_background_tolerance_bounds():
+    im = np.full((20, 20, 3), (50, 48, 46), dtype=np.uint8)
+    im[8:12, 8:12] = (70, 48, 46)        # differs by 20: background at tolerance 36, foreground at 10
+    assert key_background(im, tolerance=36, inset=2)[10, 10] == 0
+    assert key_background(im, tolerance=10, inset=2)[10, 10] == 255
+
+
+def test_facing_band_emits_flipped_frames(tmp_path):
+    from PIL import Image
+    a = synthetic_sheet()
+    rgba = np.dstack([np.full_like(a, 200)] * 3 + [a])
+    rgba[40:110, 10:15, 0] = 255         # a red stripe on the left edge of body 0 to detect flipping
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [{"name": "walk", "x": [0, 120], "y": [0, 120], "count": 2, "facing": "left"}]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    out = tmp_path / "out"
+    counts = build(str(sheet), str(rows), str(ov), str(out), 1.0)
+    assert counts == {"walk": 2}
+    atlas = json.loads((out / "atlas.json").read_text())
+    assert set(atlas["frames"]) == {"walk_left_0", "walk_left_1", "walk_right_0", "walk_right_1"}
+    l, r = atlas["frames"]["walk_left_0"], atlas["frames"]["walk_right_0"]
+    assert (l["w"], l["h"], l["ay"]) == (r["w"], r["h"], r["ay"])
+    assert r["ax"] == l["w"] - l["ax"]
+    img = np.array(Image.open(out / "atlas.png"))
+    left_px = img[l["y"] + l["h"] - 1, l["x"] + 2]
+    right_px = img[r["y"] + r["h"] - 1, r["x"] + r["w"] - 3]
+    assert left_px[0] == 255 and right_px[0] == 255      # the red stripe moved to the other side
+    draft = json.loads((out / "animations.draft.json").read_text())
+    assert draft["walk"] == {"right": ["walk_right_0", "walk_right_1"], "left": ["walk_left_0", "walk_left_1"]}
+
+
+def test_upscale_nearest_doubles_size(tmp_path):
+    from PIL import Image
+    src = tmp_path / "s.png"; dst = tmp_path / "d.png"
+    Image.fromarray(np.zeros((3, 5, 4), dtype=np.uint8)).save(src)
+    assert upscale(str(src), str(dst), 2, "nearest") == "nearest"
+    assert Image.open(dst).size == (10, 6)
+
+
+RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
+
+
+@pytest.mark.skipif(not os.path.exists(RAW), reason="raw sheet not present")
+def test_real_sheet_bands_match_rows(tmp_path):
+    from PIL import Image
+    rgb = np.array(Image.open(RAW).convert("RGB"))
+    alpha = key_background(rgb)
+    keyed = tmp_path / "keyed.png"; Image.fromarray(np.dstack([rgb, alpha])).save(keyed)
+    rows_path = os.path.join(os.path.dirname(__file__), "rows.json")
+    ov_path = os.path.join(os.path.dirname(__file__), "overrides.json")
+    counts = build(str(keyed), rows_path, ov_path, str(tmp_path / "out"), 1.0)
+    expected = {b["name"]: b["count"] for b in json.load(open(rows_path))["bands"] if not b.get("each")}
+    assert {k: counts[k] for k in expected} == expected
+    assert counts["faces"] == 8
+    atlas = json.loads((tmp_path / "out" / "atlas.json").read_text())
+    for name, f in atlas["frames"].items():
+        assert 0 < f["ay"] <= f["h"] and 0 <= f["ax"] <= f["w"], name
+    assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"]

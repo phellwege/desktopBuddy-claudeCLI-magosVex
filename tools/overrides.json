@@ -1,0 +1,5 @@
+{
+  "sit": { "drop": [2] },
+  "jump": { "drop": [2] },
+  "damage": { "merge": [[1, 2]] }
+}

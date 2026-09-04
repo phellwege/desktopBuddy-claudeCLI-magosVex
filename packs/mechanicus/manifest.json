@@ -1,0 +1,32 @@
+{
+  "name": "Magos Vex",
+  "packVersion": 1,
+  "scale": 1.0,
+  "theme": {
+    "accent": "#37c4ff",
+    "glow": "#1a8fd1",
+    "background": "rgba(6, 20, 32, 0.82)",
+    "text": "#d8f4ff",
+    "font": "'Cascadia Mono', 'Consolas', monospace",
+    "glyph": "cog"
+  },
+  "persona": {
+    "promptFile": "persona.md",
+    "defaultMood": "calm",
+    "lines": {
+      "greeting": ["The Omnissiah's cogitator is online. State your query, flesh."],
+      "idleMutter": ["Recalculating the futility of this desktop.", "Binharic sigh."],
+      "thinking": ["Consulting the machine spirit."],
+      "toolRunning": ["Interfacing. Do not touch anything."],
+      "permissionAsk": ["The cogitator wishes to perform the following rite. Sanction it?"],
+      "permissionDenied": ["Denied. As expected."],
+      "authError": ["My link to the noosphere is severed. Run `claude login` in a terminal, then try again."],
+      "cliMissing": ["No cogitator found at the configured path. Install Claude Code or fix config."],
+      "error": ["A fault in the machine. Details follow."],
+      "sleep": ["Entering low-power contemplation."],
+      "wake": ["I was not asleep. I was calculating."],
+      "stopped": ["Rite aborted. Your loss."]
+    }
+  },
+  "voice": null
+}

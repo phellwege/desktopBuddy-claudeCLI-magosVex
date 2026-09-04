@@ -135,14 +135,25 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float) -> 
     all_frames, names_by_band, counts = [], {}, {}
     for band in bands:
         frames = group_frames(alpha, band, scale, ov)
+        facing = band.get("facing")
+        other = {"left": "right", "right": "left"}.get(facing)
         names = []
         for i, (box, cx) in enumerate(frames):
-            name = f"{band['name']}_{i}"
             crop, ax, ay = normalize(rgba, box, cx)
-            all_frames.append((name, crop, ax, ay))
-            names.append(name)
-        names_by_band[band["name"]] = names
-        counts[band["name"]] = len(names)
+            if facing:
+                own = f"{band['name']}_{facing}_{i}"
+                flipped = f"{band['name']}_{other}_{i}"
+                all_frames.append((own, crop, ax, ay))
+                all_frames.append((flipped, crop[:, ::-1].copy(), crop.shape[1] - ax, ay))
+                names_by_band.setdefault(f"{band['name']}_{facing}", []).append(own)
+                names_by_band.setdefault(f"{band['name']}_{other}", []).append(flipped)
+            else:
+                name = f"{band['name']}_{i}"
+                all_frames.append((name, crop, ax, ay))
+                names.append(name)
+        if not facing:
+            names_by_band[band["name"]] = names
+        counts[band["name"]] = len(frames)
     atlas, meta = pack_atlas(all_frames)
     Image.fromarray(atlas).save(os.path.join(out_dir, "atlas.png"))
     json.dump(meta, open(os.path.join(out_dir, "atlas.json"), "w"), indent=1)

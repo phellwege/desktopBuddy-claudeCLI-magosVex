@@ -18,15 +18,16 @@ def upscale(src: str, dst: str, factor: int = 2, method: str = "auto", exe: str 
         subprocess.run([found, "-i", src, "-o", dst, "-n", "realesr-animevideov3", "-s", str(factor)], check=True)
         return "esrgan"
     im = Image.open(src).convert("RGBA")
-    im.resize((im.width * factor, im.height * factor), Image.LANCZOS).save(dst)
-    return "lanczos"
+    resample = Image.NEAREST if method in ("nearest", "auto") else Image.LANCZOS
+    im.resize((im.width * factor, im.height * factor), resample).save(dst)
+    return "nearest" if method in ("nearest", "auto") else "lanczos"
 
 
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("src"); p.add_argument("dst")
     p.add_argument("--factor", type=int, default=2)
-    p.add_argument("--method", choices=["auto", "esrgan", "lanczos"], default="auto")
+    p.add_argument("--method", choices=["auto", "esrgan", "lanczos", "nearest"], default="auto")
     p.add_argument("--exe")
     a = p.parse_args()
     print("method:", upscale(a.src, a.dst, a.factor, a.method, a.exe))
