@@ -1,6 +1,8 @@
 import { renderMarkdown } from './markdown'
 import { ProjectionCone } from './cone'
-import type { ChatPermissionPayload, ThemePayload } from '../../shared/ipc'
+import { HoloFace } from './face'
+import type { ChatDonePayload, ChatPermissionPayload, ChatSystemPayload, PackLoadedPayload, ThemePayload } from '../../shared/ipc'
+import type { Atlas, Expression } from '../../shared/types'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), status = $<HTMLSpanElement>('status')
@@ -36,13 +38,53 @@ let lastInput = ''
 let pending: ChatPermissionPayload | null = null
 const activities = new Map<string, HTMLDivElement>()
 
+let atlas: Atlas | null = null
+let atlasImage: HTMLImageElement | null = null
+let facesMap: Record<Expression, string> | null = null
+let accent = '#37c4ff'
+let holoFace: HoloFace | null = null
+
+function rebuildFace(): void {
+  holoFace = (atlas && atlasImage && facesMap) ? new HoloFace(atlasImage, atlas, facesMap, accent) : null
+}
+
+// Same blob-URL loader the overlay window uses (src/renderer/overlay/main.ts): fetching
+// through the pack:// protocol and decoding via an object URL avoids CORS/canvas taint
+// issues a bare <img src="pack://..."> can hit in some Electron configurations.
+async function loadImage(url: string): Promise<HTMLImageElement> {
+  const blob = await (await fetch(url)).blob()
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    const im = new Image()
+    await new Promise<void>((res, rej) => { im.onload = () => res(); im.onerror = () => rej(new Error(`image failed: ${url}`)); im.src = objectUrl })
+    return im
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+  }
+}
+
 function add(cls: string, html: string): HTMLDivElement {
-  const el = document.createElement('div'); el.className = `msg ${cls}`; el.innerHTML = html
+  const el = document.createElement('div'); el.className = `msg ${cls}`
+  if (holoFace && (cls === 'buddy' || cls === 'system')) {
+    const slot = document.createElement('div'); slot.className = 'face-slot'
+    el.appendChild(slot)
+  }
+  const text = document.createElement('div'); text.className = 'text'; text.innerHTML = html
+  el.appendChild(text)
   log.appendChild(el); log.scrollTop = log.scrollHeight; return el
 }
 function flush(): void {
   renderQueued = false
-  if (current) { current.innerHTML = renderMarkdown(buffer); log.scrollTop = log.scrollHeight }
+  if (current) {
+    const text = current.querySelector('.text') as HTMLElement | null
+    if (text) text.innerHTML = renderMarkdown(buffer)
+    log.scrollTop = log.scrollHeight
+  }
+}
+function renderFaceInto(bubble: HTMLDivElement, expression: Expression): void {
+  if (!holoFace) return
+  const slot = bubble.querySelector('.face-slot') as HTMLElement | null
+  if (slot) slot.appendChild(holoFace.render(expression))
 }
 
 window.buddy.onTheme((t: ThemePayload) => {
@@ -51,6 +93,15 @@ window.buddy.onTheme((t: ThemePayload) => {
   r.setProperty('--text', t.text); r.setProperty('--font', t.font)
   $('name').textContent = t.name
   cone.setColor(t.accent)
+  accent = t.accent
+  rebuildFace()
+})
+window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
+  facesMap = p.faces
+  if (!p.faces) { atlas = null; atlasImage = null; rebuildFace(); return }
+  atlas = await (await fetch(p.atlasJsonUrl)).json() as Atlas
+  atlasImage = await loadImage(p.atlasUrl)
+  rebuildFace()
 })
 window.buddy.onOrigin((p) => cone.setSource(p.x, p.y))
 window.buddy.onChatStatus((s) => {
@@ -67,8 +118,16 @@ window.buddy.onChatActivity((a) => {
   el.textContent = a.label
   if (a.done) el.classList.add('done')
 })
-window.buddy.onChatDone(() => { flush(); current = null; buffer = ''; activities.clear() })
-window.buddy.onChatSystem(({ text }) => { current = null; add('system', renderMarkdown(text)) })
+window.buddy.onChatDone((p: ChatDonePayload) => {
+  flush()
+  if (current) renderFaceInto(current, p.expression ?? 'neutral')
+  current = null; buffer = ''; activities.clear()
+})
+window.buddy.onChatSystem(({ text, expression }: ChatSystemPayload) => {
+  current = null
+  const el = add('system', renderMarkdown(text))
+  renderFaceInto(el, expression ?? 'neutral')
+})
 window.buddy.onChatPermission((p) => {
   pending = p; permLine.textContent = p.line; permDetail.textContent = `${p.toolName}: ${p.summary}`; perm.hidden = false
 })
