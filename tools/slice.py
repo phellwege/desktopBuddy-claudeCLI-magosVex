@@ -129,6 +129,9 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict, *
     if band.get("each"):
         min_px = max(4, int(round(4 * scale * scale)))
         boxes = [b.shifted(x0, y0) for b in components(erased, min_px=min_px)]
+        # Border slivers inside the keying margin are hairlines, not props.
+        boxes = [b for b in boxes if not segment_sam.is_hairline(
+            b.w, b.h, HAIRLINE_MAX_THICKNESS_1X * scale, HAIRLINE_MIN_LENGTH_1X * scale)]
         boxes.sort(key=lambda b: (b.x0, b.y0))
         return [(b, b.cx) for b in boxes]
 
@@ -625,12 +628,16 @@ def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_dat
         if fname not in frames_meta:
             raise ValueError(f"band {name}: frame {fname!r} missing from annotations")
         label = frames_meta[fname]["label"]
-        mask = (ann_labels == label) & (alpha > 0)
+        # Close one-pixel seams a saved mask may carry from an earlier keying, then
+        # intersect with the current keyed alpha.
+        mask = ndimage.binary_closing(ann_labels == label, structure=STRUCT8) & (alpha > 0)
         if not mask.any():
             raise ValueError(
                 f"band {name}: frame {fname!r} (label {label}) has an empty mask - "
                 f"nothing in the masks PNG carries this label, or it never overlaps the keyed alpha")
-        obj_masks.append(mask)
+        # Same floor-line trim as sam mode: a hand re-segment can pick up the ground
+        # line under a seated pose just as the automatic one does.
+        obj_masks.append(segment_sam.trim_floor_rows(mask))
 
     cells: list[tuple[float, float, float, float] | None] = [None] * n
     for idx, cell_x0, cell_x1, cell_y0, cell_y1, _is_first, _is_last in segment_sam._cell_layout(band, x0, y0, x1, y1):

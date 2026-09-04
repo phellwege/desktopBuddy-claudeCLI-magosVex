@@ -1098,3 +1098,17 @@ def test_key_background_bands_margin_keeps_figure_parts_above_the_band():
     assert grown[60, 60] == 255                                  # body untouched
     assert grown[40, 30] == 0 and grown[20, 30] == 0             # panel fill and outer margin both keyed
     assert grown[5, 60] == 0                                     # outside the grown rect stays transparent
+
+
+def test_key_background_bands_margin_border_never_cuts_a_neighbor():
+    # Two panels side by side; band A's rectangle grown by the margin ends inside band
+    # B's figure. The grown border must only seed the flood, never force background.
+    im = np.full((80, 200, 3), (10, 10, 10), dtype=np.uint8)
+    im[10:70, 10:90] = (50, 48, 46)          # panel A
+    im[10:70, 100:190] = (50, 48, 46)        # panel B
+    im[20:60, 105:135] = (200, 40, 40)       # figure in B, spanning x 105..134
+    bands = [(10, 10, 90, 70), (100, 10, 190, 70)]
+    alpha = key_background_bands(im, bands, tolerance=16, inset=2, margin=40)
+    # A's grown rect ends at x=130, so its forced border columns 128..129 cross the figure.
+    assert alpha[40, 128] == 255 and alpha[40, 129] == 255 and alpha[40, 120] == 255
+    assert alpha[40, 95] == 0                                   # gap between panels is background

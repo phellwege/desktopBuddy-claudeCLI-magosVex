@@ -80,8 +80,11 @@ def key_background_bands(rgb: np.ndarray, bands: list[tuple[int, int, int, int]]
         grown = im[gy0:gy1, gx0:gx1]
         gh, gw = grown.shape[:2]
         near = (np.abs(grown - bg).sum(-1) <= tolerance) | (np.abs(grown - outer_bg).sum(-1) <= tolerance)
-        near[:i, :] = near[gh - i:, :] = near[:, :i] = near[:, gw - i:] = True
-        background = _flood_background(near)
+        # The grown rectangle's border only seeds the flood; with a margin it can run
+        # through a neighboring figure, so it must never be forced into the result.
+        seeded = near.copy()
+        seeded[:i, :] = seeded[gh - i:, :] = seeded[:, :i] = seeded[:, gw - i:] = True
+        background = _flood_background(seeded) & near
         fg = np.where(background, 0, 255).astype(np.uint8)
         region = alpha[gy0:gy1, gx0:gx1]
         was_covered = covered[gy0:gy1, gx0:gx1]
