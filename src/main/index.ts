@@ -6,7 +6,7 @@ import { loadPack, pickLine } from './pack'
 import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
-import { createHologramWindow, createOverlayWindow, loadPage, rebound } from './windows'
+import { createHologramWindow, createOverlayWindow, loadPage, rebound, setHologramInteractive } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
 import { wireIpc } from './ipc'
 import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
@@ -82,10 +82,14 @@ async function main(): Promise<void> {
   let greeted = false
   const host: ActionHost = {
     showPanel: () => {
+      // Every open starts click-through: if the panel last closed with the pointer still
+      // over it, ignoreMouseEvents would otherwise still be false on this hidden window,
+      // swallowing clicks across the whole hologram until a mousemove reset it.
+      setHologramInteractive(hologram, false)
       placeHologram(); hologram.show(); hologram.focus()
       if (!greeted) { greeted = true; out.system(pickLine(pack, 'greeting') ?? '') }
     },
-    hidePanel: () => hologram.hide(),
+    hidePanel: () => { setHologramInteractive(hologram, false); hologram.hide() },
     pushSystem: (text) => hologram.webContents.send(CH.chatSystem, { text }),
   }
   const actions = new Actions(buddy, host)

@@ -67,4 +67,15 @@ test('overlay sits on the work area bottom, panel opens, /goto moves him, Escape
 
   await hologram.locator('#input').press('Escape')
   await expect.poll(() => electronApp.evaluate(() => (globalThis as { __buddy?: { getState(): { panelOpen: boolean } } }).__buddy!.getState().panelOpen)).toBe(false)
+
+  // Fix 1 regression: the hologram must not stay stuck fully-interactive from before it
+  // hid (which would swallow clicks across the whole window until a stray mousemove reset
+  // it) - a second click-to-open right after Escape must still succeed cleanly.
+  await electronApp.evaluate(({ ipcMain }) => { ipcMain.emit('overlay:click') })
+  await expect.poll(() => electronApp.evaluate(() => (globalThis as { __buddy?: { getState(): { panelOpen: boolean } } }).__buddy!.getState().panelOpen)).toBe(true)
+  const reopenedVisible = await electronApp.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows().find(x => x.webContents.getURL().includes('hologram'))!
+    return w.isVisible()
+  })
+  expect(reopenedVisible).toBe(true)
 })
