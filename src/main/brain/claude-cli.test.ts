@@ -185,6 +185,38 @@ describe('ClaudeCliBrain', () => {
     expect(done.error).toBeTruthy()
   })
 
+  it('does not crash when child.stdin emits an error (e.g. EPIPE after the child already exited)', async () => {
+    const { EventEmitter } = await import('node:events')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let created: any
+    const spawnFn = (() => {
+      const child = new EventEmitter()
+      const stdin = Object.assign(new EventEmitter(), { write: () => true, end: () => {} })
+      Object.assign(child, { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), stdin })
+      created = child
+      return child
+    }) as unknown as ClaudeCliDeps['spawn']
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: spawnFn }))
+    const iterPromise = collect(brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null }))
+    await new Promise((r) => setTimeout(r, 0))
+    // Without an 'error' listener on child.stdin, Node treats this as an uncaught exception
+    // and the process (and this test) would crash instead of the turn simply finishing.
+    created.stdin.emit('error', Object.assign(new Error('EPIPE'), { code: 'EPIPE' }))
+    created.emit('close', 0)
+    const events = await iterPromise
+    expect(events.at(-1)?.type).toBe('done')
+  }, 10000)
+
+  it('stop() on win32 spawns taskkill with stdio ignored and an error listener that swallows a failed spawn', async () => {
+    if (process.platform !== 'win32') return
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: fakeSpawn('text') }))
+    const iter = brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
+    await iter.next()
+    // Real taskkill will fail against this fake pid, but stop() must not throw and the
+    // spawned killer's own 'error' listener must swallow any spawn failure silently.
+    expect(() => brain.stop()).not.toThrow()
+  }, 10000)
+
   it('mcp scenario: the fake CLI drives set_mood and set_expression through the real local server', async () => {
     const { startLocalServer } = await import('../server')
     const moodCalls: string[] = []
@@ -198,6 +230,7 @@ describe('ClaudeCliBrain', () => {
       actions,
       setExpression: (e) => expressionCalls.push(e),
       onPermission: async () => ({ allow: true, reason: 'ok' }),
+      onPermissionTimeout: () => {},
       permissionTimeoutMs: 5000,
     })
     try {

@@ -19,6 +19,11 @@ export interface ServerDeps {
   setExpression(name: Expression): void
   // main shows the permission card; resolves on the user's answer or the server's own timeout
   onPermission(req: PermissionRequest): Promise<{ allow: boolean; reason: string }>
+  // Called (instead of onPermission's own resolution) when the server's timeout answers the
+  // hook on its own: main uses this to drop the now-stale pending entry, tell the renderer to
+  // dismiss the card, and post a status line, none of which onPermission's return value alone
+  // can trigger once nobody is going to await it further.
+  onPermissionTimeout(id: string): void
   permissionTimeoutMs: number
 }
 
@@ -145,12 +150,14 @@ async function handlePermission(req: IncomingMessage, res: ServerResponse, deps:
     summary: summarizeToolInput(toolName, input),
   }
 
+  let timedOut = false
   let timer: ReturnType<typeof setTimeout>
   const timeout = new Promise<{ allow: boolean; reason: string }>((resolve) => {
-    timer = setTimeout(() => resolve({ allow: false, reason: 'timed out waiting for a decision' }), deps.permissionTimeoutMs)
+    timer = setTimeout(() => { timedOut = true; resolve({ allow: false, reason: 'timed out waiting for a decision' }) }, deps.permissionTimeoutMs)
   })
   const decision = await Promise.race([deps.onPermission(request), timeout])
   clearTimeout(timer!)
+  if (timedOut) deps.onPermissionTimeout(request.id)
 
   res.writeHead(200, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify({ decision: decision.allow ? 'allow' : 'deny', reason: decision.reason }))
@@ -200,7 +207,19 @@ export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
     await transport.handleRequest(req, res, body)
   }
 
-  const httpServer = createServer((req, res) => { void route(req, res) })
+  const httpServer = createServer((req, res) => {
+    route(req, res).catch((err: unknown) => {
+      console.error('server: unhandled error handling request', err)
+      // A throw partway through route() (e.g. onPermission throwing instead of rejecting)
+      // must not leave the client's request hanging forever with no response at all.
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'internal error' }))
+      } else if (!res.writableEnded) {
+        res.end()
+      }
+    })
+  })
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.headers.authorization !== `Bearer ${token}`) {
@@ -232,10 +251,16 @@ export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
     },
     hookSettings(hookPath: string): string {
       const sec = deps.permissionTimeoutMs / 1000 + 10
+      // The hook's own HTTP request timeout, in ms: 5s under the CLI's kill timeout above
+      // (permissionTimeoutMs + 10000ms) so the hook can still print its own deny in time,
+      // rather than being force-killed with no output at all. Passed on the command line so
+      // the hook's request timeout always tracks the configured permissionTimeoutSec instead
+      // of a hardcoded constant; --settings is regenerated fresh from config every launch.
+      const requestTimeoutMs = deps.permissionTimeoutMs + 5000
       return JSON.stringify({
         hooks: {
           PermissionRequest: [{
-            hooks: [{ type: 'command', command: `node "${hookPath}" --port ${port} --token ${token}`, timeout: sec }],
+            hooks: [{ type: 'command', command: `node "${hookPath}" --port ${port} --token ${token} --timeout ${requestTimeoutMs}`, timeout: sec }],
           }],
         },
       })

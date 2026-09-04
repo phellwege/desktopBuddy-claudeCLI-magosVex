@@ -136,6 +136,10 @@ export class ClaudeCliBrain implements Brain {
       channel.end()
     })
 
+    // A child that already exited (or never started a real stdin pipe, as some fakes in
+    // tests don't) can make this write fail with EPIPE/EOF; without a listener, Node treats
+    // an 'error' event with no handler as an uncaught exception and crashes the process.
+    child.stdin?.on('error', () => { /* ignore: the child is gone, nothing to write to */ })
     child.stdin?.write(prompt)
     child.stdin?.end()
 
@@ -176,7 +180,7 @@ export class ClaudeCliBrain implements Brain {
           // The session id learned from init survives a stop or a crash, so the next turn
           // resumes the same conversation instead of starting over.
           if (this.stopped) {
-            yield { type: 'done', sessionId: sessionIdFromInit, error: `stopped (exit code ${item.code ?? 'null'})` }
+            yield { type: 'done', sessionId: sessionIdFromInit, error: `stopped (exit code ${item.code ?? 'null'})`, stopped: true }
           } else {
             const tail = stderrLines.slice(-5).join('\n')
             yield { type: 'done', sessionId: sessionIdFromInit, error: `exit code ${item.code ?? 'null'}${tail ? ': ' + tail : ''}` }
@@ -193,7 +197,9 @@ export class ClaudeCliBrain implements Brain {
     this.stopped = true
     const child = this.child
     if (!child || child.pid === undefined) return
-    if (process.platform === 'win32') nodeSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'])
-    else child.kill()
+    if (process.platform === 'win32') {
+      const killer = nodeSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+      killer.on('error', () => { /* best effort only: nothing more we can do if taskkill itself fails to spawn */ })
+    } else child.kill()
   }
 }

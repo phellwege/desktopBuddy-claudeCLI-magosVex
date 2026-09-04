@@ -13,7 +13,7 @@ import { hologramBounds, originToWindow } from './geometry'
 import { wireIpc } from './ipc'
 import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
-import { ClaudeCliBrain } from './brain/claude-cli'
+import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import type { Brain } from './brain/types'
 import { ChatController } from './chat'
 import { hookScriptPath, startLocalServer, type PermissionRequest } from './server'
@@ -131,6 +131,16 @@ async function main(): Promise<void> {
     toHologram(CH.chatPermission, payload)
     return chatRef!.awaitPermissionAnswer(req.id)
   }
+  // The server's own permission timeout already answered "deny" on the wire by the time this
+  // fires; the pending resolver in ChatController and the card still showing in the renderer
+  // are both now stale and would otherwise linger forever (permissionAnswer() is the only
+  // other thing that clears either, and nobody is going to click a card the user never saw
+  // answer in time).
+  const onPermissionTimeout = (id: string): void => {
+    chatRef?.expirePermission(id)
+    toHologram(CH.chatPermission, { id, dismiss: true } satisfies ChatPermissionPayload)
+    out.system(pickLine(pack, 'permissionDenied') ?? 'Denied: timed out waiting for a decision.')
+  }
   // The first tool activity of a turn forces mood to "thinking"; on the way out the brain
   // asks to restore it, but only if nothing else (a set_mood tool call) changed it meanwhile.
   let moodBeforeThinking: Mood | null = null
@@ -148,9 +158,13 @@ async function main(): Promise<void> {
     actions,
     setExpression: (name) => chatRef?.setExpression(name),
     onPermission,
+    onPermissionTimeout,
     permissionTimeoutMs: config.permissionTimeoutSec * 1000,
   })
-  app.on('before-quit', () => { void server.close() })
+  // Quitting mid-turn must not orphan a running claude.exe: chatRef is still undefined only
+  // during the brief startup window before the ChatController below is constructed, hence
+  // the guard (by the time a real quit happens, it is always set).
+  app.on('before-quit', () => { chatRef?.stop(); void server.close() })
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
@@ -170,18 +184,18 @@ async function main(): Promise<void> {
   // its only effect is one line appended to the status row once (or never) it resolves.
   function checkCliAuth(path: string): void {
     try {
-      const child = spawn(path, ['auth', 'status'], { stdio: ['ignore', 'pipe', 'ignore'] })
+      const child = spawn(path, ['auth', 'status'], { stdio: ['ignore', 'pipe', 'ignore'], env: childEnv(process.env) })
       let buf = ''
       const timer = setTimeout(() => child.kill(), 5000)
       child.stdout?.on('data', (c: Buffer) => { buf += c.toString('utf8') })
       child.on('close', () => {
         clearTimeout(timer)
+        let statusLine: string | undefined
         try {
           const parsed = JSON.parse(buf) as { loggedIn?: unknown }
-          if (typeof parsed.loggedIn === 'boolean') {
-            out.status({ ...chat.status(), error: parsed.loggedIn ? 'cli: logged in' : 'cli: not logged in' })
-          }
-        } catch { /* not JSON; leave the status row alone */ }
+          statusLine = typeof parsed.loggedIn === 'boolean' ? (parsed.loggedIn ? 'cli: logged in' : 'cli: not logged in') : rawCliStatusLine(buf)
+        } catch { statusLine = rawCliStatusLine(buf) }
+        if (statusLine) out.status({ ...chat.status(), error: statusLine })
       })
       child.on('error', () => clearTimeout(timer))
     } catch { /* best effort only */ }
@@ -215,6 +229,16 @@ async function main(): Promise<void> {
 
   screen.on('display-metrics-changed', () => { rebound(overlay, charH); if (hologram.isVisible()) placeHologram() })
   app.on('window-all-closed', () => app.quit())
+}
+
+// `claude auth status` is only guaranteed to print JSON on success; a CLI version mismatch,
+// an unexpected prompt, or any other unforeseen output would otherwise vanish silently. Show
+// something rather than nothing: the first line, trimmed, capped well under the status row's
+// width.
+function rawCliStatusLine(buf: string): string | undefined {
+  const firstLine = buf.split(/\r?\n/, 1)[0]?.trim()
+  if (!firstLine) return undefined
+  return firstLine.length > 120 ? firstLine.slice(0, 120) : firstLine
 }
 
 function parseArgsPrefix(raw: string | undefined): string[] {

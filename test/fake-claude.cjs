@@ -89,13 +89,13 @@ function parseHookCommand(raw) {
   const hooks = settings && settings.hooks && settings.hooks.PermissionRequest
   const command = hooks && hooks[0] && hooks[0].hooks && hooks[0].hooks[0] && hooks[0].hooks[0].command
   if (!command) return null
-  const m = /^node "(.+)" --port (\S+) --token (\S+)$/.exec(command)
-  return m ? { hookPath: m[1], port: m[2], token: m[3] } : null
+  const m = /^node "(.+)" --port (\S+) --token (\S+) --timeout (\S+)$/.exec(command)
+  return m ? { hookPath: m[1], port: m[2], token: m[3], timeoutMs: m[4] } : null
 }
 
 function runHook(hook, body) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [hook.hookPath, '--port', hook.port, '--token', hook.token])
+    const child = spawn(process.execPath, [hook.hookPath, '--port', hook.port, '--token', hook.token, '--timeout', hook.timeoutMs])
     let out = ''
     child.stdout.on('data', (c) => { out += c.toString('utf8') })
     child.on('error', reject)

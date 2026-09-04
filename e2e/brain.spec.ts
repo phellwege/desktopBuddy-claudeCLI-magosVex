@@ -24,7 +24,6 @@ async function launch(scenario: string): Promise<{ app: ElectronApplication; hol
       BUDDY_CLI_PATH: process.execPath,
       BUDDY_CLI_ARGS: JSON.stringify([fakeCliScript]),
       FAKE_CLAUDE_SCENARIO: scenario,
-      FAKE_CLAUDE_NODE_EXE: process.execPath,
     },
   })
   const hologram = await windowByUrl(app, 'hologram')

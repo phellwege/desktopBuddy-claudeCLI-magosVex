@@ -100,7 +100,11 @@ export class ChatController implements ChatPort {
         else if (ev.type === 'expression') this.currentExpression = ev.name
         else if (ev.type === 'done') {
           if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
-          if (ev.error) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
+          // A user-initiated /stop already posted the pack's "stopped" line synchronously
+          // (see the 'stop' case in run()); the killed child's own done event still carries
+          // an error ("stopped (exit code ...)"), but it must not also post the pack's error
+          // line, or a stop would show two lines instead of one.
+          if (ev.error && !ev.stopped) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
           this.deps.out.done({ error: ev.error, expression: this.currentExpression })
         }
       }
@@ -117,6 +121,15 @@ export class ChatController implements ChatPort {
   // timeout fires first and answers the hook on its own.
   awaitPermissionAnswer(id: string): Promise<{ allow: boolean; reason: string }> {
     return new Promise((resolve) => { this.pendingPermissions.set(id, resolve) })
+  }
+  // Called by main/index.ts's onPermissionTimeout, wired from the local server, once the
+  // server's own race against the hook has already answered "deny" on the wire: the pending
+  // resolver would otherwise sit in the map forever, since permissionAnswer() (the only other
+  // thing that clears it) is never going to be called by a user who never saw the card in
+  // time. Deliberately does not resolve or post anything - the caller owns telling the
+  // renderer to dismiss the card and posting the status line.
+  expirePermission(id: string): void {
+    this.pendingPermissions.delete(id)
   }
   permissionAnswer(id: string, allow: boolean): void {
     const resolve = this.pendingPermissions.get(id)

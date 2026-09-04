@@ -6,5 +6,5 @@ export type BrainEvent =
   | { type: 'activity'; id: string; label: string; toolName: string; done?: boolean }
   | { type: 'status'; text: string; expression?: Expression }
   | { type: 'expression'; name: Expression }
-  | { type: 'done'; sessionId?: string; error?: string }
+  | { type: 'done'; sessionId?: string; error?: string; stopped?: boolean }
 export interface Brain { respond(prompt: string, ctx: BrainContext): AsyncIterable<BrainEvent>; stop(): void }

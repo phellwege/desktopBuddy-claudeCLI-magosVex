@@ -32,6 +32,13 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine('{"type":"weird"}')).toEqual([{ type: 'ignore' }])
     expect(parseStreamLine('not json')).toEqual([{ type: 'ignore' }])
   })
+  it('never throws and never emits done on a truncated stream missing its final result line', () => {
+    const ev = events('truncated.jsonl')
+    expect(() => events('truncated.jsonl')).not.toThrow()
+    expect(ev.some(e => e.type === 'done')).toBe(false)
+    expect(ev[0]).toEqual({ type: 'init', init: { sessionId: 's1', model: 'm' } })
+    expect(ev.some(e => e.type === 'text' && e.delta === 'Hi')).toBe(true)
+  })
 })
 
 describe('activityLabel', () => {

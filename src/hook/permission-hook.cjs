@@ -11,10 +11,12 @@
 const http = require('node:http')
 
 // The CLI kills this process after the "timeout" seconds set in the generated hooks
-// settings (permissionTimeoutMs / 1000 + 10). This request timeout sits 5s under the
-// default of that (120s permission timeout -> 130s settings timeout -> 125s here), so the
-// hook can still print its own deny before the CLI force-kills it with no output at all.
-const REQUEST_TIMEOUT_MS = 125000
+// settings (permissionTimeoutMs / 1000 + 10). This request timeout should sit a few seconds
+// under that, so the hook can still print its own deny before the CLI force-kills it with no
+// output at all. The server passes the real value on the command line (--timeout, in ms) so
+// it always tracks the configured permissionTimeoutSec; this constant is only a fallback for
+// the (should-never-happen) case where the flag is missing or malformed.
+const DEFAULT_REQUEST_TIMEOUT_MS = 125000
 
 function argValue(name) {
   const i = process.argv.indexOf(name)
@@ -40,7 +42,7 @@ function readStdin() {
   })
 }
 
-function postPermission(port, token, body) {
+function postPermission(port, token, timeoutMs, body) {
   return new Promise((resolve, reject) => {
     const req = http.request({
       hostname: '127.0.0.1',
@@ -52,7 +54,7 @@ function postPermission(port, token, body) {
         'Content-Length': Buffer.byteLength(body),
         Authorization: `Bearer ${token}`,
       },
-      timeout: REQUEST_TIMEOUT_MS,
+      timeout: timeoutMs,
     }, (res) => {
       const chunks = []
       res.on('data', (chunk) => chunks.push(chunk))
@@ -69,13 +71,19 @@ function postPermission(port, token, body) {
   })
 }
 
+function requestTimeoutMs() {
+  const raw = argValue('--timeout')
+  const n = raw !== undefined ? Number(raw) : NaN
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_REQUEST_TIMEOUT_MS
+}
+
 async function main() {
   const port = argValue('--port')
   const token = argValue('--token')
   if (!port || !token) throw new Error('missing --port or --token')
 
   const body = await readStdin()
-  const raw = await postPermission(port, token, body)
+  const raw = await postPermission(port, token, requestTimeoutMs(), body)
   const parsed = JSON.parse(raw)
   const reason = typeof parsed.reason === 'string' ? parsed.reason : ''
   printDecision(parsed.decision === 'allow' ? 'allow' : 'deny', reason)

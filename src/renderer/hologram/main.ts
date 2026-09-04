@@ -43,9 +43,18 @@ let atlasImage: HTMLImageElement | null = null
 let facesMap: Record<Expression, string> | null = null
 let accent = '#37c4ff'
 let holoFace: HoloFace | null = null
+// Bubbles that recorded an expression (via renderFaceInto) before the atlas had finished
+// loading, so they never got a .face-slot at all. Their text is never touched again ("old
+// messages never change"), but once the atlas is ready we still owe them the face they
+// recorded - stamped on once, here, rather than never.
+const pendingFaces: { bubble: HTMLDivElement; expression: Expression }[] = []
 
 function rebuildFace(): void {
   holoFace = (atlas && atlasImage && facesMap) ? new HoloFace(atlasImage, atlas, facesMap, accent) : null
+  if (holoFace && pendingFaces.length) {
+    const backlog = pendingFaces.splice(0, pendingFaces.length)
+    for (const { bubble, expression } of backlog) renderFaceInto(bubble, expression)
+  }
 }
 
 // Same blob-URL loader the overlay window uses (src/renderer/overlay/main.ts): fetching
@@ -82,9 +91,15 @@ function flush(): void {
   }
 }
 function renderFaceInto(bubble: HTMLDivElement, expression: Expression): void {
-  if (!holoFace) return
-  const slot = bubble.querySelector('.face-slot') as HTMLElement | null
-  if (slot) slot.appendChild(holoFace.render(expression))
+  if (!holoFace) { pendingFaces.push({ bubble, expression }); return }
+  let slot = bubble.querySelector('.face-slot') as HTMLElement | null
+  if (!slot) {
+    // This bubble was created before the atlas finished loading, so add() never gave it a
+    // face-slot at all; add one now, in the same spot add() would have (before the text).
+    slot = document.createElement('div'); slot.className = 'face-slot'
+    bubble.insertBefore(slot, bubble.querySelector('.text'))
+  }
+  slot.appendChild(holoFace.render(expression))
 }
 
 window.buddy.onTheme((t: ThemePayload) => {
@@ -114,7 +129,14 @@ window.buddy.onChatDelta(({ text }) => {
 })
 window.buddy.onChatActivity((a) => {
   let el = activities.get(a.id)
-  if (!el) { el = document.createElement('div'); el.className = 'activity'; activities.set(a.id, el); (current ?? add('buddy', '')).insertAdjacentElement('afterend', el) }
+  if (!el) {
+    // An activity row can be the very first thing a turn produces, before any text delta -
+    // it must create (and keep) the reply bubble itself, or the text that follows would
+    // create a second, separate bubble and leave this one permanently empty.
+    if (!current) { current = add('buddy', ''); buffer = '' }
+    el = document.createElement('div'); el.className = 'activity'; activities.set(a.id, el)
+    current.insertAdjacentElement('afterend', el)
+  }
   // The tool_result event that marks a row done carries no label of its own (stream.ts's
   // parseUser always emits label: ''); keep the running label visible instead of blanking
   // the row out right as it finishes.
@@ -132,7 +154,11 @@ window.buddy.onChatSystem(({ text, expression }: ChatSystemPayload) => {
   renderFaceInto(el, expression ?? 'neutral')
 })
 window.buddy.onChatPermission((p) => {
-  pending = p; permLine.textContent = p.line; permDetail.textContent = `${p.toolName}: ${p.summary}`; perm.hidden = false
+  // A dismiss means the server's own timeout already answered this request on the wire: hide
+  // the card if it is still showing that same (now stale) request. Ignore it otherwise - the
+  // user may already have answered and a new, unrelated request could be showing by now.
+  if (p.dismiss) { if (pending?.id === p.id) { pending = null; perm.hidden = true }; return }
+  pending = p; permLine.textContent = p.line ?? ''; permDetail.textContent = `${p.toolName ?? ''}: ${p.summary ?? ''}`; perm.hidden = false
 })
 const answer = (allow: boolean) => { if (!pending) return; window.buddy.permissionAnswer(pending.id, allow); pending = null; perm.hidden = true }
 $('perm-allow').addEventListener('click', () => answer(true))

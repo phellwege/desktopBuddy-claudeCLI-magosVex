@@ -84,6 +84,34 @@ describe('ChatController', () => {
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack: withLine, out, settings: settings() })
     await c.prompt('/stop'); expect(out.systems.at(-1)).toBe('Rite aborted.')
   })
+  it('a user /stop mid-turn posts only the stopped line, not the pack error line, when the killed brain reports done(stopped: true)', async () => {
+    const out = fakeOut()
+    let release!: () => void
+    const brain: Brain = {
+      async *respond() {
+        yield { type: 'text', delta: 'x' }
+        await new Promise<void>(r => { release = r })
+        yield { type: 'done', error: 'stopped (exit code null)', stopped: true }
+      },
+      stop() { release() },
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('one')
+    await new Promise(r => setTimeout(r, 5))
+    c.prompt('/stop')
+    await new Promise(r => setTimeout(r, 5))
+    expect(out.systems).toEqual(['stopped'])
+    expect(out.dones).toBe(1)
+    expect(out.doneArgs.at(-1)).toMatchObject({ error: 'stopped (exit code null)' })
+  })
+  it('a brain-reported done error without stopped still posts the pack error line (e.g. a real crash)', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'done', error: 'exit code 1' }]), actions: fakeActions(), pack, out, settings: settings() })
+    await c.prompt('hello')
+    await new Promise(r => setTimeout(r, 10))
+    expect(out.systems.at(-1)).toContain('exit code 1')
+    expect(out.faces.at(-1)).toBe('sadness')
+  })
   it('carries the expression yielded by the brain in the done payload', async () => {
     const out = fakeOut()
     const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'expression', name: 'happy' }, { type: 'done' }]),
@@ -153,6 +181,24 @@ describe('ChatController', () => {
     const out = fakeOut()
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
     expect(() => c.permissionAnswer('nope', true)).not.toThrow()
+    expect(out.systems).toEqual([])
+  })
+  it('expirePermission removes the pending entry so it never resolves and a later permissionAnswer for it is a no-op', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    const pending = c.awaitPermissionAnswer('p3')
+    let settled = false
+    void pending.then(() => { settled = true })
+    c.expirePermission('p3')
+    c.permissionAnswer('p3', true)
+    await new Promise(r => setTimeout(r, 10))
+    expect(settled).toBe(false)
+    expect(out.systems).toEqual([])
+  })
+  it('expirePermission on an unknown id is a no-op', () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    expect(() => c.expirePermission('nope')).not.toThrow()
     expect(out.systems).toEqual([])
   })
   it('setExpression stamps the expression carried on the next done payload', async () => {

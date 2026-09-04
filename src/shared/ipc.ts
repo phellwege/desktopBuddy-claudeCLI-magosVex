@@ -31,7 +31,10 @@ export interface BuddyStatePayload { state: BuddyState; animation: AnimationKey;
 export interface ChatDeltaPayload { text: string }
 export interface ChatActivityPayload { id: string; label: string; done: boolean }
 export interface ChatDonePayload { error?: string; expression?: Expression }
-export interface ChatPermissionPayload { id: string; toolName: string; summary: string; line: string }
+// A normal card carries toolName/summary/line; a dismiss carries only the id, telling the
+// renderer to hide the card if it is still showing that same request (the server's own
+// permission timeout already answered "deny" on the wire by the time this arrives).
+export interface ChatPermissionPayload { id: string; toolName?: string; summary?: string; line?: string; dismiss?: boolean }
 export interface ChatStatusPayload { model: string | null; workspace: string; session: string; error?: string }
 export interface ChatSystemPayload { text: string; expression?: Expression }
 export interface ThemePayload extends PackTheme { name: string }

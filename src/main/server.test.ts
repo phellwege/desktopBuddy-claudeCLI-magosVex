@@ -29,6 +29,7 @@ function fakeDeps(overrides?: Partial<ServerDeps>): ServerDeps & { actions: Retu
     actions,
     setExpression: vi.fn(),
     onPermission: vi.fn(async () => ({ allow: true, reason: 'ok' })),
+    onPermissionTimeout: vi.fn(),
     permissionTimeoutMs: 60000,
     ...overrides,
   } as ServerDeps & { actions: ReturnType<typeof fakeActions>; setExpression: ReturnType<typeof vi.fn> }
@@ -156,11 +157,11 @@ describe('startLocalServer', () => {
     })
   })
 
-  it('hookSettings returns a PermissionRequest hook command with port and token', async () => {
+  it('hookSettings returns a PermissionRequest hook command with port, token and a --timeout tracking permissionTimeoutMs', async () => {
     server = await startLocalServer(fakeDeps({ permissionTimeoutMs: 60000 }))
     const parsed = JSON.parse(server.hookSettings('C:\\hook.cjs'))
     const hook = parsed.hooks.PermissionRequest[0].hooks[0]
-    expect(hook.command).toBe(`node "C:\\hook.cjs" --port ${server.port} --token ${server.token}`)
+    expect(hook.command).toBe(`node "C:\\hook.cjs" --port ${server.port} --token ${server.token} --timeout 65000`)
     expect(hook.timeout).toBe(70)
   })
 
@@ -183,7 +184,7 @@ describe('startLocalServer', () => {
       expect(req.summary).toBe('running: ls -la')
     })
 
-    it('denies after the server timeout when onPermission never resolves', async () => {
+    it('denies after the server timeout when onPermission never resolves, and reports the timeout so the pending entry can be cleared', async () => {
       const deps = fakeDeps({ onPermission: () => new Promise(() => {}), permissionTimeoutMs: 200 })
       server = await startLocalServer(deps)
       const res = await fetch(`http://127.0.0.1:${server.port}/permission`, {
@@ -194,6 +195,31 @@ describe('startLocalServer', () => {
       expect(res.status).toBe(200)
       const body = await res.json() as { decision: string; reason: string }
       expect(body.decision).toBe('deny')
+      expect(deps.onPermissionTimeout).toHaveBeenCalledExactlyOnceWith('xyz')
+    })
+
+    it('does not call onPermissionTimeout when onPermission answers before the timeout', async () => {
+      const deps = fakeDeps({ permissionTimeoutMs: 5000 })
+      server = await startLocalServer(deps)
+      await fetch(`http://127.0.0.1:${server.port}/permission`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
+        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'abc2' }),
+      })
+      expect(deps.onPermissionTimeout).not.toHaveBeenCalled()
+    })
+
+    it('answers 500 instead of hanging when onPermission throws synchronously', async () => {
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const deps = fakeDeps({ onPermission: () => { throw new Error('boom') } })
+      server = await startLocalServer(deps)
+      const res = await fetch(`http://127.0.0.1:${server.port}/permission`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
+        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'z' }),
+      })
+      expect(res.status).toBe(500)
+      spy.mockRestore()
     })
   })
 })

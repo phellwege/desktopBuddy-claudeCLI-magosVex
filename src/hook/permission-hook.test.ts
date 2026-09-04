@@ -7,9 +7,9 @@ const HOOK_PATH = join(__dirname, 'permission-hook.cjs')
 
 interface HookOutput { hookSpecificOutput: { hookEventName: string; decision: string; decisionReason: string } }
 
-function runHook(port: number, token: string, requestBody: unknown): Promise<HookOutput> {
+function runHook(port: number, token: string, requestBody: unknown, extraArgs: string[] = []): Promise<HookOutput> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [HOOK_PATH, '--port', String(port), '--token', token])
+    const child = spawn(process.execPath, [HOOK_PATH, '--port', String(port), '--token', token, ...extraArgs])
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (c: Buffer) => { stdout += c.toString() })
@@ -87,5 +87,33 @@ describe('permission-hook.cjs', () => {
     expect(output.hookSpecificOutput.hookEventName).toBe('PermissionRequest')
     expect(output.hookSpecificOutput.decision).toBe('deny')
     expect(output.hookSpecificOutput.decisionReason.length).toBeGreaterThan(0)
+  })
+
+  it('honors a --timeout override shorter than its built-in default, denying once that elapses', async () => {
+    // A server that never answers: without --timeout tracking the configured
+    // permissionTimeoutSec, this would hang for the hardcoded 125s default instead.
+    server = createServer(() => { /* never responds */ })
+    const port = await listen(server)
+
+    const started = Date.now()
+    const output = await runHook(port, 'a-token', { tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: '4' }, ['--timeout', '300'])
+    const elapsed = Date.now() - started
+    expect(elapsed).toBeLessThan(5000)
+    expect(output.hookSpecificOutput.decision).toBe('deny')
+    expect(output.hookSpecificOutput.decisionReason).toMatch(/timed out/)
+  })
+
+  it('falls back to the built-in default timeout when --timeout is missing or malformed', async () => {
+    server = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (c: Buffer) => chunks.push(c))
+      req.on('end', () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ decision: 'allow', reason: 'ok' }))
+      })
+    })
+    const port = await listen(server)
+    const output = await runHook(port, 'a-token', { tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: '5' }, ['--timeout', 'not-a-number'])
+    expect(output.hookSpecificOutput.decision).toBe('allow')
   })
 })
