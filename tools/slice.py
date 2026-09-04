@@ -1,9 +1,11 @@
 """Slice a labeled sprite sheet into an atlas using rows.json bands."""
-import argparse, json, os
+import argparse, json, os, sys
 from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 from scipy import ndimage
+sys.path.insert(0, os.path.dirname(__file__))
+from key import key_background_bands, band_rects
 
 MIN_BODY_H_1X = 60
 MAX_DX_1X = 90
@@ -132,10 +134,17 @@ def draft_animations(names_by_band: dict[str, list[str]]) -> dict:
     return draft
 
 
-def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float) -> dict:
-    rgba = np.array(Image.open(sheet).convert("RGBA"))
+def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key: bool = False) -> dict:
+    rows_data = json.load(open(rows))
+    bands = rows_data["bands"]
+    if key:
+        rgb = np.array(Image.open(sheet).convert("RGB"))
+        tolerance = rows_data.get("keyTolerance", 16)
+        alpha_ch = key_background_bands(rgb, band_rects(bands, scale), tolerance)
+        rgba = np.dstack([rgb, alpha_ch])
+    else:
+        rgba = np.array(Image.open(sheet).convert("RGBA"))
     alpha = rgba[..., 3]
-    bands = json.load(open(rows))["bands"]
     ov = json.load(open(overrides)) if os.path.exists(overrides) else {}
     os.makedirs(out_dir, exist_ok=True)
     all_frames, names_by_band, counts = [], {}, {}
@@ -173,8 +182,9 @@ def main() -> None:
     p.add_argument("--rows", default=os.path.join(os.path.dirname(__file__), "rows.json"))
     p.add_argument("--overrides", default=os.path.join(os.path.dirname(__file__), "overrides.json"))
     p.add_argument("--scale", type=float, default=1.0)
+    p.add_argument("--key", action="store_true", help="sheet is a raw RGB sheet; key it band-by-band before slicing")
     a = p.parse_args()
-    for band, n in build(a.sheet, a.rows, a.overrides, a.out_dir, a.scale).items():
+    for band, n in build(a.sheet, a.rows, a.overrides, a.out_dir, a.scale, a.key).items():
         print(f"{band}: {n}")
 
 

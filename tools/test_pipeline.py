@@ -157,7 +157,7 @@ def test_each_mode_ignores_specks_at_scale():
     assert len(frames_2x) == 4
 
 
-from key import key_background
+from key import key_background, key_background_bands, band_rects
 from upscale import upscale
 
 
@@ -180,6 +180,57 @@ def test_key_background_tolerance_bounds():
     im[8:12, 8:12] = (70, 48, 46)        # differs by 20: background at tolerance 36, foreground at 10
     assert key_background(im, tolerance=36, inset=2)[10, 10] == 0
     assert key_background(im, tolerance=10, inset=2)[10, 10] == 255
+
+
+def test_key_background_thin_leak_guard_keeps_interior_opaque():
+    # 30x30: background gray everywhere, a 20x20 dark "hood" ring (3px thick walls) with a
+    # background-colored interior cavity, and a single dark-gap-sized (1 row tall) corridor
+    # punched through the ring's left wall connecting the cavity straight to the exterior.
+    # Without the thin-leak guard the corridor lets the border flood fill reach the cavity
+    # and the whole interior wrongly keys transparent, exactly the v4 hood/eye leak bug.
+    bg, dark = (50, 48, 46), (10, 10, 10)
+    im = np.full((30, 30, 3), bg, dtype=np.uint8)
+    im[5:25, 5:25] = dark
+    im[8:22, 8:22] = bg              # enclosed cavity, same color as background
+    im[14:15, 5:8] = bg              # one-row-tall gap cutting straight through the left wall
+    alpha = key_background(im, tolerance=16, inset=2)
+    assert alpha[1, 1] == 0          # exterior still keys out normally
+    assert alpha[15, 15] == 255      # cavity interior stays opaque despite the thin leak path
+
+
+def test_key_background_bands_different_fills():
+    # Two side-by-side panels with different uniform fill colors, each with its own figure,
+    # plus a strip that belongs to neither band.
+    im = np.zeros((40, 90, 3), dtype=np.uint8)
+    im[:, :40] = (200, 200, 200)
+    im[:, 40:50] = (255, 0, 255)          # outside every band; must key transparent regardless
+    im[:, 50:90] = (30, 30, 30)
+    im[10:30, 10:30] = (200, 30, 30)      # figure in band 1, far outside band 1's tolerance
+    im[10:30, 60:80] = (30, 200, 30)      # figure in band 2, far outside band 2's tolerance
+    bands = [(0, 0, 40, 40), (50, 0, 90, 40)]
+    alpha = key_background_bands(im, bands, tolerance=16, inset=2)
+    assert alpha[5, 5] == 0 and alpha[5, 65] == 0        # each panel's own fill keys transparent
+    assert alpha[15, 15] == 255 and alpha[15, 70] == 255  # each panel's figure stays opaque
+    assert alpha[5, 45] == 0                              # outside every band: transparent
+
+
+def test_key_background_bands_overlap_background_wins():
+    # Band B covers the whole image (its ring samples the true background, so it correctly
+    # keys the figure opaque). Band A's rect is exactly the figure's own footprint, so its
+    # ring samples the figure's own color and keys that whole rect as "background". Where
+    # they overlap, background must win.
+    im = np.full((30, 30, 3), (40, 40, 40), dtype=np.uint8)
+    im[10:20, 10:20] = (200, 30, 30)
+    bands = [(0, 0, 30, 30), (10, 10, 20, 20)]
+    alpha = key_background_bands(im, bands, tolerance=16, inset=2)
+    assert alpha[5, 5] == 0
+    assert alpha[15, 15] == 0
+
+
+def test_band_rects_scales_and_rounds():
+    bands = [{"name": "a", "x": [10, 20], "y": [5, 15]}]
+    assert band_rects(bands, 1.0) == [(10, 5, 20, 15)]
+    assert band_rects(bands, 2.0) == [(20, 10, 40, 30)]
 
 
 def test_facing_band_emits_flipped_frames(tmp_path):
@@ -224,9 +275,9 @@ def test_real_sheet_bands_match_rows(tmp_path):
     rows_path = os.path.join(os.path.dirname(__file__), "rows.json")
     ov_path = os.path.join(os.path.dirname(__file__), "overrides.json")
     rows = json.load(open(rows_path))
-    tolerance = rows.get("keyTolerance", 36)
+    tolerance = rows.get("keyTolerance", 16)
     rgb = np.array(Image.open(RAW).convert("RGB"))
-    alpha = key_background(rgb, tolerance)
+    alpha = key_background_bands(rgb, band_rects(rows["bands"], 1.0), tolerance)
     keyed = tmp_path / "keyed.png"; Image.fromarray(np.dstack([rgb, alpha])).save(keyed)
     counts = build(str(keyed), rows_path, ov_path, str(tmp_path / "out"), 1.0)
     expected = {b["name"]: b["count"] for b in rows["bands"] if not b.get("each")}
