@@ -4,6 +4,12 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from clean import clean_alpha
 from slice import Box, components, group_frames, normalize, pack_atlas, build
+import slice as slice_mod
+import segment_sam
+from segment_sam import (
+    resolve_ownership, is_hairline, in_numeral_strip, nearest_attachment,
+    compute_anchor, contact_length, largest_component_centroid,
+)
 
 
 def test_clean_alpha_thresholds_and_stretches():
@@ -450,3 +456,288 @@ def test_real_sheet_bands_match_rows(tmp_path):
     counts_2x = build(str(keyed_2x), rows_path, ov_path, str(tmp_path / "out2x"), 2.0)
     assert counts_2x["faces"] == 10
     assert counts_2x["props"] == counts["props"]
+
+
+# ---------------------------------------------------------------------------------
+# SAM-mode (tools/segment_sam.py): pure helper functions, none of which need the model
+# or CUDA. The model-dependent segment_band() itself is only exercised by the skipif
+# integration test at the bottom of this file.
+# ---------------------------------------------------------------------------------
+
+def test_resolve_ownership_picks_higher_logit_on_overlap():
+    mask_a = np.zeros((10, 10), dtype=bool); mask_a[:, :6] = True
+    mask_b = np.zeros((10, 10), dtype=bool); mask_b[:, 4:] = True  # overlaps cols 4-5 with a
+    logits_a = np.full((10, 10), 1.0)
+    logits_b = np.full((10, 10), 1.0)
+    logits_b[:, 4:6] = 5.0  # b wins the contested columns
+    owner = resolve_ownership([mask_a, mask_b], [logits_a, logits_b])
+    assert (owner[:, :4] == 1).all()   # a-only region
+    assert (owner[:, 4:6] == 2).all()  # contested region: b's higher logit wins
+    assert (owner[:, 6:] == 2).all()   # b-only region
+
+
+def test_resolve_ownership_three_way_overlap_finds_true_max():
+    # all three masks claim the same single pixel; ownership must reflect the global max
+    # logit, not just a pairwise comparison against whichever mask was applied first.
+    shape = (5, 5)
+    masks = [np.zeros(shape, dtype=bool) for _ in range(3)]
+    for m in masks:
+        m[2, 2] = True
+    logits = [np.full(shape, v) for v in (1.0, 9.0, 4.0)]
+    owner = resolve_ownership(masks, logits)
+    assert owner[2, 2] == 2  # the middle mask (index 1) has the highest logit, 1-based id 2
+
+
+def test_resolve_ownership_no_masks_returns_empty():
+    assert resolve_ownership([], []).shape == (0, 0)
+
+
+def test_is_hairline_thin_and_long_either_orientation():
+    assert is_hairline(w=2, h=40, max_thickness=3, min_length=30)
+    assert is_hairline(w=40, h=2, max_thickness=3, min_length=30)  # transpose
+    assert not is_hairline(w=10, h=40, max_thickness=3, min_length=30)  # too thick
+    assert not is_hairline(w=2, h=10, max_thickness=3, min_length=30)   # too short
+
+
+def test_in_numeral_strip_only_when_fully_inside():
+    assert in_numeral_strip(50, 60, (48, 63))
+    assert not in_numeral_strip(50, 70, (48, 63))   # pokes out the bottom
+    assert not in_numeral_strip(40, 60, (48, 63))   # pokes out the top
+    assert not in_numeral_strip(50, 60, None)       # no strip configured: never drop
+
+
+def test_nearest_attachment_picks_closest_within_reach():
+    points = [10.0, 100.0, 250.0]
+    assert nearest_attachment(15.0, points, max_dx=90) == 0
+    assert nearest_attachment(120.0, points, max_dx=90) == 1
+    assert nearest_attachment(1000.0, points, max_dx=90) is None  # nothing close enough
+    assert nearest_attachment(5.0, [], max_dx=90) is None
+
+
+def test_compute_anchor_is_feet_centroid():
+    mask = np.zeros((100, 60), dtype=bool)
+    mask[0:90, 20:30] = True   # tall narrow body, rows 0-89
+    mask[81:90, 0:49] = True   # feet: widen just the lowest ~10% of rows, off-center
+    ax, ay = compute_anchor(mask)
+    assert ay == 90            # one past the lowest occupied row
+    assert ax == 24            # centroid x of rows >= 81 only (0..48 -> mean 24), not the
+                                # narrow upper-body columns 20-29
+
+
+def test_compute_anchor_raises_on_empty_mask():
+    with pytest.raises(ValueError):
+        compute_anchor(np.zeros((10, 10), dtype=bool))
+
+
+def test_contact_length_counts_touching_pixel_pairs():
+    a = np.zeros((10, 10), dtype=bool); a[:, :5] = True
+    b = np.zeros((10, 10), dtype=bool); b[:, 5:] = True
+    assert contact_length(a, b) == 10  # one shared vertical seam, 10 rows tall
+    c = np.zeros((10, 10), dtype=bool); c[:, 7:] = True  # never touches a
+    assert contact_length(a, c) == 0
+
+
+def test_largest_component_centroid_picks_biggest_blob():
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[1:3, 1:3] = True       # small blob, 4px
+    mask[10:16, 10:16] = True   # bigger blob, 36px, centered at (12.5, 12.5)
+    assert largest_component_centroid(mask) == pytest.approx((12.5, 12.5))
+
+
+def test_largest_component_centroid_none_when_empty():
+    assert largest_component_centroid(np.zeros((5, 5), dtype=bool)) is None
+
+
+def test_touching_owner_picks_the_mask_with_most_contact():
+    a = np.zeros((20, 20), dtype=bool); a[:, :5] = True
+    b = np.zeros((20, 20), dtype=bool); b[:, 15:] = True
+    frag = np.zeros((20, 20), dtype=bool); frag[2:6, 5:6] = True  # touches a on 4 rows, b on none
+    assert segment_sam.touching_owner(frag, [a, b]) == 0
+
+
+def test_touching_owner_none_when_isolated():
+    a = np.zeros((20, 20), dtype=bool); a[:, :5] = True
+    frag = np.zeros((20, 20), dtype=bool); frag[2:6, 10:11] = True  # nowhere near a
+    assert segment_sam.touching_owner(frag, [a]) is None
+    assert segment_sam.touching_owner(frag, []) is None
+
+
+def test_group_frames_sam_attaches_and_drops_fragments(monkeypatch):
+    """End-to-end exercise of _group_frames_sam's fragment/numeral-strip/hairline/
+    touching-owner logic, without a real model: segment_sam.segment_band is
+    monkeypatched to return two fixed SAM objects. A floating fragment near object 0's
+    point must be attached to frame 0; a notch directly touching object 0's own boundary
+    must be reattached to frame 0 even though its shape alone would match the hairline
+    drop rule (a stand-in for the real jagged-hem gaps SAM's mask misses); a fragment
+    sitting entirely inside the band's numeralStrip, and a non-touching hairline sliver,
+    must both be dropped (owned by nobody) regardless of how close they are to either
+    point."""
+    h, w = 120, 200
+    alpha = np.zeros((h, w), dtype=np.uint8)
+    obj0 = np.zeros((h, w), dtype=bool); obj0[40:100, 10:40] = True      # 60x30 = 1800px
+    obj1 = np.zeros((h, w), dtype=bool); obj1[40:100, 100:130] = True    # 60x30 = 1800px
+    floating = np.zeros((h, w), dtype=bool); floating[10:18, 15:23] = True   # 8x8, near obj0's point (25)
+    notch = np.zeros((h, w), dtype=bool); notch[45:75, 40:41] = True    # 1x30, touches obj0's right edge
+    numeral = np.zeros((h, w), dtype=bool); numeral[5:9, 60:64] = True       # 4x4, inside numeralStrip [0,10)
+    hairline = np.zeros((h, w), dtype=bool); hairline[20:60, 70:72] = True   # 2px wide, 40 tall, touches nothing
+
+    alpha[obj0 | obj1 | floating | notch | numeral | hairline] = 255
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+
+    fake_points = [(25.0, 70.0), (115.0, 70.0)]
+    fake_masks = [obj0, obj1]
+    fake_logits = [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]
+
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor):
+        return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "masks": fake_masks, "logits": fake_logits}
+
+    monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
+
+    band = {"name": "t", "x": [0, w], "y": [0, h], "count": 2, "numeralStrip": [0, 10]}
+    diagnostics = {}
+    frames = slice_mod._group_frames_sam(rgb, alpha, band, 1.0, diagnostics=diagnostics)
+    assert len(frames) == 2
+    box0, cx0 = frames[0]
+    box1, cx1 = frames[1]
+    assert cx0 == 25.0 and cx1 == 115.0
+
+    def owns(box, gy, gx):
+        return box.y0 <= gy < box.y1 and box.x0 <= gx < box.x1 and \
+            box.owner_mask[gy - box.y0, gx - box.x0]
+
+    # the floating fragment is attached to frame 0 (its point, x=25, is much closer than
+    # frame 1's, x=115); the notch is reattached to frame 0 because it touches obj0
+    # directly, even though its 1x30 shape alone would otherwise match the hairline rule
+    assert owns(box0, 12, 18)                       # a point inside `floating`
+    assert owns(box0, 50, 40)                       # a point inside `notch`
+    assert int(box0.owner_mask.sum()) == 1800 + 64 + 30
+    assert int(box1.owner_mask.sum()) == 1800        # frame 1 is untouched
+
+    # the numeral-strip fragment and the hairline sliver are both dropped: owned by
+    # neither frame, even though the hairline sits roughly between the two points
+    assert not owns(box0, 6, 61) and not owns(box1, 6, 61)      # numeral fragment
+    assert not owns(box0, 30, 70) and not owns(box1, 30, 70)    # hairline sliver
+
+    assert diagnostics["t"]["areas"] == [1800, 1800]
+    attached = diagnostics["t"]["attached_fragments"]
+    assert len(attached) == 2
+    assert [0, [15, 10, 23, 18]] in attached   # floating, attached by nearest point
+    assert [0, [40, 45, 41, 75]] in attached   # notch, attached by touching obj0
+    dropped = diagnostics["t"]["dropped_fragments"]
+    assert len(dropped) == 2
+    assert [60, 5, 64, 9] in dropped    # numeral strip
+    assert [70, 20, 72, 60] in dropped  # non-touching hairline
+    assert diagnostics["t"]["contact"] == [{"pair": [0, 1], "contact": 0}]
+
+
+def test_group_frames_sam_raises_on_area_outlier(monkeypatch):
+    """One object far smaller than the other must raise a ValueError naming the band and
+    the offending area, before any fragment/anchor work happens."""
+    h, w = 100, 200
+    alpha = np.zeros((h, w), dtype=np.uint8)
+    obj0 = np.zeros((h, w), dtype=bool); obj0[10:90, 10:40] = True    # 80x30 = 2400px
+    obj1 = np.zeros((h, w), dtype=bool); obj1[10:20, 100:110] = True  # 10x10 = 100px, far smaller
+    alpha[obj0 | obj1] = 255
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    fake_points = [(25.0, 50.0), (105.0, 15.0)]
+
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor):
+        return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "masks": [obj0, obj1],
+                "logits": [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]}
+
+    monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
+    band = {"name": "outlier", "x": [0, w], "y": [0, h], "count": 2}
+    with pytest.raises(ValueError, match="outlier"):
+        slice_mod._group_frames_sam(rgb, alpha, band, 1.0)
+
+
+def test_group_frames_sam_scale_2x_reuses_1x_masks_via_nearest(monkeypatch):
+    """At scale=2 the sam split must recover the exact 1x arrays (by subsampling the
+    caller's already-nearest-upscaled rgb/alpha) and run segment_band exactly once, at
+    1x - never on the 2x image - then scale the result back up by nearest-neighbor pixel
+    repetition."""
+    h, w = 60, 100
+    alpha_1x = np.zeros((h, w), dtype=np.uint8)
+    obj0 = np.zeros((h, w), dtype=bool); obj0[10:50, 10:30] = True
+    obj1 = np.zeros((h, w), dtype=bool); obj1[10:50, 60:80] = True
+    alpha_1x[obj0 | obj1] = 255
+    rgb_1x = np.zeros((h, w, 3), dtype=np.uint8)
+    alpha_2x = np.kron(alpha_1x, np.ones((2, 2), dtype=np.uint8))
+    rgb_2x = np.kron(rgb_1x, np.ones((2, 2, 1), dtype=np.uint8))
+
+    fake_points = [(20.0, 30.0), (70.0, 30.0)]
+    calls = []
+
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor):
+        calls.append((rgb_.shape, scale))
+        assert scale == 1.0
+        assert rgb_.shape[:2] == (h, w)
+        return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "masks": [obj0, obj1],
+                "logits": [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]}
+
+    monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
+    band = {"name": "pair2x", "x": [0, w], "y": [0, h], "count": 2}
+    frames = slice_mod._group_frames_sam(rgb_2x, alpha_2x, band, 2.0)
+    assert len(calls) == 1  # segment_band ran exactly once, at 1x
+    assert len(frames) == 2
+    box0, cx0 = frames[0]
+    assert (box0.x0, box0.y0, box0.x1, box0.y1) == (20, 20, 60, 100)  # obj0's 1x box * 2
+    assert box0.owner_mask.shape == (80, 40)
+    assert cx0 == 40.0  # 1x point x (20.0) * 2
+
+
+RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
+
+
+def _sam_ready() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+SAM_READY = _sam_ready()
+
+
+@pytest.mark.skipif(not SAM_READY or not os.path.exists(RAW),
+                     reason="SAM venv/CUDA or raw sheet not present")
+def test_real_sheet_sam_mode_matches_counts_and_areas():
+    """Runs the real sheet through sam mode for every counted band (each-mode bands stay
+    on component mode, unaffected) and asserts every band's frame count matches
+    rows.json's `count`, and every object's own area lands in the accepted range -
+    _group_frames_sam raises ValueError itself if not, so a clean pass here is the
+    assertion. Only runs with a working SAM venv (CUDA available) - this repo's regular
+    tools/.venv has no torch/transformers installed at all."""
+    from key import key_background_bands, band_rects
+    from PIL import Image
+    rows_path = os.path.join(os.path.dirname(__file__), "rows.json")
+    rows = json.load(open(rows_path))
+    tolerance = rows.get("keyTolerance", 16)
+    rgb = np.array(Image.open(RAW).convert("RGB"))
+    alpha = key_background_bands(rgb, band_rects(rows["bands"], 1.0), tolerance)
+
+    counts = {}
+    diagnostics = {}
+    for band in rows["bands"]:
+        if band.get("each"):
+            frames = group_frames(alpha, band, 1.0, {})
+        else:
+            frames = group_frames(alpha, band, 1.0, {}, rgb=rgb, diagnostics=diagnostics,
+                                   default_split="sam")
+        counts[band["name"]] = len(frames)
+
+    expected = {b["name"]: b["count"] for b in rows["bands"] if not b.get("each")}
+    assert {k: counts[k] for k in expected} == expected
+
+    for name, diag in diagnostics.items():
+        areas = diag["areas"]
+        median = float(np.median(areas))
+        for a in areas:
+            assert 0.3 * median <= a <= 1.6 * median, (name, a, median)

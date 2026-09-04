@@ -1,0 +1,12 @@
+# SAM 2 segmentation venv (tools/.venv-sam). Install torch/torchvision separately first
+# from the cu128 index (see setup-sam.ps1) - the default PyPI index does not carry cu128
+# wheels and its default CUDA build does not support Blackwell (sm_120, RTX 50-series).
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+#   pip install -r requirements-sam.txt
+transformers>=4.45
+pillow>=10
+numpy>=1.26
+scipy>=1.11
+scikit-image>=0.22
+pytest>=8
