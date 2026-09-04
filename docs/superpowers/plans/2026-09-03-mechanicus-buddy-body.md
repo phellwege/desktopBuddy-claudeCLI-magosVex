@@ -1669,45 +1669,237 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Run the pipeline on the real sheet and author the Mechanicus pack
+### Task 6: Key the real sheet, extend the pipeline for one-direction bands, and author the Mechanicus pack
 
 **Files:**
-- Create: `tools/rows.json`, `tools/overrides.json`, `tools/debug_render.py`, `packs/mechanicus/manifest.json`, `packs/mechanicus/persona.md`, `packs/mechanicus/animations.json`, `packs/mechanicus/atlas.png`, `packs/mechanicus/atlas.json`, `src/main/pack.mechanicus.test.ts`
-- Modify: `tools/test_pipeline.py` (append the real-sheet test)
+- Create: `tools/key.py`, `tools/rows.json`, `tools/overrides.json`, `tools/debug_render.py`, `packs/mechanicus/manifest.json`, `packs/mechanicus/persona.md`, `packs/mechanicus/animations.json`, `packs/mechanicus/atlas.png`, `packs/mechanicus/atlas.json`, `src/main/pack.mechanicus.test.ts`
+- Modify: `tools/slice.py` (flip support for one-direction bands), `tools/upscale.py` (nearest-neighbor method), `tools/test_pipeline.py` (append tests)
 
 **Interfaces:**
-- Consumes: `tools/clean.py`, `tools/upscale.py`, `tools/slice.py` from Task 5; `loadPack` from Task 3.
-- Produces: a valid pack at `packs/mechanicus` that `loadPack` accepts, with every vocabulary key mapped.
+- Consumes: `tools/slice.py` (`group_frames`, `normalize`, `pack_atlas`, `build`, `draft_animations`), `tools/upscale.py` from Task 5; `loadPack` from Task 3.
+- Produces: a valid pack at `packs/mechanicus` that `loadPack` accepts with every vocabulary key mapped, and these pipeline additions:
 
-- [ ] **Step 1: Write `tools/rows.json`** (coordinates at 1x, estimated from the sheet; tuned in step 4)
+```python
+# tools/key.py
+def key_background(rgb: np.ndarray, tolerance: int = 36, inset: int = 4) -> np.ndarray   # returns alpha uint8
+# tools/slice.py additions
+#   band option "facing": "left" | "right": the band's frames are named <name>_<facing>_<i> and the
+#   pipeline also emits horizontally flipped copies named <name>_<other>_<i> with ax mirrored (w - ax).
+#   draft_animations pairs <name>_right and <name>_left into a directional entry as before.
+# tools/upscale.py addition
+#   method "nearest": integer upscale with Image.NEAREST (for pixel art). "auto" prefers esrgan, then nearest.
+```
+
+The real sheet (`raw/sheet.png`, 1536 by 1024, RGB) has a one-pixel black frame around a uniform dark gray background, about (50, 48, 46), with figures drawn in a chunky pixel-art style. There is no alpha channel, so the old alpha threshold does not apply. Keying is a flood fill: pixels within `tolerance` (sum of absolute RGB differences) of the background color sampled on a ring `inset` pixels inside the frame, connected to the border, become transparent; everything else stays opaque. Measured on the real sheet at tolerance 36: about 65 percent background, roughly 60 foreground pieces larger than 2000 pixels, no holes inside figures.
+
+The sheet's row layout (labels in caps above each group, all figures facing the viewer except walk and run, which face left):
+
+| Band | Approx x range at 1x | Approx y range | Count | Notes |
+|---|---|---|---|---|
+| turnaround | 20 to 630 | 40 to 200 | 5 | front, 3/4 front, side, 3/4 back, back |
+| idle | 650 to 970 | 40 to 200 | 3 | |
+| sit | 980 to 1260 | 40 to 200 | 2 | |
+| sleep | 1270 to 1520 | 40 to 200 | 1 | |
+| walk | 20 to 335 | 238 to 400 | 3 | facing left |
+| run | 340 to 645 | 238 to 400 | 3 | facing left |
+| jump | 650 to 995 | 238 to 400 | 2 | jump with jets, land with dust |
+| interact | 1000 to 1530 | 238 to 400 | 4 | magnifier, reading, "?", "!" with laptop |
+| usetech | 20 to 480 | 432 to 605 | 3 | laptop, floating holo tablet, laptop |
+| celebrate | 490 to 865 | 432 to 605 | 3 | hearts and sparkles above |
+| alert | 870 to 1175 | 432 to 605 | 2 | "!" and "!!" above |
+| hover | 1180 to 1530 | 432 to 605 | 2 | jets below |
+| hide | 20 to 265 | 632 to 835 | 2 | door plus figure per frame: two bodies each, merged by overrides |
+| damage | 275 to 725 | 632 to 835 | 3 | smoke above |
+| faces | 740 to 1165 | 632 to 835 | 8 | face close-ups, two rows of four; `"each": true` |
+| props | 1170 to 1530 | 632 to 835 | 0 | `"each": true` |
+
+Everything below y 840 is the footer (logo, palette, mottos) and is not banded.
+
+- [ ] **Step 1: Write the failing tests for keying, flipping, and nearest upscale**
+
+Append to `tools/test_pipeline.py`:
+
+```python
+from key import key_background
+from upscale import upscale
+
+
+def test_key_background_removes_connected_background_only():
+    # 60x60 RGB: 1px black frame, gray interior, a red 20x20 block in the middle,
+    # and a gray 4x4 "hole" inside the block that must stay opaque.
+    im = np.full((60, 60, 3), (50, 48, 46), dtype=np.uint8)
+    im[0, :] = im[-1, :] = im[:, 0] = im[:, -1] = (4, 3, 3)
+    im[20:40, 20:40] = (180, 30, 30)
+    im[28:32, 28:32] = (50, 48, 46)
+    alpha = key_background(im, tolerance=36, inset=4)
+    assert alpha.dtype == np.uint8 and alpha.shape == (60, 60)
+    assert alpha[5, 5] == 0 and alpha[0, 0] == 0
+    assert alpha[25, 25] == 255
+    assert alpha[30, 30] == 255          # enclosed gray is not connected to the border
+
+
+def test_key_background_tolerance_bounds():
+    im = np.full((20, 20, 3), (50, 48, 46), dtype=np.uint8)
+    im[8:12, 8:12] = (70, 48, 46)        # differs by 20: background at tolerance 36, foreground at 10
+    assert key_background(im, tolerance=36, inset=2)[10, 10] == 0
+    assert key_background(im, tolerance=10, inset=2)[10, 10] == 255
+
+
+def test_facing_band_emits_flipped_frames(tmp_path):
+    from PIL import Image
+    a = synthetic_sheet()
+    rgba = np.dstack([np.full_like(a, 200)] * 3 + [a])
+    rgba[40:110, 10:15, 0] = 255         # a red stripe on the left edge of body 0 to detect flipping
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [{"name": "walk", "x": [0, 120], "y": [0, 120], "count": 2, "facing": "left"}]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    out = tmp_path / "out"
+    counts = build(str(sheet), str(rows), str(ov), str(out), 1.0)
+    assert counts == {"walk": 2}
+    atlas = json.loads((out / "atlas.json").read_text())
+    assert set(atlas["frames"]) == {"walk_left_0", "walk_left_1", "walk_right_0", "walk_right_1"}
+    l, r = atlas["frames"]["walk_left_0"], atlas["frames"]["walk_right_0"]
+    assert (l["w"], l["h"], l["ay"]) == (r["w"], r["h"], r["ay"])
+    assert r["ax"] == l["w"] - l["ax"]
+    img = np.array(Image.open(out / "atlas.png"))
+    left_px = img[l["y"] + l["h"] - 1, l["x"] + 2]
+    right_px = img[r["y"] + r["h"] - 1, r["x"] + r["w"] - 3]
+    assert left_px[0] == 255 and right_px[0] == 255      # the red stripe moved to the other side
+    draft = json.loads((out / "animations.draft.json").read_text())
+    assert draft["walk"] == {"right": ["walk_right_0", "walk_right_1"], "left": ["walk_left_0", "walk_left_1"]}
+
+
+def test_upscale_nearest_doubles_size(tmp_path):
+    from PIL import Image
+    src = tmp_path / "s.png"; dst = tmp_path / "d.png"
+    Image.fromarray(np.zeros((3, 5, 4), dtype=np.uint8)).save(src)
+    assert upscale(str(src), str(dst), 2, "nearest") == "nearest"
+    assert Image.open(dst).size == (10, 6)
+```
+
+Run: `python -m pytest tools/test_pipeline.py -q`
+Expected: the four new tests fail (ImportError for `key`, KeyError or assertion for the flip test, ValueError for the nearest method).
+
+- [ ] **Step 2: Write `tools/key.py`**
+
+```python
+"""Turn a solid-background RGB sheet into RGBA by flood-filling the background from the border."""
+import argparse
+import numpy as np
+from PIL import Image
+from scipy import ndimage
+
+
+def key_background(rgb: np.ndarray, tolerance: int = 36, inset: int = 4) -> np.ndarray:
+    im = rgb[..., :3].astype(int)
+    h, w = im.shape[:2]
+    i = min(inset, h // 2 - 1, w // 2 - 1)
+    ring = np.concatenate([im[i, i:w - i], im[h - 1 - i, i:w - i], im[i:h - i, i], im[i:h - i, w - 1 - i]])
+    bg = np.median(ring, axis=0)
+    near = np.abs(im - bg).sum(-1) <= tolerance
+    near[:i, :] = near[h - i:, :] = near[:, :i] = near[:, w - i:] = True
+    labels, _ = ndimage.label(near)
+    edge = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+    background = np.isin(labels, edge[edge != 0])
+    return np.where(background, 0, 255).astype(np.uint8)
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("src"); p.add_argument("dst")
+    p.add_argument("--tolerance", type=int, default=36)
+    p.add_argument("--inset", type=int, default=4)
+    a = p.parse_args()
+    rgb = np.array(Image.open(a.src).convert("RGB"))
+    alpha = key_background(rgb, a.tolerance, a.inset)
+    Image.fromarray(np.dstack([rgb, alpha])).save(a.dst)
+    print(f"wrote {a.dst}: background {100 * (alpha == 0).mean():.1f}%")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 3: Add nearest to `tools/upscale.py`**
+
+In `upscale()`, change the signature's `method` choices to include `"nearest"` and replace the final two lines with:
+
+```python
+    im = Image.open(src).convert("RGBA")
+    resample = Image.NEAREST if method == "nearest" else Image.LANCZOS
+    im.resize((im.width * factor, im.height * factor), resample).save(dst)
+    return "nearest" if method == "nearest" else "lanczos"
+```
+
+and make `"auto"` fall through to nearest instead of Lanczos (`resample = Image.NEAREST if method in ("nearest", "auto") else Image.LANCZOS`, returning `"nearest"` in that case). Add `"nearest"` to the argparse `choices`.
+
+- [ ] **Step 4: Add facing support to `tools/slice.py`**
+
+In `build()`, replace the per-band loop body so that a band with `"facing"` emits both directions:
+
+```python
+    for band in bands:
+        frames = group_frames(alpha, band, scale, ov)
+        facing = band.get("facing")
+        other = {"left": "right", "right": "left"}.get(facing)
+        names = []
+        for i, (box, cx) in enumerate(frames):
+            crop, ax, ay = normalize(rgba, box, cx)
+            if facing:
+                own = f"{band['name']}_{facing}_{i}"
+                flipped = f"{band['name']}_{other}_{i}"
+                all_frames.append((own, crop, ax, ay))
+                all_frames.append((flipped, crop[:, ::-1].copy(), crop.shape[1] - ax, ay))
+                names_by_band.setdefault(f"{band['name']}_{facing}", []).append(own)
+                names_by_band.setdefault(f"{band['name']}_{other}", []).append(flipped)
+            else:
+                name = f"{band['name']}_{i}"
+                all_frames.append((name, crop, ax, ay))
+                names.append(name)
+        if not facing:
+            names_by_band[band["name"]] = names
+        counts[band["name"]] = len(frames)
+```
+
+`draft_animations` already pairs `walk_right` with `walk_left` and `run_right` with `run_left`; no change there.
+
+Run: `python -m pytest tools/test_pipeline.py -q`
+Expected: 14 passed, no warnings.
+
+- [ ] **Step 5: Write `tools/rows.json`** (coordinates at 1x from the table above; tuned in step 7)
 
 ```json
 { "bands": [
-  { "name": "idle",       "x": [0, 770],     "y": [38, 142],  "count": 5 },
-  { "name": "walk_right", "x": [790, 1536],  "y": [38, 142],  "count": 5 },
-  { "name": "walk_left",  "x": [0, 700],     "y": [176, 288], "count": 5 },
-  { "name": "run_right",  "x": [700, 1536],  "y": [176, 288], "count": 5 },
-  { "name": "run_left",   "x": [0, 620],     "y": [318, 432], "count": 5 },
-  { "name": "hop",        "x": [620, 1105],  "y": [318, 432], "count": 4 },
-  { "name": "fall",       "x": [1105, 1536], "y": [318, 432], "count": 3 },
-  { "name": "interact",   "x": [0, 620],     "y": [463, 578], "count": 4 },
-  { "name": "sit",        "x": [620, 1105],  "y": [463, 578], "count": 3 },
-  { "name": "look",       "x": [1105, 1536], "y": [463, 578], "count": 3 },
-  { "name": "happy",      "x": [0, 570],     "y": [606, 735], "count": 4 },
-  { "name": "confused",   "x": [570, 1090],  "y": [606, 735], "count": 3 },
-  { "name": "alarmed",    "x": [1090, 1536], "y": [606, 735], "count": 3 },
-  { "name": "sleep",      "x": [0, 345],     "y": [770, 915], "count": 1 },
-  { "name": "props",      "x": [355, 1045],  "y": [770, 965], "count": 0, "each": true },
-  { "name": "facing",     "x": [1045, 1536], "y": [770, 882], "count": 5 }
+  { "name": "turnaround", "x": [20, 630],   "y": [40, 200],  "count": 5 },
+  { "name": "idle",       "x": [650, 970],  "y": [40, 200],  "count": 3 },
+  { "name": "sit",        "x": [980, 1260], "y": [40, 200],  "count": 2 },
+  { "name": "sleep",      "x": [1270, 1520],"y": [40, 200],  "count": 1 },
+  { "name": "walk",       "x": [20, 335],   "y": [238, 400], "count": 3, "facing": "left" },
+  { "name": "run",        "x": [340, 645],  "y": [238, 400], "count": 3, "facing": "left" },
+  { "name": "jump",       "x": [650, 995],  "y": [238, 400], "count": 2 },
+  { "name": "interact",   "x": [1000, 1530],"y": [238, 400], "count": 4 },
+  { "name": "usetech",    "x": [20, 480],   "y": [432, 605], "count": 3 },
+  { "name": "celebrate",  "x": [490, 865],  "y": [432, 605], "count": 3 },
+  { "name": "alert",      "x": [870, 1175], "y": [432, 605], "count": 2 },
+  { "name": "hover",      "x": [1180, 1530],"y": [432, 605], "count": 2 },
+  { "name": "hide",       "x": [20, 265],   "y": [632, 835], "count": 2 },
+  { "name": "damage",     "x": [275, 725],  "y": [632, 835], "count": 3 },
+  { "name": "faces",      "x": [740, 1165], "y": [632, 835], "count": 0, "each": true },
+  { "name": "props",      "x": [1170, 1530],"y": [632, 835], "count": 0, "each": true }
 ] }
 ```
 
-`tools/overrides.json`: `{}`
+`tools/overrides.json` starting point (the hide frames are a door plus a figure, two bodies each):
 
-- [ ] **Step 2: Write `tools/debug_render.py`**
+```json
+{ "hide": { "merge": [[0, 1], [2, 3]] } }
+```
+
+- [ ] **Step 6: Write `tools/debug_render.py`**
 
 ```python
-"""Draw band rectangles, frame boxes, and anchors over the sheet for eyeballing rows.json."""
+"""Draw band rectangles, frame boxes, and anchors over the keyed sheet for eyeballing rows.json."""
 import argparse, json, os, sys
 from PIL import Image, ImageDraw
 import numpy as np
@@ -1723,7 +1915,7 @@ def main() -> None:
     p.add_argument("--scale", type=float, default=1.0)
     a = p.parse_args()
     im = Image.open(a.sheet).convert("RGBA")
-    bg = Image.new("RGBA", im.size, (40, 40, 40, 255)); bg.alpha_composite(im)
+    bg = Image.new("RGBA", im.size, (255, 0, 255, 255)); bg.alpha_composite(im)
     draw = ImageDraw.Draw(bg)
     rgba = np.array(im); alpha = rgba[..., 3]
     ov = json.load(open(a.overrides)) if os.path.exists(a.overrides) else {}
@@ -1740,7 +1932,7 @@ def main() -> None:
         for i, (box, cx) in enumerate(frames):
             draw.rectangle([box.x0, box.y0, box.x1 - 1, box.y1 - 1], outline=(60, 220, 90, 255))
             _, ax, ay = normalize(rgba, box, cx)
-            draw.ellipse([box.x0 + ax - 2, box.y0 + ay - 2, box.x0 + ax + 2, box.y0 + ay + 2], fill=(255, 60, 60, 255))
+            draw.ellipse([box.x0 + ax - 2, box.y0 + ay - 2, box.x0 + ax + 2, box.y0 + ay + 2], fill=(255, 255, 0, 255))
             draw.text((box.x0 + 2, box.y1 - 12), f"{band['name']}_{i}", fill=(60, 220, 90, 255))
         print(f"{band['name']}: {len(frames)}")
     bg.save(a.out)
@@ -1751,25 +1943,16 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 3: Clean and render the debug overlay at 1x**
+- [ ] **Step 7: Key the real sheet and tune the bands**
 
 ```bash
-python tools/clean.py raw/sheet.png build/clean.png
-python tools/debug_render.py build/clean.png build/debug.png
+python tools/key.py raw/sheet.png build/keyed.png
+python tools/debug_render.py build/keyed.png build/debug.png
 ```
 
-Open `build/debug.png`. Every band must print its expected count with no `!!` lines. Each green box must contain one priest plus his skull and any effect fragments; red dots sit at the feet center.
+Open `build/debug.png` (the Read tool renders it). Every band must print its expected count with no `!!` lines, except `faces` and `props`, which print whatever they find (`faces` should be 8). Each green box must contain one figure plus its skull and effect fragments; yellow dots sit at the feet. Adjust `rows.json` and `overrides.json` and repeat until clean. Typical fixes: a band top clipping a label (raise it), a skull attached to a neighbor (adjust the band `x`), a two-body frame (add a merge). Then record the final numbers in your report.
 
-- [ ] **Step 4: Tune `rows.json` and `overrides.json` until every band passes**
-
-Typical fixes: a band's `y` top clipping a label (raise the top by a few pixels), a skull attached to the wrong body (add `"merge"` or adjust the band `x`), a stray sparkle (ignore; it only enlarges a frame). Repeat step 3 after each edit. Stop when the output is exactly:
-
-```
-idle: 5, walk_right: 5, walk_left: 5, run_right: 5, run_left: 5, hop: 4, fall: 3,
-interact: 4, sit: 3, look: 3, happy: 4, confused: 3, alarmed: 3, sleep: 1, props: N, facing: 5
-```
-
-- [ ] **Step 5: Append the real-sheet test to `tools/test_pipeline.py`**
+- [ ] **Step 8: Append the real-sheet test to `tools/test_pipeline.py`**
 
 ```python
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
@@ -1778,40 +1961,41 @@ RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
 @pytest.mark.skipif(not os.path.exists(RAW), reason="raw sheet not present")
 def test_real_sheet_bands_match_rows(tmp_path):
     from PIL import Image
-    from clean import clean_alpha
-    arr = np.array(Image.open(RAW).convert("RGBA"))
-    arr[..., 3] = clean_alpha(arr[..., 3])
-    clean = tmp_path / "clean.png"; Image.fromarray(arr).save(clean)
+    rgb = np.array(Image.open(RAW).convert("RGB"))
+    alpha = key_background(rgb)
+    keyed = tmp_path / "keyed.png"; Image.fromarray(np.dstack([rgb, alpha])).save(keyed)
     rows_path = os.path.join(os.path.dirname(__file__), "rows.json")
     ov_path = os.path.join(os.path.dirname(__file__), "overrides.json")
-    counts = build(str(clean), rows_path, ov_path, str(tmp_path / "out"), 1.0)
+    counts = build(str(keyed), rows_path, ov_path, str(tmp_path / "out"), 1.0)
     expected = {b["name"]: b["count"] for b in json.load(open(rows_path))["bands"] if not b.get("each")}
     assert {k: counts[k] for k in expected} == expected
+    assert counts["faces"] == 8
     atlas = json.loads((tmp_path / "out" / "atlas.json").read_text())
     for name, f in atlas["frames"].items():
         assert 0 < f["ay"] <= f["h"] and 0 <= f["ax"] <= f["w"], name
+    assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"]
 ```
 
 Run: `python -m pytest tools/test_pipeline.py -q`
-Expected: 9 passed.
+Expected: 15 passed.
 
-- [ ] **Step 6: Upscale and build the 2x atlas**
+- [ ] **Step 9: Build the 2x atlas**
 
 ```bash
-python tools/upscale.py build/clean.png build/clean@2x.png
-python tools/slice.py build/clean@2x.png build/pack --scale 2
+python tools/upscale.py build/keyed.png build/keyed@2x.png --method nearest
+python tools/slice.py build/keyed@2x.png build/pack --scale 2
 ```
 
-If `upscale.py` printed `method: lanczos`, install `realesrgan-ncnn-vulkan` (Windows zip from its GitHub releases, unzip anywhere, set `REALESRGAN` to the exe path) and rerun; keep Lanczos only if the ESRGAN output softens the small glyphs. Look at `build/pack/atlas.png` once.
+Nearest-neighbor keeps the pixel-art edges crisp; do not use Lanczos or ESRGAN on this sheet. Look at `build/pack/atlas.png` once.
 
-- [ ] **Step 7: Create the pack files**
+- [ ] **Step 10: Create the pack files**
 
 ```bash
 mkdir -p packs/mechanicus
 cp build/pack/atlas.png build/pack/atlas.json packs/mechanicus/
 ```
 
-`packs/mechanicus/manifest.json`: the exact JSON from spec section 4.1.
+`packs/mechanicus/manifest.json`: the exact JSON from spec section 4.1, with `"scale": 1.0`.
 
 `packs/mechanicus/persona.md`: the exact text from spec section 4.2, as plain paragraphs (no `>` quoting).
 
@@ -1819,27 +2003,27 @@ cp build/pack/atlas.png build/pack/atlas.json packs/mechanicus/
 
 ```json
 {
-  "idle":           { "frames": ["idle_0", "idle_1", "idle_2", "idle_3", "idle_4"], "fps": 6 },
-  "walk":           { "right": ["walk_right_0", "walk_right_1", "walk_right_2", "walk_right_3", "walk_right_4"],
-                      "left":  ["walk_left_0", "walk_left_1", "walk_left_2", "walk_left_3", "walk_left_4"], "fps": 8 },
-  "run":            { "right": ["run_right_0", "run_right_1", "run_right_2", "run_right_3", "run_right_4"],
-                      "left":  ["run_left_0", "run_left_1", "run_left_2", "run_left_3", "run_left_4"], "fps": 12 },
-  "hop":            { "frames": ["hop_0", "hop_1", "hop_2", "hop_3"], "fps": 10 },
-  "fall":           { "frames": ["fall_0", "fall_1", "fall_2"], "fps": 10 },
-  "sit":            { "frames": ["sit_0", "sit_1", "sit_2"], "fps": 3 },
+  "idle":           { "frames": ["idle_0", "idle_1", "idle_2"], "fps": 4 },
+  "walk":           { "right": ["walk_right_0", "walk_right_1", "walk_right_2"],
+                      "left":  ["walk_left_0", "walk_left_1", "walk_left_2"], "fps": 8 },
+  "run":            { "right": ["run_right_0", "run_right_1", "run_right_2"],
+                      "left":  ["run_left_0", "run_left_1", "run_left_2"], "fps": 12 },
+  "hop":            { "frames": ["jump_0"], "fps": 4 },
+  "fall":           { "frames": ["jump_1"], "fps": 4 },
+  "sit":            { "frames": ["sit_0", "sit_1"], "fps": 2 },
   "sleep":          { "frames": ["sleep_0"], "fps": 1 },
-  "look":           { "frames": ["look_0", "look_1", "look_2"], "fps": 4 },
-  "project":        { "frames": ["interact_2"], "fps": 1 },
-  "emote_happy":    { "frames": ["happy_0", "happy_1", "happy_2", "happy_3"], "fps": 6 },
-  "emote_thinking": { "frames": ["confused_0", "confused_1", "confused_2"], "fps": 3 },
-  "emote_confused": { "frames": ["confused_0", "confused_1", "confused_2"], "fps": 4 },
-  "emote_alarmed":  { "frames": ["alarmed_0", "alarmed_1", "alarmed_2"], "fps": 6 }
+  "look":           { "frames": ["interact_0", "interact_1"], "fps": 3 },
+  "project":        { "frames": ["usetech_1"], "fps": 1 },
+  "emote_happy":    { "frames": ["celebrate_0", "celebrate_1", "celebrate_2"], "fps": 5 },
+  "emote_thinking": { "frames": ["interact_2"], "fps": 1 },
+  "emote_confused": { "frames": ["interact_2", "interact_3"], "fps": 3 },
+  "emote_alarmed":  { "frames": ["alert_0", "alert_1"], "fps": 5 }
 }
 ```
 
-Check `build/debug.png` for which interact frame holds the blue tablet and set `project.frames` to that one.
+Check `build/debug.png` for which `usetech` frame shows the floating holo tablet and which `interact` frames carry the "?" and "!"; adjust the indices above to match, and note any change in your report. The hover, hide, damage, faces, turnaround, and props frames stay in the atlas unmapped for later use.
 
-- [ ] **Step 8: Write the pack validation test**
+- [ ] **Step 11: Write the pack validation test**
 
 `src/main/pack.mechanicus.test.ts`:
 
@@ -1856,6 +2040,7 @@ describe('mechanicus pack', () => {
       expect(r.pack.animations[key].right.length, key).toBeGreaterThan(0)
     }
     expect(r.pack.animations.walk.mirrorLeft).toBe(false)
+    expect(r.pack.animations.walk.left[0]).toBe('walk_left_0')
     expect(r.pack.persona.lines.greeting.length).toBeGreaterThan(0)
     expect(r.pack.persona.prompt).toContain('Magos Vex')
   })
@@ -1865,11 +2050,11 @@ describe('mechanicus pack', () => {
 Run: `npx vitest run src/main/pack.mechanicus.test.ts`
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add tools/rows.json tools/overrides.json tools/debug_render.py tools/test_pipeline.py packs/mechanicus src/main/pack.mechanicus.test.ts
-git commit -m "feat: mechanicus pack built from the sprite sheet
+git add tools packs/mechanicus src/main/pack.mechanicus.test.ts
+git commit -m "feat: mechanicus pack built from the keyed sprite sheet
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
