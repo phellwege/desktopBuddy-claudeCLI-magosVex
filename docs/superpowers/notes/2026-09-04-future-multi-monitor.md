@@ -32,16 +32,18 @@ the only pack change.
   state machine gets `hovering` and `landing` activities. The bottom-edge invariant
   becomes "bottom edge of the current display".
 - Route planning from `screen.getAllDisplays()`: classify the target as above, beside,
-  or non-adjacent (diagonal or separated); non-adjacent falls back to hover the whole
-  way.
+  or non-adjacent (diagonal or separated); non-adjacent runs to the halfway point,
+  then hovers vertically and across.
 - Drag: overlay switches to interactive on mousedown over the sprite, follows the
   cursor with `hover`, and on mouseup resolves the display under the cursor and lands.
 - Close the hologram panel before any travel; it reopens on the new display if the user
   clicks him again.
 
-## Open questions for Peter
+## Answered by Peter (2026-09-04)
 
-- Diagonal or separated monitors: hover the whole way, or refuse with a line?
-- Should wandering ever cross monitors on its own, or only when told or dragged?
-- While dragged, should the click-through toggle stay off until release (he would
-  block clicks under the cursor for the duration)? Probably yes.
+- **Diagonal or separated monitors:** run to the halfway point along the bottom edge,
+  then hover up (or down) and over to the target, landing on its bottom edge.
+- **Autonomous wandering never crosses monitors.** Only a command or a drag moves him
+  to another display.
+- **Drag:** the body is solid for the duration of a click-hold-drag by definition, so
+  the click-through question does not apply.
