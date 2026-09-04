@@ -17,6 +17,7 @@ export interface ChatSettings { workspace: string; model: string | null; session
 
 export class ChatController implements ChatPort {
   private running = false
+  private turnSerial = 0
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void }) {
@@ -49,7 +50,7 @@ export class ChatController implements ChatPort {
       case 'wake': a.wake(); break
       case 'stop': this.stop(); break
       case 'help': this.deps.out.system(HELP_TEXT); break
-      case 'new': this.settings.sessionId = null; this.settingsChanged(); break
+      case 'new': this.turnSerial++; this.settings.sessionId = null; this.settingsChanged(); break
       case 'cd': this.settings.workspace = cmd.path; this.settingsChanged(); break
       case 'model': this.settings.model = cmd.model; this.settingsChanged(); break
     }
@@ -57,6 +58,7 @@ export class ChatController implements ChatPort {
 
   private async ask(text: string): Promise<void> {
     this.running = true
+    const serial = this.turnSerial
     try {
       const ctx = { state: this.deps.actions.getState(), workspace: this.settings.workspace,
         model: this.settings.model, sessionId: this.settings.sessionId }
@@ -65,7 +67,7 @@ export class ChatController implements ChatPort {
         else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
         else if (ev.type === 'status') this.deps.out.system(ev.text)
         else if (ev.type === 'done') {
-          if (ev.sessionId) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
+          if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
           if (ev.error) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`)
           this.deps.out.done({ error: ev.error })
         }

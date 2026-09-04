@@ -25,7 +25,7 @@ function fakeActions() {
 function scriptedBrain(events: BrainEvent[]): Brain & { stopped: number } {
   return { stopped: 0, async *respond() { for (const e of events) yield e }, stop() { this.stopped++ } }
 }
-const settings = () => ({ workspace: 'C:\\repo', model: null, sessionId: null })
+const settings = () => ({ workspace: 'C:\repo', model: null, sessionId: null })
 
 describe('ChatController', () => {
   it('routes plain text to the brain and forwards events', async () => {
@@ -55,8 +55,8 @@ describe('ChatController', () => {
   it('updates settings for /cd, /model, /new and reports status', () => {
     const out = fakeOut(); const changes: unknown[] = []
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ ...s }) })
-    c.prompt('/cd D:\\w'); c.prompt('/model sonnet'); c.prompt('/new')
-    expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\\w', session: 'new' })
+    c.prompt('/cd D:\w'); c.prompt('/model sonnet'); c.prompt('/new')
+    expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\w', session: 'new' })
     expect(changes.length).toBe(3)
     expect(out.statuses.length).toBe(3)
   })
@@ -84,5 +84,28 @@ describe('ChatController', () => {
     c.prompt('hello')
     await new Promise(r => setTimeout(r, 10))
     expect(out.systems.at(-1)).toContain('boom')
+  })
+  it('does not let a turn finishing after /new overwrite the fresh session, but a normal turn still stores its id', async () => {
+    const out = fakeOut()
+    let release!: () => void
+    const brain: Brain = {
+      async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done', sessionId: 'old' } },
+      stop() {},
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('one')
+    await new Promise(r => setTimeout(r, 5))
+    c.prompt('/new')
+    expect(c.status().session).toBe('new')
+    expect(out.statuses.some(s => (s as { session: string }).session === 'new')).toBe(true)
+    release()
+    await new Promise(r => setTimeout(r, 5))
+    expect(c.status().session).toBe('new')
+    expect(out.statuses.some(s => (s as { session: string }).session === 'old')).toBe(false)
+
+    const c2 = new ChatController({ brain: scriptedBrain([{ type: 'done', sessionId: 's2' }]), actions: fakeActions(), pack, out: fakeOut(), settings: settings() })
+    c2.prompt('two')
+    await new Promise(r => setTimeout(r, 10))
+    expect(c2.status().session).toBe('s2')
   })
 })
