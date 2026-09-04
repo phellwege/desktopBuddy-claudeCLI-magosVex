@@ -1,17 +1,20 @@
 import { app, dialog, screen } from 'electron'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { loadConfig } from './config'
 import { loadPack, pickLine } from './pack'
 import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
-import { createHologramWindow, createOverlayWindow, rebound } from './windows'
+import { createHologramWindow, createOverlayWindow, loadPage, rebound } from './windows'
 import { hologramBounds } from './geometry'
 import { wireIpc } from './ipc'
 import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatStatusPayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
 import { ChatController } from './chat'
 import { saveConfig } from './config'
+import { createTray } from './tray'
+import { showContextMenu } from './menu'
 
 async function main(): Promise<void> {
   await registerPackScheme()
@@ -19,6 +22,8 @@ async function main(): Promise<void> {
 
   const configPath = join(app.getPath('userData'), 'config.json')
   const config = loadConfig(configPath)
+  const logDir = join(app.getPath('userData'), 'logs')
+  mkdirSync(logDir, { recursive: true })
   const packDir = isAbsolute(config.pack) ? config.pack : join(app.getAppPath(), config.pack)
   const loaded = loadPack(packDir)
   if (!loaded.ok) {
@@ -39,6 +44,16 @@ async function main(): Promise<void> {
 
   const overlay = createOverlayWindow()
   const hologram = createHologramWindow(() => { if (buddy.getState().panelOpen) actions.closePanel() })
+
+  for (const [name, win] of [['overlay', overlay], ['hologram', hologram]] as const) {
+    win.webContents.on('console-message', (_e, level, message, line, source) => {
+      if (level >= 2) appendFileSync(join(logDir, 'renderer.log'), `${new Date().toISOString()} ${name} ${source}:${line} ${message}\n`)
+    })
+    win.webContents.on('render-process-gone', (_e, details) => {
+      appendFileSync(join(logDir, 'renderer.log'), `${new Date().toISOString()} ${name} gone: ${details.reason}\n`)
+      loadPage(win, name)
+    })
+  }
 
   const placeHologram = () => hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, buddy.getState().x, charW, charH))
   const out = {
@@ -70,8 +85,12 @@ async function main(): Promise<void> {
       animations: pack.animations, scale, name: pack.name },
     theme: { ...pack.theme, name: pack.name },
     chat, status: () => chat.status(),
-    showContextMenu: () => {},                                                  // replaced in Task 11
+    showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
   })
+
+  const tray = createTray({ packDir: pack.dir, name: pack.name, actions, buddy, overlay, hologram })
+  void tray
+  app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
 
   buddy.onChange((v) => {
     overlay.webContents.send(CH.buddyState, v)
