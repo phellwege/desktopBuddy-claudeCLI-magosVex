@@ -17,13 +17,16 @@ import { createTray } from './tray'
 import { showContextMenu } from './menu'
 import { appendLog } from './log'
 
+// Computed at module scope (not inside main()) so the top-level .catch() below can log a
+// bootstrap failure to the same file even if it throws before this point is reached.
+const logDir = join(app.getPath('userData'), 'logs')
+
 async function main(): Promise<void> {
   await registerPackScheme()
   await app.whenReady()
 
   const configPath = join(app.getPath('userData'), 'config.json')
   const config = loadConfig(configPath)
-  const logDir = join(app.getPath('userData'), 'logs')
   mkdirSync(logDir, { recursive: true })
   // Never exit from these: a crash handler's job is to record and keep the buddy running.
   process.on('uncaughtException', (err) => {
@@ -112,4 +115,11 @@ async function main(): Promise<void> {
   app.on('window-all-closed', () => app.quit())
 }
 
-void main()
+// A throw here (including one after the pack has already loaded and windows may already
+// exist) must not leave a windowless, invisible background process: log it, tell the
+// user, and actually exit rather than silently sitting in the tray-less void.
+main().catch((err) => {
+  appendLog(logDir, 'main', `bootstrap failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+  dialog.showErrorBox('Startup failed', String(err))
+  app.exit(1)
+})
