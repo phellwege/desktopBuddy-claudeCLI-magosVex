@@ -41,16 +41,150 @@ def test_group_frames_attaches_fragments_and_drops_labels():
 
 
 def test_group_frames_count_mismatch_raises():
-    band = {"name": "t", "x": [0, 120], "y": [0, 120], "count": 3}
+    # "components" split explicitly: this fixture's wide fragment is only 8px thick,
+    # which is thick enough to survive object mode's core-finding erosion (it has no
+    # height-threshold concept for cores, only for the legacy body/fragment split), so
+    # this specific mismatch only fires on the legacy path. Object mode's own count-can't
+    # -be-found case is covered by test_group_frames_objects_raises_when_cores_not_found.
+    band = {"name": "t", "x": [0, 120], "y": [0, 120], "count": 3, "split": "components"}
     with pytest.raises(ValueError):
         group_frames(synthetic_sheet(), band, 1.0, {})
 
 
 def test_group_frames_merge_override():
-    band = {"name": "t", "x": [0, 120], "y": [0, 120], "count": 1}
+    # "components" split explicitly: "merge" is a components-mode-only override (object
+    # mode has no merge concept - see the module docstring on _group_frames_objects), so
+    # this test needs the legacy path to actually exercise it.
+    band = {"name": "t", "x": [0, 120], "y": [0, 120], "count": 1, "split": "components"}
     frames = group_frames(synthetic_sheet(), band, 1.0, {"t": {"merge": [[0, 1]]}})
     assert len(frames) == 1
     assert frames[0][0].x0 == 10 and frames[0][0].x1 == 80
+
+
+def test_group_frames_objects_raises_when_cores_not_found():
+    # A single 40x40 blob can never split into 2 cores by erosion alone (there is no thin
+    # bridge to sever), so object mode must give up and raise, naming the band.
+    a = np.zeros((60, 60), dtype=np.uint8)
+    a[10:50, 10:50] = 255
+    band = {"name": "solo", "x": [0, 60], "y": [0, 60], "count": 2}
+    with pytest.raises(ValueError, match="solo"):
+        group_frames(a, band, 1.0, {})
+
+
+def _rgba_from_alpha(a: np.ndarray) -> np.ndarray:
+    return np.dstack([np.full_like(a, 200)] * 3 + [a])
+
+
+def _scatter_ownership(rgba: np.ndarray, frames) -> tuple[np.ndarray, list]:
+    """Paint each frame's owned pixels back onto a full-sheet-shaped array (1-based frame
+    index, 0 = unowned), asserting no pixel is ever claimed by two frames. Returns the
+    ownership array and the list of (box, ax, ay, crop) per frame in original order."""
+    owned_by = np.zeros(rgba.shape[:2], dtype=np.int16)
+    out = []
+    for idx, (box, cx) in enumerate(frames, start=1):
+        crop, ax, ay = normalize(rgba, box, cx)
+        owned_here = crop[..., 3] > 0
+        region = owned_by[box.y0:box.y1, box.x0:box.x1]
+        assert not np.any((region != 0) & owned_here), f"frame {idx} overlaps an earlier frame"
+        region[owned_here] = idx
+        out.append((box, ax, ay, crop))
+    return owned_by, out
+
+
+def test_object_mode_splits_touching_figures_exactly():
+    """Two 30x80 rectangles, far enough apart not to touch on their own, joined by a 2px
+    -tall bridge across the gap - a synthetic stand-in for a staff crossing into a
+    neighbor's panel, or two hoods pinched together by a shared prop."""
+    a = np.zeros((100, 120), dtype=np.uint8)
+    a[10:90, 10:40] = 255
+    a[10:90, 60:90] = 255
+    a[48:50, 40:60] = 255
+    mask = a > 0
+    total_mask_px = int(mask.sum())
+    band = {"name": "pair", "x": [0, 120], "y": [0, 100], "count": 2}
+    frames = group_frames(a, band, 1.0, {})
+    assert len(frames) == 2
+    rgba = _rgba_from_alpha(a)
+    owned_by, per_frame = _scatter_ownership(rgba, frames)
+
+    # every mask pixel (including the bridge) is claimed by exactly one frame
+    assert int((owned_by != 0).sum()) == total_mask_px
+    assert not np.any(mask & (owned_by == 0))
+
+    # each frame's crop excludes the other rectangle's own interior point
+    box_a, _, _, crop_a = min(per_frame, key=lambda f: f[0].cx)
+    box_b, _, _, crop_b = max(per_frame, key=lambda f: f[0].cx)
+    by, bx = 50, 75  # deep inside figure B's own rectangle
+    if box_a.y0 <= by < box_a.y1 and box_a.x0 <= bx < box_a.x1:
+        assert crop_a[by - box_a.y0, bx - box_a.x0, 3] == 0
+    ay_, ax_ = 50, 25  # deep inside figure A's own rectangle
+    if box_b.y0 <= ay_ < box_b.y1 and box_b.x0 <= ax_ < box_b.x1:
+        assert crop_b[ay_ - box_b.y0, ax_ - box_b.x0, 3] == 0
+
+
+def test_object_mode_attaches_floating_fragment_to_nearest_object_only():
+    """A small disconnected fragment (a floating skull companion) sits above figure A,
+    far closer to A than to B; it must be unioned into A's crop and never appear in B's."""
+    a = np.zeros((140, 120), dtype=np.uint8)
+    a[50:130, 10:40] = 255       # figure A
+    a[50:130, 80:110] = 255      # figure B
+    a[10:20, 18:28] = 255        # floating fragment near A's center x (25)
+    band = {"name": "pair", "x": [0, 120], "y": [0, 140], "count": 2}
+    frames = group_frames(a, band, 1.0, {})
+    assert len(frames) == 2
+    rgba = _rgba_from_alpha(a)
+    _scatter_ownership(rgba, frames)
+    box_a, cx_a = min(frames, key=lambda f: f[0].cx)
+    box_b, cx_b = max(frames, key=lambda f: f[0].cx)
+    crop_a, _, _ = normalize(rgba, box_a, cx_a)
+    crop_b, _, _ = normalize(rgba, box_b, cx_b)
+    fy, fx = 15, 23
+    assert box_a.y0 <= fy < box_a.y1 and box_a.x0 <= fx < box_a.x1
+    assert crop_a[fy - box_a.y0, fx - box_a.x0, 3] > 0
+    if box_b.y0 <= fy < box_b.y1 and box_b.x0 <= fx < box_b.x1:
+        assert crop_b[fy - box_b.y0, fx - box_b.x0, 3] == 0
+    else:
+        assert box_b.y0 > 10  # B's box simply never reaches that far up
+
+
+def test_object_mode_staff_keeps_whole_bar_neighbor_crop_zero_there():
+    """Figure A holds a thin 3px-wide vertical staff, connected to A via a thin arm, that
+    lands inside figure B's bounding box (B's own box is stretched up by its own small
+    disconnected fragment, far sideways from the staff). No pixel of A ever touches a
+    pixel of B - this mirrors the real jump_2/jump_3 bug, where two genuinely separate
+    poses' bounding boxes overlapped but their real content never did."""
+    a = np.zeros((140, 120), dtype=np.uint8)
+    a[40:110, 10:40] = 255      # A body
+    a[42:45, 40:96] = 255       # A arm, connects body to staff
+    a[15:45, 93:96] = 255       # A staff (3px wide), pokes up into B's bbox
+    a[60:130, 70:100] = 255     # B body
+    a[15:23, 83:91] = 255       # B's own floating fragment, stretches B's bbox up
+    staff_px = int((a[15:45, 93:96] > 0).sum())
+    band = {"name": "pair", "x": [0, 120], "y": [0, 140], "count": 2}
+    frames = group_frames(a, band, 1.0, {})
+    assert len(frames) == 2
+    rgba = _rgba_from_alpha(a)
+    _scatter_ownership(rgba, frames)
+    box_a, cx_a = frames[0]
+    box_b, cx_b = frames[1]
+    crop_a, _, _ = normalize(rgba, box_a, cx_a)
+    crop_b, _, _ = normalize(rgba, box_b, cx_b)
+
+    # A's crop keeps the entire staff
+    sy0, sy1, sx0, sx1 = 15, 45, 93, 96
+    staff_in_a = crop_a[sy0 - box_a.y0:sy1 - box_a.y0, sx0 - box_a.x0:sx1 - box_a.x0, 3]
+    assert int((staff_in_a > 0).sum()) == staff_px
+
+    # the boxes genuinely overlap (this is the case the exclusion mechanism exists for)
+    assert box_a.x1 > box_b.x0 and box_a.y1 > box_b.y0
+
+    # B's crop reads alpha 0 everywhere A's arm or staff falls inside B's own box
+    for y0, y1, x0, x1 in [(42, 45, 40, 96), (15, 45, 93, 96)]:
+        oy0, oy1 = max(y0, box_b.y0), min(y1, box_b.y1)
+        ox0, ox1 = max(x0, box_b.x0), min(x1, box_b.x1)
+        if oy0 < oy1 and ox0 < ox1:
+            region = crop_b[oy0 - box_b.y0:oy1 - box_b.y0, ox0 - box_b.x0:ox1 - box_b.x0, 3]
+            assert int((region > 0).sum()) == 0
 
 
 def test_normalize_anchor_is_feet_center():
@@ -288,6 +422,26 @@ def test_real_sheet_bands_match_rows(tmp_path):
         assert 0 < f["ay"] <= f["h"] and 0 <= f["ax"] <= f["w"], name
     assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"] and "run_left_3" in atlas["frames"]
     assert "rest_3" in atlas["frames"]
+
+    # every pair of adjacent frames within these touching-content bands must never both be
+    # opaque at the same sheet coordinate - object mode's exclusion has to be exact, not
+    # just frame-count-correct.
+    ov = json.load(open(ov_path))
+    rgba_full = np.dstack([rgb, alpha])
+    for bname in ("walk", "run", "sit", "rest", "usetech"):
+        band = next(b for b in rows["bands"] if b["name"] == bname)
+        band_frames = group_frames(alpha, band, 1.0, ov)
+        crops = [normalize(rgba_full, box, cx) for box, cx in band_frames]
+        for i in range(len(band_frames) - 1):
+            b1, b2 = band_frames[i][0], band_frames[i + 1][0]
+            c1, c2 = crops[i][0], crops[i + 1][0]
+            ox0, oy0 = max(b1.x0, b2.x0), max(b1.y0, b2.y0)
+            ox1, oy1 = min(b1.x1, b2.x1), min(b1.y1, b2.y1)
+            if ox0 >= ox1 or oy0 >= oy1:
+                continue  # boxes don't even overlap, trivially disjoint
+            r1 = c1[oy0 - b1.y0:oy1 - b1.y0, ox0 - b1.x0:ox1 - b1.x0, 3] > 0
+            r2 = c2[oy0 - b2.y0:oy1 - b2.y0, ox0 - b2.x0:ox1 - b2.x0, 3] > 0
+            assert not np.any(r1 & r2), f"{bname} frames {i}/{i + 1} share an opaque sheet pixel"
 
     # at 2x nearest-upscale, the "each" mode bands (faces, props) must not pick up
     # antialiasing/glow specks that only clear the min_px floor because of the upscale.

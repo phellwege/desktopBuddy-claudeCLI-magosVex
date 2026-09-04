@@ -1,9 +1,11 @@
 """Slice a labeled sprite sheet into an atlas using rows.json bands."""
 import argparse, json, os, sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import numpy as np
 from PIL import Image
 from scipy import ndimage
+from skimage.morphology import disk
+from skimage.segmentation import watershed
 sys.path.insert(0, os.path.dirname(__file__))
 from key import key_background_bands, band_rects
 
@@ -11,10 +13,23 @@ MIN_BODY_H_1X = 60
 MAX_DX_1X = 90
 MAX_FRAGMENT_ASPECT = 3.0
 
+# Object-mode (watershed) constants: starting/maximum erosion radius used to find each
+# object's "core" seed. Both scale with the sheet's --scale factor like MIN_BODY_H_1X etc.
+CORE_ERODE_R0_1X = 3
+MAX_ERODE_RADIUS_1X = 20
+
+STRUCT8 = np.ones((3, 3), dtype=bool)  # 8-connectivity for component labeling
+
 
 @dataclass
 class Box:
     x0: int; y0: int; x1: int; y1: int
+    # Object-mode extras: per-pixel ownership mask and the core-only feet row, both in
+    # crop-local coordinates. None for components/each mode, where normalize() falls back
+    # to its original whole-crop behavior. Excluded from repr/eq so Box still prints and
+    # compares the way every existing test expects.
+    owner_mask: np.ndarray | None = field(default=None, repr=False, compare=False)
+    core_last_row: int | None = field(default=None, repr=False, compare=False)
     @property
     def w(self): return self.x1 - self.x0
     @property
@@ -47,16 +62,34 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict) -
     y0, y1 = (int(round(v * scale)) for v in band["y"])
     ov = overrides.get(band["name"], {})
     sub = alpha[y0:y1, x0:x1]
+    erased = sub
     if ov.get("erase"):
-        sub = sub.copy()
+        erased = sub.copy()
         for ex0, ey0, ex1, ey1 in ov["erase"]:
             ex0, ey0, ex1, ey1 = (int(round(v * scale)) for v in (ex0, ey0, ex1, ey1))
-            sub[max(0, ey0 - y0):ey1 - y0, max(0, ex0 - x0):ex1 - x0] = 0
-    min_px = max(4, int(round(4 * scale * scale)))
-    boxes = [b.shifted(x0, y0) for b in components(sub, min_px=min_px)]
+            erased[max(0, ey0 - y0):ey1 - y0, max(0, ex0 - x0):ex1 - x0] = 0
+
     if band.get("each"):
+        min_px = max(4, int(round(4 * scale * scale)))
+        boxes = [b.shifted(x0, y0) for b in components(erased, min_px=min_px)]
         boxes.sort(key=lambda b: (b.x0, b.y0))
         return [(b, b.cx) for b in boxes]
+
+    split = band.get("split", "objects")
+    if split == "components":
+        return _group_frames_components(erased, band, scale, ov, x0, y0)
+    if split == "objects":
+        return _group_frames_objects(erased, band, scale, x0, y0)
+    raise ValueError(f"band {band['name']}: unknown split mode {split!r}")
+
+
+def _group_frames_components(erased: np.ndarray, band: dict, scale: float, ov: dict,
+                              x0: int, y0: int) -> list[tuple[Box, float]]:
+    """Legacy grouping: raw connected components classified as "body" (>= MIN_BODY_H_1X
+    tall) or "fragment", fragments unioned by nearest body center, bodies merged/dropped
+    per `overrides.json`. Kept for backwards compatibility via `"split": "components"`."""
+    min_px = max(4, int(round(4 * scale * scale)))
+    boxes = [b.shifted(x0, y0) for b in components(erased, min_px=min_px)]
     min_body_h = MIN_BODY_H_1X * scale
     max_dx = MAX_DX_1X * scale
     bodies = sorted([b for b in boxes if b.h >= min_body_h], key=lambda b: b.cx)
@@ -87,10 +120,110 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict) -
     return [(b, cx) for b, cx in frames]
 
 
+def _find_cores(mask: np.ndarray, n: int, scale: float, band_name: str) -> np.ndarray:
+    """Erode `mask` with a growing disk until >= n components survive, then keep the n
+    largest by area. Returns a marker array (0 = no marker, else the original label id of
+    a kept core) suitable for `watershed`'s `markers` argument."""
+    r0 = max(1, int(round(CORE_ERODE_R0_1X * scale)))
+    max_r = max(r0, int(round(MAX_ERODE_RADIUS_1X * scale)))
+    r = r0
+    while r <= max_r:
+        eroded = ndimage.binary_erosion(mask, structure=disk(r).astype(bool), border_value=0)
+        labels, num = ndimage.label(eroded, structure=STRUCT8)
+        if num >= n:
+            sizes = ndimage.sum(eroded, labels, index=np.arange(1, num + 1))
+            keep_ids = (np.argsort(sizes)[::-1][:n] + 1).tolist()
+            return np.where(np.isin(labels, keep_ids), labels, 0)
+        r += 1
+    raise ValueError(f"band {band_name}: could not find {n} object cores (erosion radius up to {max_r}px)")
+
+
+def _group_frames_objects(erased: np.ndarray, band: dict, scale: float,
+                           x0: int, y0: int) -> list[tuple[Box, float]]:
+    """Object-mode grouping: every opaque pixel is assigned to exactly one of `count`
+    objects via marker-controlled watershed, so touching/overlapping neighbors on the
+    sheet no longer bleed into each other's crop.
+
+    1. mask = keyed alpha > 0, inside the band (after any `erase` override).
+    2. Erode `mask` with a growing disk to find `count` "core" seeds (the n largest
+       eroded components) - thin touching bridges between neighbors erode away first,
+       leaving one seed per real object.
+    3. Grow the seeds back over the un-eroded `mask` with watershed on the negative
+       distance transform, so every mask pixel reachable from a seed is assigned to
+       the geodesically nearest one. Pixels in a mask component with no seed at all
+       (fully disconnected, e.g. a floating skull) come back unassigned (label 0).
+    4. Each disconnected "floating fragment" is unioned into whichever object's core
+       center is horizontally nearest (within MAX_DX_1X * scale); a fragment wider than
+       MAX_FRAGMENT_ASPECT times its height, or outside every object's reach, is dropped
+       (owned by nobody, so it never appears in any frame).
+    5. Each object's crop is the bounding box of its owned pixels; within that box, every
+       pixel not owned by this object (another object's, or a dropped fragment's) is
+       zeroed, so the exclusion between neighbors is exact rather than a straight cut.
+    """
+    name = band["name"]
+    n = band["count"]
+    mask = erased > 0
+
+    markers = _find_cores(mask, n, scale, name)
+    obj_ids = [int(i) for i in np.unique(markers) if i != 0]
+
+    distance = ndimage.distance_transform_edt(mask)
+    ws_labels = watershed(-distance, markers=markers, mask=mask, connectivity=2)
+
+    owner: dict[int, np.ndarray] = {}
+    core_box: dict[int, Box] = {}
+    core_last_row: dict[int, int] = {}
+    for i in obj_ids:
+        core_pixels = ws_labels == i
+        ys, xs = np.where(core_pixels)
+        if ys.size == 0:
+            raise ValueError(f"band {name}: object core {i} has no pixels after watershed")
+        core_box[i] = Box(int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        core_last_row[i] = int(ys.max())
+        owner[i] = core_pixels.copy()
+
+    max_dx = MAX_DX_1X * scale
+    floating = mask & (ws_labels == 0)
+    frag_labels, num_frag = ndimage.label(floating, structure=STRUCT8)
+    for f in range(1, num_frag + 1):
+        frag_pixels = frag_labels == f
+        ys, xs = np.where(frag_pixels)
+        fbox = Box(int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        if fbox.w / max(fbox.h, 1) > MAX_FRAGMENT_ASPECT:
+            continue  # dropped: label-like sliver, owned by nobody
+        nearest = min(obj_ids, key=lambda i: abs(core_box[i].cx - fbox.cx))
+        if abs(core_box[nearest].cx - fbox.cx) <= max_dx:
+            owner[nearest] |= frag_pixels
+        # else: dropped, outside every object's reach
+
+    order = sorted(obj_ids, key=lambda i: core_box[i].cx)
+    frames = []
+    for i in order:
+        om = owner[i]
+        ys, xs = np.where(om)
+        box_local = Box(int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        box = box_local.shifted(x0, y0)
+        box.owner_mask = om[box_local.y0:box_local.y1, box_local.x0:box_local.x1].copy()
+        box.core_last_row = core_last_row[i] - box_local.y0
+        frames.append((box, core_box[i].cx + x0))
+    return frames
+
+
 def normalize(rgba: np.ndarray, box: Box, body_cx: float) -> tuple[np.ndarray, int, int]:
+    """Crop `box` out of `rgba` and compute its (ax, ay) anchor. Both slicing modes go
+    through this single path: object mode stamps `box.owner_mask` (crop-local, True for
+    pixels this object owns) and `box.core_last_row` (crop-local feet row of the core,
+    excluding attached fragments) onto the Box; components/each mode leaves both None and
+    gets the original whole-crop behavior (every opaque pixel kept, ay = lowest opaque row
+    of the whole crop)."""
     crop = rgba[box.y0:box.y1, box.x0:box.x1].copy()
-    rows = np.where(crop[..., 3] > 0)[0]
-    ay = int(rows.max()) + 1 if rows.size else crop.shape[0]
+    if box.owner_mask is not None:
+        crop[..., 3] = np.where(box.owner_mask, crop[..., 3], 0)
+    if box.core_last_row is not None:
+        ay = box.core_last_row + 1
+    else:
+        rows = np.where(crop[..., 3] > 0)[0]
+        ay = int(rows.max()) + 1 if rows.size else crop.shape[0]
     ax = int(round(body_cx - box.x0))
     return crop, ax, ay
 
