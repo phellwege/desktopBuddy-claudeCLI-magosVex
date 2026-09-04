@@ -1,5 +1,5 @@
 import { app, dialog, screen } from 'electron'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { loadConfig } from './config'
 import { loadPack, pickLine } from './pack'
@@ -15,6 +15,7 @@ import { ChatController } from './chat'
 import { saveConfig } from './config'
 import { createTray } from './tray'
 import { showContextMenu } from './menu'
+import { appendLog } from './log'
 
 async function main(): Promise<void> {
   await registerPackScheme()
@@ -24,6 +25,13 @@ async function main(): Promise<void> {
   const config = loadConfig(configPath)
   const logDir = join(app.getPath('userData'), 'logs')
   mkdirSync(logDir, { recursive: true })
+  // Never exit from these: a crash handler's job is to record and keep the buddy running.
+  process.on('uncaughtException', (err) => {
+    appendLog(logDir, 'main', `uncaughtException: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+  })
+  process.on('unhandledRejection', (reason) => {
+    appendLog(logDir, 'main', `unhandledRejection: ${reason instanceof Error ? (reason.stack ?? reason.message) : String(reason)}`)
+  })
   const packDir = isAbsolute(config.pack) ? config.pack : join(app.getAppPath(), config.pack)
   const loaded = loadPack(packDir)
   if (!loaded.ok) {
@@ -47,10 +55,10 @@ async function main(): Promise<void> {
 
   for (const [name, win] of [['overlay', overlay], ['hologram', hologram]] as const) {
     win.webContents.on('console-message', (_e, level, message, line, source) => {
-      if (level >= 2) appendFileSync(join(logDir, 'renderer.log'), `${new Date().toISOString()} ${name} ${source}:${line} ${message}\n`)
+      if (level >= 2) appendLog(logDir, name, `${source}:${line} ${message}`)
     })
     win.webContents.on('render-process-gone', (_e, details) => {
-      appendFileSync(join(logDir, 'renderer.log'), `${new Date().toISOString()} ${name} gone: ${details.reason}\n`)
+      appendLog(logDir, name, `gone: ${details.reason}`)
       loadPage(win, name)
     })
   }
@@ -88,7 +96,7 @@ async function main(): Promise<void> {
     showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
   })
 
-  const tray = createTray({ packDir: pack.dir, name: pack.name, actions, buddy, overlay, hologram })
+  const tray = createTray({ packDir: pack.dir, name: pack.name, actions, buddy, overlay, hologram, placeHologram })
   void tray
   app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
 

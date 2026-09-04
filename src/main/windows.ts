@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
 import { HOLOGRAM_SIZE, overlayBounds } from './geometry'
 
@@ -35,6 +35,12 @@ export function createHologramWindow(onBlur: () => void): BrowserWindow {
   })
   win.setAlwaysOnTop(true, 'screen-saver')
   win.on('blur', onBlur)
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'q') {
+      event.preventDefault()
+      app.quit()
+    }
+  })
   loadPage(win, 'hologram')
   return win
 }
