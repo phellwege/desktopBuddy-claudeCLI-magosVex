@@ -56,7 +56,11 @@ function postPermission(port, token, body) {
     }, (res) => {
       const chunks = []
       res.on('data', (chunk) => chunks.push(chunk))
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8')
+        if (res.statusCode !== 200) reject(new Error(`permission server returned ${res.statusCode}: ${text.slice(0, 200)}`))
+        else resolve(text)
+      })
       res.on('error', reject)
     })
     req.on('timeout', () => req.destroy(new Error('permission request timed out')))

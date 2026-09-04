@@ -1,7 +1,8 @@
 // Local MCP tool server and permission endpoint. Bound to 127.0.0.1, port chosen at launch,
-// with a bearer token generated at launch and required on every request. One McpServer and
-// one Streamable HTTP transport live for the process lifetime; a single local CLI client
-// (the hook script and the brain's MCP config) is all that ever connects.
+// with a bearer token generated at launch and required on every request. The brain spawns
+// a fresh CLI process per turn, so each turn is a new MCP session: one McpServer and one
+// Streamable HTTP transport per session, created on initialize and dropped when the client
+// closes it or the next turn's client replaces it.
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { join } from 'node:path'
@@ -9,6 +10,7 @@ import { app } from 'electron'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { EXPRESSIONS, type EmoteKind, type Expression, type Mood } from '../shared/types'
 import type { BuddyActions } from './actions'
 
@@ -156,12 +158,47 @@ async function handlePermission(req: IncomingMessage, res: ServerResponse, deps:
 
 export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
   const token = randomBytes(24).toString('hex')
-  const mcp = buildMcpServer(deps)
-  // Stateful mode: one transport lives for the server's whole lifetime and the one local
-  // client (the Claude CLI process) reuses it across every tool call. Stateless mode
-  // requires a fresh transport per request, which does not fit a long-running local server.
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() })
-  await mcp.connect(transport)
+  const sessions = new Map<string, { transport: StreamableHTTPServerTransport; mcp: McpServer }>()
+
+  async function dropSession(id: string): Promise<void> {
+    const s = sessions.get(id)
+    if (!s) return
+    sessions.delete(id)
+    await s.transport.close().catch(() => undefined)
+    await s.mcp.close().catch(() => undefined)
+  }
+
+  function jsonError(res: ServerResponse, status: number, message: string): void {
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }))
+  }
+
+  async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const header = req.headers['mcp-session-id']
+    const sid = Array.isArray(header) ? header[0] : header
+    if (sid) {
+      const s = sessions.get(sid)
+      if (!s) { jsonError(res, 404, 'Session not found'); return }
+      await s.transport.handleRequest(req, res)
+      return
+    }
+    if (req.method !== 'POST') { jsonError(res, 400, 'Mcp-Session-Id header required'); return }
+    let body: unknown
+    try { body = JSON.parse(await readBody(req)) } catch { jsonError(res, 400, 'Invalid JSON'); return }
+    if (!isInitializeRequest(body)) { jsonError(res, 400, 'Not an initialize request'); return }
+    // One CLI process talks to this server at a time. A process that was killed, or exited
+    // without a DELETE, leaves its session behind; the next turn's initialize replaces it.
+    for (const id of [...sessions.keys()]) await dropSession(id)
+    const mcp = buildMcpServer(deps)
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id) => { sessions.set(id, { transport, mcp }) },
+      onsessionclosed: (id) => { sessions.delete(id) },
+    })
+    transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId) }
+    await mcp.connect(transport)
+    await transport.handleRequest(req, res, body)
+  }
 
   const httpServer = createServer((req, res) => { void route(req, res) })
 
@@ -172,7 +209,7 @@ export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
       return
     }
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/mcp') { await transport.handleRequest(req, res); return }
+    if (url.pathname === '/mcp') { await handleMcp(req, res); return }
     if (url.pathname === '/permission' && req.method === 'POST') { await handlePermission(req, res, deps); return }
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'not found' }))
@@ -204,8 +241,8 @@ export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
       })
     },
     async close(): Promise<void> {
-      await transport.close()
-      await mcp.close()
+      for (const id of [...sessions.keys()]) await dropSession(id)
+      httpServer.closeAllConnections()
       await new Promise<void>((resolve) => httpServer.close(() => resolve()))
     },
   }

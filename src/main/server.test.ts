@@ -209,3 +209,28 @@ describe('summarizeToolInput', () => {
     expect(summarizeToolInput('Other', {})).toBe('Other')
   })
 })
+
+describe('startLocalServer sessions', () => {
+  let server: LocalServer | undefined
+  afterEach(async () => { if (server) { await server.close(); server = undefined } })
+
+  it('a new client connects after an earlier one vanished without closing its session', async () => {
+    server = await startLocalServer(fakeDeps())
+    const first = await connectedClient(server)
+    expect((await first.client.listTools()).tools.length).toBeGreaterThan(0)
+    // The first client never closes: the CLI process of the previous turn simply exited.
+    const second = await connectedClient(server)
+    expect((await second.client.listTools()).tools.length).toBeGreaterThan(0)
+    await expect(first.client.listTools()).rejects.toThrow()
+    await second.close()
+  })
+
+  it('a client that closes its session cleanly is followed by another', async () => {
+    server = await startLocalServer(fakeDeps())
+    const first = await connectedClient(server)
+    await first.close()
+    const second = await connectedClient(server)
+    expect((await second.client.listTools()).tools.length).toBeGreaterThan(0)
+    await second.close()
+  })
+})
