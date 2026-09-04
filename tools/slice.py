@@ -636,7 +636,18 @@ def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_dat
     for idx, cell_x0, cell_x1, cell_y0, cell_y1, _is_first, _is_last in segment_sam._cell_layout(band, x0, y0, x1, y1):
         cells[idx] = (float(cell_x0), float(cell_y0), float(cell_x1), float(cell_y1))
 
-    crop_box = segment_sam._safe_crop_bounds(band, all_bands, x0, y0, x1, y1, segment_sam.MARGIN_1X, alpha.shape)
+    # Annotated masks are the truth, wherever the user pushed them: the fragment search
+    # region is the union of the band rectangle and every mask's box, grown by the usual
+    # margin and clamped to the sheet. The sibling-clamped SAM crop is not used here, so
+    # a corrected mask that reaches past a panel edge never trips the crop guard.
+    hh, ww = alpha.shape
+    ux0, uy0, ux1, uy1 = x0, y0, x1, y1
+    for m in obj_masks:
+        ys, xs = np.where(m)
+        ux0, uy0 = min(ux0, int(xs.min())), min(uy0, int(ys.min()))
+        ux1, uy1 = max(ux1, int(xs.max()) + 1), max(uy1, int(ys.max()) + 1)
+    mg = segment_sam.MARGIN_1X
+    crop_box = (max(0, ux0 - mg), max(0, uy0 - mg), min(ww, ux1 + mg), min(hh, uy1 + mg))
 
     # Reported frame cx: mean x of this frame's own recorded positive points, so a
     # caller inspecting the returned (Box, cx) pairs sees something meaningful even
