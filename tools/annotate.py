@@ -337,6 +337,12 @@ def on_accept(name: str):
 
 def on_save() -> str:
     app = APP
+    # Refresh each frame's stored prompt box from its final mask so later re-segments
+    # start from the shape the user approved rather than the pipeline's original cell.
+    for name, meta in app.data["frames"].items():
+        ys, xs = np.where(app.frame_mask(name))
+        if ys.size:
+            meta["box"] = [float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)]
     annotations_io.save_annotations(app.json_path, app.data, app.labels, app.masks_path)
     return f"Saved {app.json_path} and {app.masks_path}"
 
