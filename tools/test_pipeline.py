@@ -89,3 +89,34 @@ def test_build_on_synthetic(tmp_path):
     assert set(atlas["frames"]) == {"idle_0", "idle_1"}
     draft = json.loads((out / "animations.draft.json").read_text())
     assert draft["idle"] == {"frames": ["idle_0", "idle_1"]}
+
+
+def test_group_frames_each_mode():
+    band = {"name": "props", "x": [0, 120], "y": [0, 120], "count": 0, "each": True}
+    frames = group_frames(synthetic_sheet(), band, 1.0, {})
+    assert len(frames) == 4
+    boxes = [b for b, _ in frames]
+    assert [(b.x0, b.y0) for b in boxes] == sorted((b.x0, b.y0) for b in boxes)
+    for b, cx in frames:
+        assert cx == pytest.approx(b.cx)
+    # the wide label-like fragment is kept as its own frame in each mode, not dropped
+    assert any(b.x0 == 55 and b.y0 == 10 and b.x1 == 95 and b.y1 == 18 for b in boxes)
+
+
+def test_build_each_mode_band(tmp_path):
+    from PIL import Image
+    a = synthetic_sheet()
+    rgba = np.dstack([np.full_like(a, 200)] * 3 + [a])
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [
+        {"name": "props", "x": [0, 120], "y": [0, 120], "count": 0, "each": True}
+    ]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    out = tmp_path / "out"
+    counts = build(str(sheet), str(rows), str(ov), str(out), 1.0)
+    assert counts == {"props": 4}
+    atlas = json.loads((out / "atlas.json").read_text())
+    assert set(atlas["frames"]) == {"props_0", "props_1", "props_2", "props_3"}
+    draft = json.loads((out / "animations.draft.json").read_text())
+    assert "props" not in draft
