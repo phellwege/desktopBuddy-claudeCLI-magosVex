@@ -15,8 +15,8 @@ export function loadPage(win: BrowserWindow, page: 'overlay' | 'hologram'): void
 const preload = join(__dirname, '../preload/index.js')
 const webPreferences = { preload, contextIsolation: true, nodeIntegration: false, sandbox: true }
 
-export function createOverlayWindow(): BrowserWindow {
-  const b = overlayBounds(screen.getPrimaryDisplay().workArea)
+export function createOverlayWindow(charH: number): BrowserWindow {
+  const b = overlayBounds(screen.getPrimaryDisplay().workArea, charH)
   const win = new BrowserWindow({
     ...b, transparent: true, frame: false, alwaysOnTop: true, skipTaskbar: true, focusable: false,
     resizable: false, movable: false, hasShadow: false, show: false, webPreferences,
@@ -69,6 +69,6 @@ export function setOverlayInteractive(win: BrowserWindow, interactive: boolean):
   }
 }
 
-export function rebound(overlay: BrowserWindow): void {
-  overlay.setBounds(overlayBounds(screen.getPrimaryDisplay().workArea))
+export function rebound(overlay: BrowserWindow, charH: number): void {
+  overlay.setBounds(overlayBounds(screen.getPrimaryDisplay().workArea, charH))
 }

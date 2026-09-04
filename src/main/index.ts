@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   })
   if (process.env.BUDDY_TEST === '1') (globalThis as { __buddy?: Buddy }).__buddy = buddy
 
-  const overlay = createOverlayWindow()
+  const overlay = createOverlayWindow(charH)
   const hologram = createHologramWindow(() => { if (buddy.getState().panelOpen) actions.closePanel() })
 
   for (const [name, win] of [['overlay', overlay], ['hologram', hologram]] as const) {
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   setInterval(() => buddy.tick(Date.now()), 250)
   buddy.tick(Date.now())
 
-  screen.on('display-metrics-changed', () => { rebound(overlay); if (hologram.isVisible()) placeHologram() })
+  screen.on('display-metrics-changed', () => { rebound(overlay, charH); if (hologram.isVisible()) placeHologram() })
   app.on('window-all-closed', () => app.quit())
 }
 

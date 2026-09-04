@@ -3,8 +3,14 @@ import { hologramBounds, overlayBounds, HOLOGRAM_SIZE, OVERLAY_HEIGHT } from './
 
 const wa = { x: 0, y: 0, width: 2560, height: 1392 }
 describe('geometry', () => {
-  it('overlay is a strip on the bottom of the work area', () => {
-    expect(overlayBounds(wa)).toEqual({ x: 0, y: 1392 - OVERLAY_HEIGHT, width: 2560, height: OVERLAY_HEIGHT })
+  it('overlay is a strip on the bottom of the work area, at least OVERLAY_HEIGHT tall', () => {
+    expect(overlayBounds(wa, 200)).toEqual({ x: 0, y: 1392 - OVERLAY_HEIGHT, width: 2560, height: OVERLAY_HEIGHT })
+  })
+  it('overlay grows to fit a character taller than OVERLAY_HEIGHT, with a margin above it', () => {
+    const charH = 326 // e.g. the mechanicus pack's 2x maxFrameSize height
+    const b = overlayBounds(wa, charH)
+    expect(b.height).toBe(charH + 24)
+    expect(b.y + b.height).toBe(1392) // still anchored to the bottom of the work area
   })
   it('hologram sits above the character and shifts toward the screen center', () => {
     const left = hologramBounds(wa, 0, 200, 200)
