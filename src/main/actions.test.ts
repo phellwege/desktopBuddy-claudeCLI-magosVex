@@ -31,6 +31,14 @@ describe('Actions', () => {
     a.closePanel()
     expect(h.hidden).toBe(1); expect(b.getState().panelOpen).toBe(false)
   })
+  it('sleep while the panel is open hides the panel first, then sleeps', () => {
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    const h = host(); const a = new Actions(b, h)
+    a.openPanel()
+    a.sleep()
+    expect(h.hidden).toBe(1)
+    expect(b.getState().panelOpen).toBe(false); expect(b.getState().asleep).toBe(true)
+  })
   it('say opens the panel and pushes the text', () => {
     const b = new Buddy({ rng: () => 0 }); b.tick(0)
     const h = host(); new Actions(b, h).say('hello')

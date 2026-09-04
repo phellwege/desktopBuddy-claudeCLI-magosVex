@@ -57,7 +57,9 @@ export class Actions implements BuddyActions {
   say(text: string): void { this.host.pushSystem(text); this.openPanel() }
   openPanel(): void { this.buddy.openPanel(); this.host.showPanel() }
   closePanel(): void { this.buddy.closePanel(); this.host.hidePanel() }
-  sleep(): void { this.buddy.sleep() }
+  // Sleeping from the panel (typed /sleep, or the sleep tool) closes it first so the
+  // hologram window is hidden through the one path that owns it.
+  sleep(): void { if (this.buddy.getState().panelOpen) this.closePanel(); this.buddy.sleep() }
   wake(): void { this.buddy.wake() }
   getState(): BuddyState { return this.buddy.getState() }
 }

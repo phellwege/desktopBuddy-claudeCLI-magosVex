@@ -20,7 +20,7 @@ export class ChatController implements ChatPort {
   private turnSerial = 0
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
-    settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void; lines?: Record<string, string[]> }) {
+    settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void }) {
     this.settings = { ...deps.settings }
   }
   get busy(): boolean { return this.running }
@@ -31,14 +31,6 @@ export class ChatController implements ChatPort {
     this.deps.onSettingsChange?.({ ...this.settings })
     this.deps.out.status(this.status())
   }
-  // Same random-pick semantics as pickLine (pack.ts), for the optional pack-line overrides
-  // on command confirmations (currently just /stop's "stopped" line).
-  private line(key: string, fallback: string): string {
-    const list = this.deps.lines?.[key]
-    if (!list || list.length === 0) return fallback
-    return list[Math.min(list.length - 1, Math.floor(Math.random() * list.length))] ?? fallback
-  }
-
   prompt(text: string): void {
     const parsed = parseCommand(text)
     if (parsed.ok) { this.run(parsed.command); return }
@@ -72,7 +64,7 @@ export class ChatController implements ChatPort {
         break
       case 'stop':
         this.stop()
-        this.deps.out.system(this.line('stopped', 'stopped'))
+        this.deps.out.system(pickLine(this.deps.pack, 'stopped') ?? 'stopped')
         break
       case 'help': this.deps.out.system(HELP_TEXT); break
       case 'new':

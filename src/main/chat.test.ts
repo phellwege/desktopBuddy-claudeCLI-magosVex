@@ -78,6 +78,12 @@ describe('ChatController', () => {
     await new Promise(r => setTimeout(r, 5))
     expect(c.busy).toBe(false)
   })
+  it('/stop uses the pack stopped line when the pack has one', async () => {
+    const out = fakeOut()
+    const withLine = { ...pack, persona: { ...pack.persona, lines: { ...pack.persona.lines, stopped: ['Rite aborted.'] } } }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack: withLine, out, settings: settings() })
+    await c.prompt('/stop'); expect(out.systems.at(-1)).toBe('Rite aborted.')
+  })
   it('reports a brain error with the pack error line', async () => {
     const out = fakeOut()
     const c = new ChatController({ brain: scriptedBrain([{ type: 'done', error: 'boom' }]), actions: fakeActions(), pack, out, settings: settings() })
