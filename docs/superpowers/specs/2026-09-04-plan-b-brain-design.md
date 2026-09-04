@@ -95,7 +95,7 @@ longer implies a face.
 --strict-mcp-config
 --allowedTools <config.allowedTools joined by space>
 --permission-mode manual
---settings <inline JSON: PermissionRequest hook, timeout permissionTimeoutSec + 10>
+--permission-prompt-tool mcp__buddy__permission_prompt
 --model <config.model>          (only when set)
 --add-dir <config.extraDirs>    (only when set)
 ```
@@ -145,19 +145,26 @@ result:
 | `sleep`, `wake` | none | `actions.sleep` (closes the panel first), `actions.wake` |
 | `get_state` | none | `actions.getState()` as JSON |
 | `set_expression` | `{ expression }` | sets the expression stamped on the current reply |
+| `permission_prompt` | `{ tool_name, input, tool_use_id }` | the CLI's permission prompt; shows the card and returns allow or deny (6.4) |
 
-### 6.4 Permission flow
+### 6.4 Permission flow (amended 2026-09-04, evening)
 
-The same local server exposes `POST /permission` for the hook script
-(`out/hook/permission-hook.cjs`, built from `src/hook/`). The hook reads the
-`PermissionRequest` input from stdin, posts it with the bearer token, waits up to
-`permissionTimeoutSec`, prints `{ hookSpecificOutput: { hookEventName: "PermissionRequest",
-decision, decisionReason } }`, and prints a deny on any failure. Main turns each POST into
-the hologram's permission card (opening the panel if closed), with the pack's
+Verified against the installed CLI (2.1.220): `PermissionRequest` hooks never run in
+print mode, whether given inline through `--settings` or from a settings file; a tool
+that would prompt is auto-denied before any hook. Session hooks from the user's own
+settings do run. The documented headless mechanism works: with
+`--permission-prompt-tool mcp__buddy__permission_prompt` the CLI calls that tool on the
+buddy MCP server with `{ tool_name, input, tool_use_id }` and honors a text result of
+`{"behavior":"allow","updatedInput":<input>}` or `{"behavior":"deny","message":"..."}`.
+
+So the flow is: the buddy MCP server exposes `permission_prompt`; main turns each call
+into the hologram's permission card (opening the panel if closed), with the pack's
 `permissionAsk` line, the tool name, and the salient input; the user's Allow or Deny
-resolves the pending request. Reads, globs, greps, and buddy tools never prompt because
-they are in `allowedTools`. If inline `--settings` hooks do not fire in the installed CLI,
-the fallback is a temp settings file per launch; the plan verifies this first.
+resolves the call; a timeout of `permissionTimeoutSec` denies, dismisses the card, and
+posts one status line. Reads, globs, greps, and buddy tools never prompt because they
+are in `allowedTools`. There is no hook script, no `--settings` argument, and no
+`/permission` HTTP endpoint. The former hook design (a `PermissionRequest` hook posting
+to `POST /permission`) is withdrawn.
 
 ### 6.5 Sessions, workspace, config
 
