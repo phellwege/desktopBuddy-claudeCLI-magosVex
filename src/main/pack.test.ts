@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, writeFileSync, cpSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, cpSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadPack, pickLine } from './pack'
@@ -61,6 +61,17 @@ describe('loadPack', () => {
   it('fails on a missing manifest', () => {
     const r = loadPack(join(tmpdir(), 'does-not-exist-' + Date.now()))
     expect(r.ok).toBe(false)
+  })
+  it('loads a frame origin when present and leaves it undefined otherwise', () => {
+    const dir = copyFixture(d => {
+      const atlas = JSON.parse(readFileSync(join(FIXTURE, 'atlas.json'), 'utf8'))
+      atlas.frames.a0.origin = [3, 4]
+      writeFileSync(join(d, 'atlas.json'), JSON.stringify(atlas))
+    })
+    const r = loadPack(dir)
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(r.pack.atlas.frames.a0!.origin).toEqual([3, 4])
+    expect(r.pack.atlas.frames.a1!.origin).toBeUndefined()
   })
 })
 

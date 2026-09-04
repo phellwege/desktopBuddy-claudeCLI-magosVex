@@ -15,6 +15,7 @@ MAGENTA = (255, 0, 255, 255)
 GREEN = (0, 255, 0, 255)
 YELLOW = (255, 255, 0, 255)
 WHITE = (255, 255, 255, 255)
+CYAN = (40, 220, 255, 255)
 
 
 def animation_frame_names(animations: dict) -> list[str]:
@@ -39,18 +40,22 @@ def render(pack_dir: str, out: str, names: list[str] | None, downscale: int, col
         im = sheet.crop((f["x"], f["y"], f["x"] + f["w"], f["y"] + f["h"]))
         if downscale > 1:
             im = im.resize((max(1, im.width // downscale), max(1, im.height // downscale)), Image.NEAREST)
-        crops.append((name, im, f["ax"] // downscale, f["ay"] // downscale))
-    cell_w = max(im.width for _, im, _, _ in crops) + gap
-    cell_h = max(im.height for _, im, _, _ in crops) + gap + 14
+        origin = f.get("origin")
+        crops.append((name, im, f["ax"] // downscale, f["ay"] // downscale, origin))
+    cell_w = max(im.width for _, im, _, _, _ in crops) + gap
+    cell_h = max(im.height for _, im, _, _, _ in crops) + gap + 14
     rows = (len(crops) + cols - 1) // cols
     canvas = Image.new("RGBA", (cols * cell_w + gap, rows * cell_h + gap), MAGENTA)
     draw = ImageDraw.Draw(canvas)
-    for i, (name, im, ax, ay) in enumerate(crops):
+    for i, (name, im, ax, ay, origin) in enumerate(crops):
         x = gap + (i % cols) * cell_w
         y = gap + (i // cols) * cell_h + 14
         canvas.alpha_composite(im, (x, y))
         draw.rectangle([x - 1, y - 1, x + im.width, y + im.height], outline=GREEN)
         draw.ellipse([x + ax - 2, y + ay - 2, x + ax + 2, y + ay + 2], fill=YELLOW)
+        if origin is not None:
+            ox, oy = origin[0] // downscale, origin[1] // downscale
+            draw.ellipse([x + ox - 2, y + oy - 2, x + ox + 2, y + oy + 2], fill=CYAN)
         draw.text((x, y - 13), name, fill=WHITE)
     canvas.save(out)
     return canvas.size

@@ -8,7 +8,7 @@ export type AnimationKey = 'idle' | 'walk' | 'run' | 'hop' | 'fall' | 'sit' | 's
   'look' | 'project' | 'emote_happy' | 'emote_thinking' | 'emote_confused' | 'emote_alarmed'
 export interface BuddyState { x: number; facing: Facing; activity: Activity; mood: Mood;
   panelOpen: boolean; asleep: boolean; targetX?: number }
-export interface AtlasFrame { x: number; y: number; w: number; h: number; ax: number; ay: number }
+export interface AtlasFrame { x: number; y: number; w: number; h: number; ax: number; ay: number; origin?: [number, number] }
 export interface Atlas { image: string; maxFrameSize: [number, number]; frames: Record<string, AtlasFrame> }
 export interface AnimationDef { right: string[]; left: string[]; fps: number; loop: boolean; mirrorLeft: boolean }
 export type Animations = Record<AnimationKey, AnimationDef>

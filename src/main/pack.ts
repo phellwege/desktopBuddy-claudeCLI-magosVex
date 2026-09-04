@@ -29,7 +29,8 @@ const ManifestSchema = z.object({
   voice: z.unknown().nullable().default(null),
 })
 const FrameSchema = z.object({ x: z.number().int(), y: z.number().int(), w: z.number().int().positive(),
-  h: z.number().int().positive(), ax: z.number(), ay: z.number() })
+  h: z.number().int().positive(), ax: z.number(), ay: z.number(),
+  origin: z.tuple([z.number(), z.number()]).optional() })
 const AtlasSchema = z.object({ image: z.string(),
   maxFrameSize: z.tuple([z.number().int().positive(), z.number().int().positive()]),
   frames: z.record(z.string(), FrameSchema) })

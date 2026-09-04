@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from key import key_background_bands, band_rects
 import segment_sam
 import annotations_io
+from origin import detect_origin
 
 MIN_BODY_H_1X = 60
 MAX_DX_1X = 90
@@ -698,10 +699,11 @@ def normalize(rgba: np.ndarray, box: Box, body_cx: float) -> tuple[np.ndarray, i
     return crop, ax, ay
 
 
-def pack_atlas(frames: list[tuple[str, np.ndarray, int, int]], max_width: int = 4096, pad: int = 2) -> tuple[np.ndarray, dict]:
+def pack_atlas(frames: list[tuple[str, np.ndarray, int, int, tuple[int, int] | None]],
+               max_width: int = 4096, pad: int = 2) -> tuple[np.ndarray, dict]:
     order = sorted(frames, key=lambda f: -f[1].shape[0])
     placements, x, y, shelf_h, width = {}, pad, pad, 0, 0
-    for name, img, ax, ay in order:
+    for name, img, ax, ay, origin in order:
         h, w = img.shape[:2]
         if x + w + pad > max_width:
             x, y, shelf_h = pad, y + shelf_h + pad, 0
@@ -712,11 +714,14 @@ def pack_atlas(frames: list[tuple[str, np.ndarray, int, int]], max_width: int = 
     height = y + shelf_h + pad
     atlas = np.zeros((height, width, 4), dtype=np.uint8)
     meta = {"image": "atlas.png", "maxFrameSize": [0, 0], "frames": {}}
-    for name, img, ax, ay in frames:
+    for name, img, ax, ay, origin in frames:
         px, py = placements[name]
         h, w = img.shape[:2]
         atlas[py:py + h, px:px + w] = img
-        meta["frames"][name] = {"x": px, "y": py, "w": w, "h": h, "ax": ax, "ay": ay}
+        entry = {"x": px, "y": py, "w": w, "h": h, "ax": ax, "ay": ay}
+        if origin is not None:
+            entry["origin"] = [int(origin[0]), int(origin[1])]
+        meta["frames"][name] = entry
         meta["maxFrameSize"] = [max(meta["maxFrameSize"][0], w), max(meta["maxFrameSize"][1], h)]
     return atlas, meta
 
@@ -739,7 +744,8 @@ def draft_animations(names_by_band: dict[str, list[str]]) -> dict:
 
 def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key: bool = False,
           split: str | None = None, model=None, processor=None,
-          diagnostics_path: str | None = None, annotations_path: str | None = None) -> dict:
+          diagnostics_path: str | None = None, annotations_path: str | None = None,
+          origins_path: str | None = None) -> dict:
     rows_data = json.load(open(rows))
     bands = rows_data["bands"]
     # `split=None` (the CLI's own default too) means "use rows.json's own default": its
@@ -771,7 +777,18 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
         ann_frames = annotations[0].get("frames", {})
         approved = sum(1 for f in ann_frames.values() if f.get("approved"))
         print(f"annotated: {approved}/{len(ann_frames)} frames approved")
-    all_frames, names_by_band, counts = [], {}, {}
+    origin_overrides: dict[str, tuple[float, float]] = {}
+    if origins_path:
+        # In annotated mode the annotations JSON (same file, per the CLI's own
+        # --annotations reuse) is already loaded above - never read it from disk twice.
+        if annotations is not None and origins_path == annotations_path:
+            origin_frames = annotations[0].get("frames", {})
+        else:
+            origin_frames = json.load(open(origins_path)).get("frames", {})
+        for name, fmeta in origin_frames.items():
+            if "origin" in fmeta:
+                origin_overrides[name] = tuple(fmeta["origin"])
+    all_frames, names_by_band, counts, boxes_out = [], {}, {}, {}
     for band in bands:
         frames = group_frames(alpha, band, scale, ov, rgb=rgb, model=model, processor=processor,
                                diagnostics=diagnostics, default_split=effective_split, all_bands=bands,
@@ -781,23 +798,36 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
         names = []
         for i, (box, cx) in enumerate(frames):
             crop, ax, ay = normalize(rgba, box, cx)
+            ann_name = f"{band['name']}_{i}"
+            ov_origin = origin_overrides.get(ann_name)
+            if ov_origin is not None:
+                ox = int(round(ov_origin[0] * scale)) - box.x0
+                oy = int(round(ov_origin[1] * scale)) - box.y0
+                origin = (ox, oy) if 0 <= ox < crop.shape[1] and 0 <= oy < crop.shape[0] else None
+            else:
+                origin = detect_origin(crop, min_area=max(30, int(round(30 * scale * scale))))
             if facing:
                 own = f"{band['name']}_{facing}_{i}"
                 flipped = f"{band['name']}_{other}_{i}"
-                all_frames.append((own, crop, ax, ay))
-                all_frames.append((flipped, crop[:, ::-1].copy(), crop.shape[1] - ax, ay))
+                flipped_origin = (crop.shape[1] - 1 - origin[0], origin[1]) if origin is not None else None
+                all_frames.append((own, crop, ax, ay, origin))
+                all_frames.append((flipped, crop[:, ::-1].copy(), crop.shape[1] - ax, ay, flipped_origin))
                 names_by_band.setdefault(f"{band['name']}_{facing}", []).append(own)
                 names_by_band.setdefault(f"{band['name']}_{other}", []).append(flipped)
+                boxes_out[own] = [box.x0, box.y0, box.x1, box.y1]
+                boxes_out[flipped] = [box.x0, box.y0, box.x1, box.y1]
             else:
                 name = f"{band['name']}_{i}"
-                all_frames.append((name, crop, ax, ay))
+                all_frames.append((name, crop, ax, ay, origin))
                 names.append(name)
+                boxes_out[name] = [box.x0, box.y0, box.x1, box.y1]
         if not facing:
             names_by_band[band["name"]] = names
         counts[band["name"]] = len(frames)
     atlas, meta = pack_atlas(all_frames)
     Image.fromarray(atlas).save(os.path.join(out_dir, "atlas.png"))
     json.dump(meta, open(os.path.join(out_dir, "atlas.json"), "w"), indent=1)
+    json.dump(boxes_out, open(os.path.join(out_dir, "boxes.json"), "w"), indent=1)
     json.dump(draft_animations(names_by_band), open(os.path.join(out_dir, "animations.draft.json"), "w"), indent=1)
     if diagnostics is not None:
         json.dump(diagnostics, open(diagnostics_path or os.path.join(out_dir, "diagnostics.json"), "w"), indent=1)
@@ -828,7 +858,7 @@ def main() -> None:
         model, processor = segment_sam.load_model(a.sam_model, a.device)
     for band, n in build(a.sheet, a.rows, a.overrides, a.out_dir, a.scale, a.key,
                           split=a.split, model=model, processor=processor,
-                          annotations_path=a.annotations).items():
+                          annotations_path=a.annotations, origins_path=a.annotations).items():
         print(f"{band}: {n}")
 
 

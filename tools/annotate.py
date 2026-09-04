@@ -37,6 +37,7 @@ COLORS = [(255, 80, 80), (80, 200, 255), (120, 255, 120), (255, 220, 80),
 OUTLINE_COLOR = (255, 255, 255)
 POSITIVE_COLOR = (40, 220, 40)
 NEGATIVE_COLOR = (230, 30, 30)
+ORIGIN_COLOR = (40, 220, 255)
 
 
 class App:
@@ -261,6 +262,14 @@ def render_band_crop(app: App, name: str) -> np.ndarray:
         x0, x1 = max(0, dx - r), min(out.shape[1], dx + r + 1)
         y0, y1 = max(0, dy - r), min(out.shape[0], dy + r + 1)
         out[y0:y1, x0:x1] = color
+    origin = app.data["frames"][name].get("origin")
+    if origin is not None:
+        ox, oy = origin
+        dx = int(round((ox - cx0) * UPSCALE))
+        dy = int(round((oy - cy0) * UPSCALE))
+        x0, x1 = max(0, dx - 1), min(out.shape[1], dx + 2)
+        y0, y1 = max(0, dy - 1), min(out.shape[0], dy + 2)
+        out[y0:y1, x0:x1] = ORIGIN_COLOR
     return out
 
 
@@ -313,8 +322,11 @@ def on_image_click(name: str, click_type: str, evt: gr.SelectData):
     dx, dy = evt.index
     sx = cx0 + dx / UPSCALE
     sy = cy0 + dy / UPSCALE
-    label = 1 if click_type == "positive" else 0
-    app.data["frames"][name]["points"].append([round(float(sx), 1), round(float(sy), 1), label])
+    if click_type == "origin":
+        app.data["frames"][name]["origin"] = [round(float(sx), 1), round(float(sy), 1)]
+    else:
+        label = 1 if click_type == "positive" else 0
+        app.data["frames"][name]["points"].append([round(float(sx), 1), round(float(sy), 1), label])
     return render_band_crop(app, name), points_table(app, name)
 
 
@@ -368,7 +380,7 @@ def build_ui(app: App) -> gr.Blocks:
                 band_image = gr.Image(type="numpy", interactive=False,
                                        label="Band crop - click to add a point")
             with gr.Column(scale=1):
-                click_type = gr.Radio(["positive", "negative"], value="positive", label="Click type")
+                click_type = gr.Radio(["positive", "negative", "origin"], value="positive", label="Click type")
                 use_box = gr.Checkbox(value=True, label="Use box prompt (box grows to your positive points; uncheck to segment from points only)")
                 points_df = gr.Dataframe(headers=["x", "y", "type"], interactive=False, label="Points")
                 approved_md = gr.Markdown()

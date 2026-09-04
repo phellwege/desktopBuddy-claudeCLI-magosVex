@@ -6,6 +6,7 @@ from clean import clean_alpha
 from slice import Box, components, group_frames, normalize, pack_atlas, build
 import slice as slice_mod
 import segment_sam
+from origin import detect_origin, BONE_MIN, BONE_SPREAD
 from segment_sam import (
     resolve_ownership, is_hairline, in_numeral_strip, is_text_label,
     compute_anchor, contact_length, largest_component_centroid,
@@ -206,7 +207,7 @@ def test_normalize_anchor_is_feet_center():
 def test_pack_atlas_no_overlap_and_anchors():
     f1 = np.zeros((30, 20, 4), dtype=np.uint8); f1[..., 3] = 255
     f2 = np.zeros((50, 10, 4), dtype=np.uint8); f2[..., 3] = 255
-    img, meta = pack_atlas([("a", f1, 10, 30), ("b", f2, 5, 50)], max_width=64, pad=2)
+    img, meta = pack_atlas([("a", f1, 10, 30, None), ("b", f2, 5, 50, None)], max_width=64, pad=2)
     fa, fb = meta["frames"]["a"], meta["frames"]["b"]
     assert fa["ax"] == 10 and fa["ay"] == 30 and fb["ax"] == 5 and fb["ay"] == 50
     ra = (fa["x"], fa["y"], fa["x"] + fa["w"], fa["y"] + fa["h"])
@@ -1098,6 +1099,73 @@ def test_key_background_bands_margin_keeps_figure_parts_above_the_band():
     assert grown[60, 60] == 255                                  # body untouched
     assert grown[40, 30] == 0 and grown[20, 30] == 0             # panel fill and outer margin both keyed
     assert grown[5, 60] == 0                                     # outside the grown rect stays transparent
+
+
+# ---------------------------------------------------------------------------------
+# Projection origin (tools/origin.py): the servo-skull anchor point a hologram cone
+# starts from, auto-detected per frame and overridable per annotation.
+# ---------------------------------------------------------------------------------
+
+def _bone_blob(a, y0, x0, h, w):
+    a[y0:y0 + h, x0:x0 + w, :3] = (225, 215, 200)
+    a[y0:y0 + h, x0:x0 + w, 3] = 255
+
+
+def test_detect_origin_picks_the_highest_bone_blob():
+    a = np.zeros((120, 100, 4), dtype=np.uint8)
+    a[40:110, 30:70, :3] = (180, 30, 30); a[40:110, 30:70, 3] = 255     # red body
+    _bone_blob(a, 10, 10, 14, 14)                                        # servo skull, high left
+    _bone_blob(a, 34, 72, 10, 10)                                        # staff finial, lower right
+    ox, oy = detect_origin(a)
+    assert 10 <= ox <= 24 and 10 <= oy <= 24
+
+
+def test_detect_origin_ignores_tiny_and_transparent_blobs():
+    a = np.zeros((60, 60, 4), dtype=np.uint8)
+    _bone_blob(a, 5, 5, 3, 3)                                            # 9 px, below min_area
+    a[30:50, 20:40, :3] = (225, 215, 200)                                # bone colored but alpha 0
+    assert detect_origin(a) is None
+
+
+def test_pack_atlas_writes_origin_only_when_present():
+    crop = np.zeros((10, 10, 4), dtype=np.uint8); crop[..., 3] = 255
+    _img, meta = pack_atlas([("a", crop, 5, 10, (2, 3)), ("b", crop, 5, 10, None)], max_width=64)
+    assert meta["frames"]["a"]["origin"] == [2, 3]
+    assert "origin" not in meta["frames"]["b"]
+
+
+def test_build_mirrors_origin_on_flipped_frames_and_applies_overrides(tmp_path):
+    from PIL import Image
+    a = synthetic_sheet()
+    rgba = np.dstack([np.full_like(a, 200)] * 3 + [a])
+    # synthetic_sheet()'s own fill (200, 200, 200) also satisfies the bone thresholds, so
+    # body content itself forms its own (much lower, larger) bone blob; painting the
+    # existing 6x6 fragment for body 0 (rows 20:26, cols 15:21 - separated from the body
+    # by a real transparent gap) bone-colored gives a distinct, disconnected, topmost
+    # blob that must win regardless.
+    rgba[20:26, 15:21, :3] = (225, 215, 200)          # a bone blob on body 0 (its top left)
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [{"name": "walk", "x": [0, 120], "y": [0, 120], "count": 2,
+                                           "facing": "left", "split": "components"}]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    out = tmp_path / "out"
+    build(str(sheet), str(rows), str(ov), str(out), 1.0)
+    atlas = json.loads((out / "atlas.json").read_text())
+    l, r = atlas["frames"]["walk_left_0"], atlas["frames"]["walk_right_0"]
+    assert "origin" in l and r["origin"][0] == l["w"] - 1 - l["origin"][0] and r["origin"][1] == l["origin"][1]
+
+    # override: annotations JSON with an origin at sheet (65, 45) for walk_1 - inside
+    # frame 1's own crop box (60, 40, 80, 110), unlike frame 1's own (undistinguished,
+    # uniformly bone-colored-by-fill) body so the override is clearly what took effect.
+    ann = tmp_path / "ann.json"
+    ann.write_text(json.dumps({"frames": {"walk_1": {"origin": [65, 45]}}}))
+    build(str(sheet), str(rows), str(ov), str(out), 1.0, origins_path=str(ann))
+    atlas = json.loads((out / "atlas.json").read_text())
+    f = atlas["frames"]["walk_left_1"]
+    boxes = json.loads((out / "boxes.json").read_text())
+    x0, y0 = boxes["walk_left_1"][0], boxes["walk_left_1"][1]
+    assert f["origin"] == [65 - x0, 45 - y0]
 
 
 def test_key_background_bands_margin_border_never_cuts_a_neighbor():

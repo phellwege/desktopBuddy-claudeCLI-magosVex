@@ -1,10 +1,13 @@
 """Load/save hand-corrected mask annotations for one sprite-sheet pack.
 
 An annotation set is two files: `<pack>.json` (per-frame box, click points, approval
-state, and a stable integer label) and `<pack>-masks.png` (a same-size-as-the-sheet
-label image at 1x; pixel value = a frame's label, 0 = unlabeled). Labels are assigned
-once (by tools/annotate.py's seeding step) and never reused, so re-running the annotator
-or the slicer against an existing annotation set is stable across edits.
+state, a stable integer label, and an optional `"origin": [x, y]` in 1x sheet
+coordinates - the projection origin override for that frame, set by a click of type
+"origin" in tools/annotate.py; absent means tools/slice.py auto-detects it instead) and
+`<pack>-masks.png` (a same-size-as-the-sheet label image at 1x; pixel value = a frame's
+label, 0 = unlabeled). Labels are assigned once (by tools/annotate.py's seeding step) and
+never reused, so re-running the annotator or the slicer against an existing annotation
+set is stable across edits.
 
 Pure numpy/json/PIL - no torch, transformers, or gradio - so tools/slice.py's
 "annotated" split (and this module's own round-trip tests) work in the regular
