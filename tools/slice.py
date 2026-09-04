@@ -29,6 +29,28 @@ HAIRLINE_MIN_LENGTH_1X = 30
 # figures' masks collapsed into one, or a mask leaked into the background).
 AREA_MIN_RATIO = 0.3
 AREA_MAX_RATIO = 1.6
+# A fragment not caught by touching_owner/numeral-strip/aspect/hairline attaches to the
+# nearest object by pixel distance, only within this reach; smaller than the legacy
+# MAX_DX_1X (used by center-x-based attachment in object/components mode) on purpose -
+# this is a last-resort catch for small nearby debris, not a general reach.
+FRAGMENT_MAX_DISTANCE_1X = 12
+# A non-touching fragment smaller than this (px) is dropped outright rather than
+# attached by distance - too small to be worth claiming, likely keying/AA noise.
+FRAGMENT_MIN_AREA_1X = 6
+# The rectangle a fragment may be attached into is its target object's own cell widened
+# by this fraction on every side (same fraction the SAM prompt box itself overshoots a
+# cell by) - a fragment outside even that reach is presumed to belong to a neighboring
+# figure or panel, not this one.
+CELL_EXPAND_FRAC = 0.15
+# A component whose whole box sits above the band's topmost object-mask row by more
+# than this gap, and is shorter than this height, is a panel title/label word the wide
+# SAM crop margin pulled into scope - not figure content.
+TEXT_LABEL_MIN_GAP_1X = 4
+TEXT_LABEL_MAX_HEIGHT_1X = 18
+# An object's own SAM mask must overlap its own cell by at least this fraction of the
+# mask's area, or it likely swallowed a neighboring panel's figure through the crop's
+# margin.
+CELL_OWN_OVERLAP_MIN_FRACTION = 0.6
 
 STRUCT8 = np.ones((3, 3), dtype=bool)  # 8-connectivity for component labeling
 
@@ -76,7 +98,8 @@ def components(alpha: np.ndarray, thr: int = 128, min_px: int = 4) -> list[Box]:
 def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict, *,
                   rgb: np.ndarray | None = None, model=None, processor=None,
                   diagnostics: dict | None = None,
-                  default_split: str = "objects") -> list[tuple[Box, float]]:
+                  default_split: str = "objects",
+                  all_bands: list[dict] | None = None) -> list[tuple[Box, float]]:
     x0, x1 = (int(round(v * scale)) for v in band["x"])
     y0, y1 = (int(round(v * scale)) for v in band["y"])
     ov = overrides.get(band["name"], {})
@@ -103,7 +126,7 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict, *
         if rgb is None:
             raise ValueError(f"band {band['name']}: sam split needs the original rgb sheet")
         return _group_frames_sam(rgb, alpha, band, scale, model=model, processor=processor,
-                                  diagnostics=diagnostics)
+                                  diagnostics=diagnostics, all_bands=all_bands)
     raise ValueError(f"band {band['name']}: unknown split mode {split!r}")
 
 
@@ -256,22 +279,49 @@ def upscale_frames_nearest(frames: list[tuple[Box, float]], factor: int) -> list
 
 def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: float,
                        model=None, processor=None,
-                       diagnostics: dict | None = None) -> list[tuple[Box, float]]:
-    """SAM-mode grouping. `segment_sam.segment_band()` gives one SAM box+point-prompted
-    mask per frame (already intersected with the keyed alpha) plus its raw logits and its
-    positive point; `segment_sam.resolve_ownership()` settles pixels two masks both claim
-    by higher logit. Every keyed pixel no SAM mask claims is a "fragment": dropped if it
-    lies entirely inside the band's `numeralStrip`; else, if it physically touches
-    exactly one object's own SAM mask, reattached to that object directly
-    (`segment_sam.touching_owner`) - a boundary-recovery case, a notch SAM's mask missed
-    at a jagged silhouette edge (these figures' scalloped cloak hems), not floating
-    debris; else dropped if it is wider than MAX_FRAGMENT_ASPECT times its height or is a
-    hairline sliver (`segment_sam.is_hairline`); otherwise unioned into whichever frame's
-    positive point is horizontally nearest (`segment_sam.nearest_attachment`, within
-    MAX_DX_1X * scale), or dropped if none is close enough. Each frame's anchor comes
-    from `segment_sam.compute_anchor` on its own SAM object alone (before fragments are
-    unioned in), matching the object-mode convention that attached fragments (a floating
-    skull, an effect) never move the feet anchor.
+                       diagnostics: dict | None = None,
+                       all_bands: list[dict] | None = None) -> list[tuple[Box, float]]:
+    """SAM-mode grouping. A band rectangle is only a prompt region and a label - it
+    names the group, gives the count, and provides the cell centers for prompts. It
+    never clips a frame: a frame's extent is exactly the bounding box of its SAM mask
+    plus its attached fragments, wherever those pixels land on the sheet.
+    `segment_sam.segment_band()` runs SAM on a crop of the band rectangle widened by a
+    generous margin (clamped to the sheet), giving one box+point-prompted mask per frame
+    (already intersected with the keyed alpha, never with the band rectangle) plus its
+    raw logits, its positive point, and its own (unwidened) cell rectangle;
+    `segment_sam.resolve_ownership()` settles pixels two masks both claim by higher
+    logit. Each object's own mask must overlap its own cell by at least
+    CELL_OWN_OVERLAP_MIN_FRACTION of its area, or it likely swallowed a neighboring
+    panel's figure through the crop's margin (`ValueError`, names the object).
+
+    Every keyed pixel in the crop that no object claims is a "fragment". In order:
+    1. Entirely inside the band's `numeralStrip`, or a text label (entirely above the
+       band's topmost object-mask row by more than TEXT_LABEL_MIN_GAP_1X px and shorter
+       than TEXT_LABEL_MAX_HEIGHT_1X px - a panel title/label word the wide crop margin
+       pulled into scope) -> dropped unconditionally.
+    2. Physically touching an object's mask, or a fragment already attached to one
+       (`segment_sam.touching_owner`, applied to a fixed point so a chain of touching
+       pieces all resolve together) -> reattached directly. This is the common case: a
+       notch SAM's mask missed at a jagged silhouette edge, a companion split across an
+       antialiasing seam, a staff glued to the hand that holds it.
+    3. Wider than MAX_FRAGMENT_ASPECT times its height, or a hairline sliver
+       (`segment_sam.is_hairline`) -> dropped (an obviously non-figure shape that
+       touched nothing).
+    4. Smaller than FRAGMENT_MIN_AREA_1X px -> dropped (too small to be worth claiming).
+       Otherwise, attached to the object nearest by pixel distance
+       (`segment_sam.nearest_by_distance`, never by a shared point's x-coordinate) if
+       and only if that distance is at most FRAGMENT_MAX_DISTANCE_1X px, the fragment's
+       box lies entirely within that object's own cell expanded by CELL_EXPAND_FRAC, and
+       it does not also reach into any other object's own extent - otherwise dropped.
+       Anything dropped here is never shipped in any frame.
+
+    Each frame's anchor comes from `segment_sam.compute_anchor` on its own SAM object
+    alone (before fragments are unioned in), matching the object-mode convention that
+    attached fragments (a floating skull, an effect) never move the feet anchor.
+
+    Guard: if an object's final mask touches the SAM crop boundary on any side, the
+    margin was too small to contain the whole figure - raises `ValueError` naming the
+    band and object rather than silently shipping a clipped frame.
 
     Always runs SAM at 1x. At scale != 1 the caller's `rgb`/`alpha` are guaranteed (by
     the pipeline's own upscale step) to be a lossless nearest-neighbor enlargement of the
@@ -284,17 +334,15 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
         raise ValueError(f"band {band['name']}: sam split needs an integer scale, got {scale}")
     if factor != 1:
         rgb_1x, alpha_1x = rgb[::factor, ::factor], alpha[::factor, ::factor]
-        frames_1x = _group_frames_sam(rgb_1x, alpha_1x, band, 1.0, model, processor, diagnostics)
+        frames_1x = _group_frames_sam(rgb_1x, alpha_1x, band, 1.0, model, processor, diagnostics, all_bands)
         return upscale_frames_nearest(frames_1x, factor)
 
     name = band["name"]
     n = band["count"]
-    x0, x1 = (int(round(v)) for v in band["x"])
-    y0, y1 = (int(round(v)) for v in band["y"])
 
-    result = segment_sam.segment_band(rgb, alpha, band, 1.0, model, processor)
-    masks, logits, points = result["masks"], result["logits"], result["points"]
-    point_xs = [p[0] for p in points]
+    result = segment_sam.segment_band(rgb, alpha, band, 1.0, model, processor, other_bands=all_bands)
+    masks, logits, points, cells = result["masks"], result["logits"], result["points"], result["cells"]
+    cx0, cy0, cx1, cy1 = result["crop_box"]
 
     owner = segment_sam.resolve_ownership(masks, logits)
     obj_masks = [(owner == (i + 1)) for i in range(n)]
@@ -307,44 +355,102 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
                 f"band {name}: object {i} area {a}px outside [{lo:.0f}, {hi:.0f}]px "
                 f"({AREA_MIN_RATIO}x-{AREA_MAX_RATIO}x of median {median_area:.0f}px)")
 
-    band_mask = np.zeros(alpha.shape, dtype=bool)
-    band_mask[y0:y1, x0:x1] = True
-    unclaimed = (alpha > 0) & band_mask & (owner == 0)
+    for i in range(n):
+        frac = segment_sam.mask_overlap_fraction(obj_masks[i], cells[i])
+        if frac < CELL_OWN_OVERLAP_MIN_FRACTION:
+            raise ValueError(
+                f"band {name}: object {i} mask overlaps its own cell by only {frac:.2f} "
+                f"(< {CELL_OWN_OVERLAP_MIN_FRACTION}) - it may have swallowed a "
+                f"neighboring panel's figure through the crop margin")
+
+    # Fragments: any keyed pixel inside the SAM crop that no object claims. Scoped to
+    # the crop, never to the band rectangle, so a frame's extent is never limited by the
+    # band rectangle - only by how much of the crop margin the figure actually needed.
+    crop_region = np.zeros(alpha.shape, dtype=bool)
+    crop_region[cy0:cy1, cx0:cx1] = True
+    unclaimed = (alpha > 0) & crop_region & (owner == 0)
     frag_labels, num_frag = ndimage.label(unclaimed, structure=STRUCT8)
 
     numeral_strip = band.get("numeralStrip")
     owner_masks = [m.copy() for m in obj_masks]
     dropped_boxes: list[tuple[int, int, int, int]] = []
     attached_boxes: list[tuple[int, tuple[int, int, int, int]]] = []
+
+    frag_pixels_by_id: dict[int, np.ndarray] = {}
+    frag_box_by_id: dict[int, Box] = {}
+    pending: set[int] = set()
+    topmost_object_row = min(int(np.where(m)[0].min()) for m in obj_masks if m.any())
     for f in range(1, num_frag + 1):
-        frag_pixels = frag_labels == f
-        ys, xs = np.where(frag_pixels)
+        fp = frag_labels == f
+        ys, xs = np.where(fp)
         fb = Box(int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        frag_pixels_by_id[f] = fp
+        frag_box_by_id[f] = fb
         if segment_sam.in_numeral_strip(fb.y0, fb.y1, numeral_strip):
             dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
             continue
-        # A fragment physically touching exactly one object's own SAM mask is a
-        # boundary-recovery case - a notch the mask missed at a jagged silhouette edge
-        # (these figures' scalloped cloak hems, a staff's thin shaft) - not floating
-        # debris, so it is reattached directly, bypassing the aspect-ratio/hairline
-        # checks below (which exist for genuinely disconnected content: a stray numeral,
-        # a decoration with real empty space around it).
-        touching = segment_sam.touching_owner(frag_pixels, obj_masks)
-        if touching is not None:
-            owner_masks[touching] |= frag_pixels
-            attached_boxes.append((touching, (fb.x0, fb.y0, fb.x1, fb.y1)))
+        if segment_sam.is_text_label(fb.y0, fb.y1, fb.h, topmost_object_row,
+                                      TEXT_LABEL_MIN_GAP_1X, TEXT_LABEL_MAX_HEIGHT_1X):
+            dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
             continue
+        pending.add(f)
+
+    # Chain-attach anything physically touching an object, or a fragment already
+    # attached to one, to a fixed point - so a chain of touching pieces (a skull's
+    # cheek touching its jaw touching its neck cable touching the body) all resolve
+    # together in one pass regardless of the order ndimage.label happened to number them.
+    changed = True
+    while changed:
+        changed = False
+        for f in sorted(pending):
+            touching = segment_sam.touching_owner(frag_pixels_by_id[f], owner_masks)
+            if touching is not None:
+                owner_masks[touching] |= frag_pixels_by_id[f]
+                fb = frag_box_by_id[f]
+                attached_boxes.append((touching, (fb.x0, fb.y0, fb.x1, fb.y1)))
+                pending.discard(f)
+                changed = True
+
+    still_pending: set[int] = set()
+    for f in pending:
+        fb = frag_box_by_id[f]
         if (fb.w / max(fb.h, 1) > MAX_FRAGMENT_ASPECT
                 or segment_sam.is_hairline(fb.w, fb.h, HAIRLINE_MAX_THICKNESS_1X, HAIRLINE_MIN_LENGTH_1X)):
             dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
             continue
-        target = segment_sam.nearest_attachment(fb.cx, point_xs, MAX_DX_1X)
+        still_pending.add(f)
+
+    # Last resort: nearest by pixel distance, gated by a small reach, a size floor, and
+    # confinement to the target's own (widened) cell with no reach into another
+    # object's own extent - a snapshot of each object's current bbox, taken once before
+    # this loop, is enough for that "another object" check (this loop only ever
+    # attaches small, isolated debris; the objects' own extents are already settled).
+    owner_bboxes = [segment_sam.mask_bbox(m) for m in owner_masks]
+    for f in sorted(still_pending):
+        fp = frag_pixels_by_id[f]
+        fb = frag_box_by_id[f]
+        if int(fp.sum()) < FRAGMENT_MIN_AREA_1X:
+            dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
+            continue
+        target = segment_sam.nearest_by_distance(fp, obj_masks, FRAGMENT_MAX_DISTANCE_1X)
         if target is None:
             dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
             continue
-        owner_masks[target] |= frag_pixels
+        frag_rect = (fb.x0, fb.y0, fb.x1, fb.y1)
+        expanded_cell = segment_sam.expand_rect(cells[target], CELL_EXPAND_FRAC)
+        if not segment_sam.rect_contains(expanded_cell, frag_rect):
+            dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
+            continue
+        overlaps_other = any(j != target and owner_bboxes[j] is not None
+                              and segment_sam.rects_intersect(frag_rect, owner_bboxes[j])
+                              for j in range(n))
+        if overlaps_other:
+            dropped_boxes.append((fb.x0, fb.y0, fb.x1, fb.y1))
+            continue
+        owner_masks[target] |= fp
         attached_boxes.append((target, (fb.x0, fb.y0, fb.x1, fb.y1)))
 
+    point_xs = [p[0] for p in points]
     order = sorted(range(n), key=lambda i: point_xs[i])
     frames = []
     for i in order:
@@ -353,6 +459,11 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
         if ys.size == 0:
             raise ValueError(f"band {name}: object {i} has no owned pixels")
         box = Box(int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1)
+        if box.x0 <= cx0 or box.x1 >= cx1 or box.y0 <= cy0 or box.y1 >= cy1:
+            raise ValueError(
+                f"band {name}: object {i} touches the SAM crop boundary "
+                f"(object=({box.x0},{box.y0},{box.x1},{box.y1}), crop=({cx0},{cy0},{cx1},{cy1})) "
+                f"- the margin was too small for this band")
         box.owner_mask = om[box.y0:box.y1, box.x0:box.x1].copy()
         ax_obj, ay_obj = segment_sam.compute_anchor(obj_masks[i])
         box.anchor = (ax_obj - box.x0, ay_obj - box.y0)
@@ -364,6 +475,8 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
         diagnostics[name] = {
             "boxes": [list(map(float, b)) for b in result["boxes"]],
             "points": [list(map(float, p)) for p in points],
+            "cells": [list(map(float, c)) for c in cells],
+            "crop_box": [cx0, cy0, cx1, cy1],
             "areas": obj_areas,
             "dropped_fragments": [list(b) for b in dropped_boxes],
             "attached_fragments": [[t, list(b)] for t, b in attached_boxes],
@@ -457,7 +570,7 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
     all_frames, names_by_band, counts = [], {}, {}
     for band in bands:
         frames = group_frames(alpha, band, scale, ov, rgb=rgb, model=model, processor=processor,
-                               diagnostics=diagnostics, default_split=split)
+                               diagnostics=diagnostics, default_split=split, all_bands=bands)
         facing = band.get("facing")
         other = {"left": "right", "right": "left"}.get(facing)
         names = []

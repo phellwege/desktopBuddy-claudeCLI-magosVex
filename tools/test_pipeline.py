@@ -7,8 +7,10 @@ from slice import Box, components, group_frames, normalize, pack_atlas, build
 import slice as slice_mod
 import segment_sam
 from segment_sam import (
-    resolve_ownership, is_hairline, in_numeral_strip, nearest_attachment,
+    resolve_ownership, is_hairline, in_numeral_strip, is_text_label,
     compute_anchor, contact_length, largest_component_centroid,
+    fragment_pixel_distance, nearest_by_distance, expand_rect, rect_contains,
+    rects_intersect, mask_bbox, mask_overlap_fraction,
 )
 
 
@@ -506,12 +508,64 @@ def test_in_numeral_strip_only_when_fully_inside():
     assert not in_numeral_strip(50, 60, None)       # no strip configured: never drop
 
 
-def test_nearest_attachment_picks_closest_within_reach():
-    points = [10.0, 100.0, 250.0]
-    assert nearest_attachment(15.0, points, max_dx=90) == 0
-    assert nearest_attachment(120.0, points, max_dx=90) == 1
-    assert nearest_attachment(1000.0, points, max_dx=90) is None  # nothing close enough
-    assert nearest_attachment(5.0, [], max_dx=90) is None
+def test_fragment_pixel_distance_measures_gap_not_point_x():
+    mask = np.zeros((30, 30), dtype=bool); mask[10:20, 10:20] = True
+    frag = np.zeros((30, 30), dtype=bool); frag[10:20, 25:27] = True  # nearest cols 19 vs 25
+    assert fragment_pixel_distance(frag, mask) == pytest.approx(6.0)
+    touching = np.zeros((30, 30), dtype=bool); touching[10:20, 20:21] = True
+    assert fragment_pixel_distance(touching, mask) == pytest.approx(1.0)
+
+
+def test_fragment_pixel_distance_inf_when_either_empty():
+    a = np.zeros((10, 10), dtype=bool); a[2:4, 2:4] = True
+    empty = np.zeros((10, 10), dtype=bool)
+    assert fragment_pixel_distance(a, empty) == float("inf")
+    assert fragment_pixel_distance(empty, a) == float("inf")
+
+
+def test_nearest_by_distance_picks_closest_within_reach():
+    near = np.zeros((30, 60), dtype=bool); near[10:20, 0:10] = True
+    far = np.zeros((30, 60), dtype=bool); far[10:20, 40:50] = True
+    frag_close = np.zeros((30, 60), dtype=bool); frag_close[10:20, 15:17] = True  # 5px from `near`
+    frag_between = np.zeros((30, 60), dtype=bool); frag_between[10:20, 25:27] = True  # far from both
+    assert nearest_by_distance(frag_close, [near, far], max_distance=12) == 0
+    assert nearest_by_distance(frag_between, [near, far], max_distance=12) is None
+    assert nearest_by_distance(frag_close, [], max_distance=12) is None
+
+
+def test_is_text_label_position_and_height_gate():
+    # entirely above the topmost object row by more than the gap, and short: a label
+    assert is_text_label(frag_y0=5, frag_y1=15, frag_h=10, topmost_object_row=50,
+                          min_gap=4, max_height=18)
+    # too tall to be a label word (a skull/effect that just happens to sit high)
+    assert not is_text_label(frag_y0=5, frag_y1=25, frag_h=20, topmost_object_row=50,
+                              min_gap=4, max_height=18)
+    # not far enough above the object row (within the gap tolerance)
+    assert not is_text_label(frag_y0=5, frag_y1=48, frag_h=43, topmost_object_row=50,
+                              min_gap=4, max_height=18)
+
+
+def test_expand_rect_widens_each_side_proportionally():
+    assert expand_rect((10, 20, 30, 40), 0.15) == pytest.approx((7.0, 17.0, 33.0, 43.0))
+
+
+def test_rect_contains_and_rects_intersect():
+    outer = (0, 0, 100, 100)
+    assert rect_contains(outer, (10, 10, 90, 90))
+    assert not rect_contains(outer, (-5, 10, 90, 90))   # pokes out the left
+    assert not rect_contains(outer, (10, 10, 105, 90))  # pokes out the right
+    assert rects_intersect((0, 0, 10, 10), (5, 5, 15, 15))
+    assert not rects_intersect((0, 0, 10, 10), (10, 0, 20, 10))  # edge-adjacent, no area
+
+
+def test_mask_bbox_and_overlap_fraction():
+    mask = np.zeros((50, 50), dtype=bool)
+    mask[10:30, 10:20] = True  # 20x10 = 200px, all inside cell below
+    assert mask_bbox(mask) == (10, 10, 20, 30)
+    assert mask_bbox(np.zeros((5, 5), dtype=bool)) is None
+    assert mask_overlap_fraction(mask, (0, 0, 50, 50)) == pytest.approx(1.0)
+    assert mask_overlap_fraction(mask, (0, 0, 15, 50)) == pytest.approx(0.5)  # half the cols
+    assert mask_overlap_fraction(np.zeros((5, 5), dtype=bool), (0, 0, 5, 5)) == 1.0
 
 
 def test_compute_anchor_is_feet_centroid():
@@ -562,72 +616,78 @@ def test_touching_owner_none_when_isolated():
     assert segment_sam.touching_owner(frag, []) is None
 
 
-def test_group_frames_sam_attaches_and_drops_fragments(monkeypatch):
-    """End-to-end exercise of _group_frames_sam's fragment/numeral-strip/hairline/
-    touching-owner logic, without a real model: segment_sam.segment_band is
-    monkeypatched to return two fixed SAM objects. A floating fragment near object 0's
-    point must be attached to frame 0; a notch directly touching object 0's own boundary
-    must be reattached to frame 0 even though its shape alone would match the hairline
-    drop rule (a stand-in for the real jagged-hem gaps SAM's mask misses); a fragment
-    sitting entirely inside the band's numeralStrip, and a non-touching hairline sliver,
-    must both be dropped (owned by nobody) regardless of how close they are to either
-    point."""
-    h, w = 120, 200
+def test_group_frames_sam_fragment_pipeline_end_to_end(monkeypatch):
+    """End-to-end exercise of _group_frames_sam's full fragment pipeline, without a real
+    model: segment_sam.segment_band is monkeypatched to return two fixed SAM objects
+    plus their cells/crop_box. Covers, in the order the pipeline applies them:
+    numeral-strip drop, text-label drop (a title/label word the wide crop margin pulled
+    into scope), touching-owner reattachment of a notch that would otherwise match the
+    hairline rule, aspect/hairline drop of a genuinely isolated sliver, and the tightened
+    distance-based attach/drop (a fragment 8px from an object attaches; one 28px away -
+    which the old, wider point-proximity rule would have attached - is now dropped)."""
+    h, w = 150, 220
     alpha = np.zeros((h, w), dtype=np.uint8)
-    obj0 = np.zeros((h, w), dtype=bool); obj0[40:100, 10:40] = True      # 60x30 = 1800px
-    obj1 = np.zeros((h, w), dtype=bool); obj1[40:100, 100:130] = True    # 60x30 = 1800px
-    floating = np.zeros((h, w), dtype=bool); floating[10:18, 15:23] = True   # 8x8, near obj0's point (25)
-    notch = np.zeros((h, w), dtype=bool); notch[45:75, 40:41] = True    # 1x30, touches obj0's right edge
-    numeral = np.zeros((h, w), dtype=bool); numeral[5:9, 60:64] = True       # 4x4, inside numeralStrip [0,10)
-    hairline = np.zeros((h, w), dtype=bool); hairline[20:60, 70:72] = True   # 2px wide, 40 tall, touches nothing
+    obj0 = np.zeros((h, w), dtype=bool); obj0[50:110, 20:50] = True       # 60x30 = 1800px
+    obj1 = np.zeros((h, w), dtype=bool); obj1[50:110, 130:160] = True     # 60x30 = 1800px
+    notch = np.zeros((h, w), dtype=bool); notch[65:100, 50:51] = True    # 1x35, touches obj0's right edge
+    close = np.zeros((h, w), dtype=bool); close[70:78, 8:16] = True      # 8x8, 5px left of obj0 - within reach
+    far = np.zeros((h, w), dtype=bool); far[15:23, 25:33] = True         # 8x8, 28px above obj0 - out of reach
+    numeral = np.zeros((h, w), dtype=bool); numeral[0:4, 60:64] = True   # 4x4, inside numeralStrip [0,8)
+    text = np.zeros((h, w), dtype=bool); text[5:15, 90:150] = True       # 10x60, well above and short: a label
+    hairline = np.zeros((h, w), dtype=bool); hairline[20:60, 170:172] = True  # 2px wide, 40 tall, touches nothing
 
-    alpha[obj0 | obj1 | floating | notch | numeral | hairline] = 255
+    alpha[obj0 | obj1 | notch | close | far | numeral | text | hairline] = 255
     rgb = np.zeros((h, w, 3), dtype=np.uint8)
 
-    fake_points = [(25.0, 70.0), (115.0, 70.0)]
+    fake_points = [(35.0, 80.0), (145.0, 80.0)]
+    fake_cells = [(10.0, 10.0, 110.0, 130.0), (110.0, 10.0, 210.0, 130.0)]
+    fake_crop_box = (0, 0, w, h)
     fake_masks = [obj0, obj1]
     fake_logits = [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]
 
-    def fake_segment_band(rgb_, alpha_, band, scale, model, processor):
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor, other_bands=None):
         return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "cells": fake_cells, "crop_box": fake_crop_box,
                 "masks": fake_masks, "logits": fake_logits}
 
     monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
 
-    band = {"name": "t", "x": [0, w], "y": [0, h], "count": 2, "numeralStrip": [0, 10]}
+    band = {"name": "t", "x": [10, 210], "y": [10, 130], "count": 2, "numeralStrip": [0, 8]}
     diagnostics = {}
     frames = slice_mod._group_frames_sam(rgb, alpha, band, 1.0, diagnostics=diagnostics)
     assert len(frames) == 2
     box0, cx0 = frames[0]
     box1, cx1 = frames[1]
-    assert cx0 == 25.0 and cx1 == 115.0
+    assert cx0 == 35.0 and cx1 == 145.0
 
     def owns(box, gy, gx):
         return box.y0 <= gy < box.y1 and box.x0 <= gx < box.x1 and \
             box.owner_mask[gy - box.y0, gx - box.x0]
 
-    # the floating fragment is attached to frame 0 (its point, x=25, is much closer than
-    # frame 1's, x=115); the notch is reattached to frame 0 because it touches obj0
-    # directly, even though its 1x30 shape alone would otherwise match the hairline rule
-    assert owns(box0, 12, 18)                       # a point inside `floating`
-    assert owns(box0, 50, 40)                       # a point inside `notch`
-    assert int(box0.owner_mask.sum()) == 1800 + 64 + 30
-    assert int(box1.owner_mask.sum()) == 1800        # frame 1 is untouched
+    # notch (touching) and close (5px, within the 12px reach) both join frame 0
+    assert owns(box0, 80, 50)   # inside `notch`
+    assert owns(box0, 74, 12)   # inside `close`
+    assert int(box0.owner_mask.sum()) == 1800 + 35 + 64
+    assert int(box1.owner_mask.sum()) == 1800  # frame 1 is untouched
 
-    # the numeral-strip fragment and the hairline sliver are both dropped: owned by
-    # neither frame, even though the hairline sits roughly between the two points
-    assert not owns(box0, 6, 61) and not owns(box1, 6, 61)      # numeral fragment
-    assert not owns(box0, 30, 70) and not owns(box1, 30, 70)    # hairline sliver
+    # numeral, text label, far (28px - outside the tightened 12px reach), and the
+    # isolated hairline are all dropped: owned by neither frame
+    assert not owns(box0, 2, 62) and not owns(box1, 2, 62)      # numeral
+    assert not owns(box0, 10, 120) and not owns(box1, 10, 120)  # text label
+    assert not owns(box0, 18, 29) and not owns(box1, 18, 29)    # far
+    assert not owns(box0, 30, 170) and not owns(box1, 30, 170)  # hairline
 
     assert diagnostics["t"]["areas"] == [1800, 1800]
     attached = diagnostics["t"]["attached_fragments"]
     assert len(attached) == 2
-    assert [0, [15, 10, 23, 18]] in attached   # floating, attached by nearest point
-    assert [0, [40, 45, 41, 75]] in attached   # notch, attached by touching obj0
+    assert [0, [50, 65, 51, 100]] in attached  # notch, attached by touching obj0
+    assert [0, [8, 70, 16, 78]] in attached    # close, attached by distance
     dropped = diagnostics["t"]["dropped_fragments"]
-    assert len(dropped) == 2
-    assert [60, 5, 64, 9] in dropped    # numeral strip
-    assert [70, 20, 72, 60] in dropped  # non-touching hairline
+    assert len(dropped) == 4
+    assert [60, 0, 64, 4] in dropped     # numeral strip
+    assert [90, 5, 150, 15] in dropped   # text label
+    assert [25, 15, 33, 23] in dropped   # far: out of the tightened reach
+    assert [170, 20, 172, 60] in dropped  # isolated hairline
     assert diagnostics["t"]["contact"] == [{"pair": [0, 1], "contact": 0}]
 
 
@@ -641,15 +701,67 @@ def test_group_frames_sam_raises_on_area_outlier(monkeypatch):
     alpha[obj0 | obj1] = 255
     rgb = np.zeros((h, w, 3), dtype=np.uint8)
     fake_points = [(25.0, 50.0), (105.0, 15.0)]
+    fake_cells = [(0.0, 0.0, 100.0, 100.0), (100.0, 0.0, 200.0, 100.0)]
 
-    def fake_segment_band(rgb_, alpha_, band, scale, model, processor):
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor, other_bands=None):
         return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "cells": fake_cells, "crop_box": (0, 0, w, h),
                 "masks": [obj0, obj1],
                 "logits": [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]}
 
     monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
     band = {"name": "outlier", "x": [0, w], "y": [0, h], "count": 2}
     with pytest.raises(ValueError, match="outlier"):
+        slice_mod._group_frames_sam(rgb, alpha, band, 1.0)
+
+
+def test_group_frames_sam_raises_when_mask_mostly_outside_own_cell(monkeypatch):
+    """An object mask that mostly falls outside its own cell (as if the crop's margin
+    let it swallow a neighboring panel's figure) must raise, naming the band."""
+    h, w = 100, 200
+    alpha = np.zeros((h, w), dtype=np.uint8)
+    # obj0's own cell is x[0,100); this mask sits almost entirely in x[100,200) instead
+    obj0 = np.zeros((h, w), dtype=bool); obj0[10:90, 110:140] = True
+    obj1 = np.zeros((h, w), dtype=bool); obj1[10:90, 150:180] = True
+    alpha[obj0 | obj1] = 255
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    fake_points = [(125.0, 50.0), (165.0, 50.0)]
+    fake_cells = [(0.0, 0.0, 100.0, 100.0), (100.0, 0.0, 200.0, 100.0)]
+
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor, other_bands=None):
+        return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "cells": fake_cells, "crop_box": (0, 0, w, h),
+                "masks": [obj0, obj1],
+                "logits": [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]}
+
+    monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
+    band = {"name": "swallowed", "x": [0, w], "y": [0, h], "count": 2}
+    with pytest.raises(ValueError, match="swallowed"):
+        slice_mod._group_frames_sam(rgb, alpha, band, 1.0)
+
+
+def test_group_frames_sam_raises_when_object_touches_crop_boundary(monkeypatch):
+    """An object whose final mask reaches the SAM crop's own boundary means the margin
+    was too small to contain the whole figure - must raise, naming the band, rather than
+    silently shipping a clipped frame."""
+    h, w = 100, 200
+    alpha = np.zeros((h, w), dtype=np.uint8)
+    obj0 = np.zeros((h, w), dtype=bool); obj0[10:90, 0:40] = True  # touches crop's left edge (x=0)
+    obj1 = np.zeros((h, w), dtype=bool); obj1[10:90, 100:140] = True
+    alpha[obj0 | obj1] = 255
+    rgb = np.zeros((h, w, 3), dtype=np.uint8)
+    fake_points = [(20.0, 50.0), (120.0, 50.0)]
+    fake_cells = [(0.0, 0.0, 100.0, 100.0), (100.0, 0.0, 200.0, 100.0)]
+
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor, other_bands=None):
+        return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "cells": fake_cells, "crop_box": (0, 0, w, h),
+                "masks": [obj0, obj1],
+                "logits": [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]}
+
+    monkeypatch.setattr(slice_mod.segment_sam, "segment_band", fake_segment_band)
+    band = {"name": "clipped", "x": [0, w], "y": [0, h], "count": 2}
+    with pytest.raises(ValueError, match="clipped"):
         slice_mod._group_frames_sam(rgb, alpha, band, 1.0)
 
 
@@ -668,13 +780,15 @@ def test_group_frames_sam_scale_2x_reuses_1x_masks_via_nearest(monkeypatch):
     rgb_2x = np.kron(rgb_1x, np.ones((2, 2, 1), dtype=np.uint8))
 
     fake_points = [(20.0, 30.0), (70.0, 30.0)]
+    fake_cells = [(0.0, 0.0, 50.0, 60.0), (50.0, 0.0, 100.0, 60.0)]
     calls = []
 
-    def fake_segment_band(rgb_, alpha_, band, scale, model, processor):
+    def fake_segment_band(rgb_, alpha_, band, scale, model, processor, other_bands=None):
         calls.append((rgb_.shape, scale))
         assert scale == 1.0
         assert rgb_.shape[:2] == (h, w)
         return {"boxes": [(0, 0, 0, 0), (0, 0, 0, 0)], "points": fake_points,
+                "cells": fake_cells, "crop_box": (0, 0, w, h),
                 "masks": [obj0, obj1],
                 "logits": [np.where(obj0, 1.0, -1.0), np.where(obj1, 1.0, -1.0)]}
 
@@ -730,7 +844,7 @@ def test_real_sheet_sam_mode_matches_counts_and_areas():
             frames = group_frames(alpha, band, 1.0, {})
         else:
             frames = group_frames(alpha, band, 1.0, {}, rgb=rgb, diagnostics=diagnostics,
-                                   default_split="sam")
+                                   default_split="sam", all_bands=rows["bands"])
         counts[band["name"]] = len(frames)
 
     expected = {b["name"]: b["count"] for b in rows["bands"] if not b.get("each")}
