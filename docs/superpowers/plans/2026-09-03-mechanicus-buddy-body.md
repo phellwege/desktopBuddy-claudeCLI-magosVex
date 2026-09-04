@@ -1692,7 +1692,7 @@ def key_background(rgb: np.ndarray, tolerance: int = 36, inset: int = 4) -> np.n
 
 The real sheet (`raw/sheet.png`, 1536 by 1024, RGB) has a one-pixel black frame around a uniform dark gray background, about (50, 48, 46), with figures drawn in a chunky pixel-art style. There is no alpha channel, so the old alpha threshold does not apply. Keying is a flood fill: pixels within `tolerance` (sum of absolute RGB differences) of the background color sampled on a ring `inset` pixels inside the frame, connected to the border, become transparent; everything else stays opaque. Measured on the real sheet at tolerance 36: about 65 percent background, roughly 60 foreground pieces larger than 2000 pixels, no holes inside figures.
 
-The sheet's row layout (labels in caps above each group, all figures facing the viewer except walk and run, which face left):
+The sheet's row layout (labels in caps above each group, all figures facing the viewer except walk and run, which face right):
 
 | Band | Approx x range at 1x | Approx y range | Count | Notes |
 |---|---|---|---|---|
@@ -1700,8 +1700,8 @@ The sheet's row layout (labels in caps above each group, all figures facing the 
 | idle | 650 to 970 | 40 to 200 | 3 | |
 | sit | 980 to 1260 | 40 to 200 | 2 | |
 | sleep | 1270 to 1520 | 40 to 200 | 1 | |
-| walk | 20 to 335 | 238 to 400 | 3 | facing left |
-| run | 340 to 645 | 238 to 400 | 3 | facing left |
+| walk | 20 to 335 | 238 to 400 | 3 | facing right |
+| run | 340 to 645 | 238 to 400 | 3 | facing right |
 | jump | 650 to 995 | 238 to 400 | 2 | jump with jets, land with dust |
 | interact | 1000 to 1530 | 238 to 400 | 4 | magnifier, reading, "?", "!" with laptop |
 | usetech | 20 to 480 | 432 to 605 | 3 | laptop, floating holo tablet, laptop |
@@ -1875,8 +1875,8 @@ Expected: 14 passed, no warnings.
   { "name": "idle",       "x": [650, 970],  "y": [40, 200],  "count": 3 },
   { "name": "sit",        "x": [980, 1260], "y": [40, 200],  "count": 2 },
   { "name": "sleep",      "x": [1270, 1520],"y": [40, 200],  "count": 1 },
-  { "name": "walk",       "x": [20, 335],   "y": [238, 400], "count": 3, "facing": "left" },
-  { "name": "run",        "x": [340, 645],  "y": [238, 400], "count": 3, "facing": "left" },
+  { "name": "walk",       "x": [20, 335],   "y": [238, 400], "count": 3, "facing": "right" },
+  { "name": "run",        "x": [340, 645],  "y": [238, 400], "count": 3, "facing": "right" },
   { "name": "jump",       "x": [650, 995],  "y": [238, 400], "count": 2 },
   { "name": "interact",   "x": [1000, 1530],"y": [238, 400], "count": 4 },
   { "name": "usetech",    "x": [20, 480],   "y": [432, 605], "count": 3 },
