@@ -1,9 +1,34 @@
 import { renderMarkdown } from './markdown'
+import { ProjectionCone } from './cone'
 import type { ChatPermissionPayload, ThemePayload } from '../../shared/ipc'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), status = $<HTMLSpanElement>('status')
 const perm = $<HTMLDivElement>('permission'), permLine = $<HTMLDivElement>('perm-line'), permDetail = $<HTMLDivElement>('perm-detail')
+const panel = $<HTMLDivElement>('panel'), coneCanvas = $<HTMLCanvasElement>('cone')
+const cone = new ProjectionCone(coneCanvas)
+
+function sizeCone(): void {
+  coneCanvas.width = window.innerWidth
+  coneCanvas.height = window.innerHeight
+  cone.setTarget(panel.getBoundingClientRect())
+}
+sizeCone()
+window.addEventListener('resize', sizeCone)
+
+document.addEventListener('visibilitychange', () => { if (document.hidden) cone.stop(); else cone.start() })
+if (!document.hidden) cone.start()
+
+let hoveringPanel = false
+function isOverPanel(x: number, y: number): boolean {
+  const r = panel.getBoundingClientRect()
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+}
+window.addEventListener('mousemove', (e) => {
+  const over = isOverPanel(e.clientX, e.clientY)
+  if (over !== hoveringPanel) { hoveringPanel = over; window.buddy.hologramHover(over) }
+})
+document.addEventListener('mouseleave', () => { if (hoveringPanel) { hoveringPanel = false; window.buddy.hologramHover(false) } })
 let current: HTMLDivElement | null = null
 let buffer = ''
 let renderQueued = false
@@ -25,7 +50,9 @@ window.buddy.onTheme((t: ThemePayload) => {
   r.setProperty('--accent', t.accent); r.setProperty('--glow', t.glow); r.setProperty('--bg', t.background)
   r.setProperty('--text', t.text); r.setProperty('--font', t.font)
   $('name').textContent = t.name
+  cone.setColor(t.accent)
 })
+window.buddy.onOrigin((p) => cone.setSource(p.x, p.y))
 window.buddy.onChatStatus((s) => {
   status.textContent = `${s.model ?? 'default'} · ${s.workspace} · ${s.session}${s.error ? ' · ' + s.error : ''}`
 })

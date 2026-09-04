@@ -1,6 +1,7 @@
 import { Animator } from './animator'
 import { Motion } from './motion'
 import { HitTester } from './hittest'
+import { originScreenPosition } from './origin'
 import type { Atlas, AtlasFrame } from '../../shared/types'
 import type { BuddyStatePayload, PackLoadedPayload } from '../../shared/ipc'
 
@@ -16,6 +17,7 @@ let hovering = false
 let lastState: BuddyStatePayload | null = null
 let hitFrame = ''
 let drawn: { f: AtlasFrame; mirror: boolean } | null = null
+let lastOrigin: { x: number; y: number } | null = null
 
 async function loadImage(url: string): Promise<HTMLImageElement> {
   const blob = await (await fetch(url)).blob()
@@ -74,6 +76,16 @@ function draw(): void {
   ctx.restore()
   if (name !== hitFrame) { hit.update(image, f); hitFrame = name }
   drawn = { f, mirror }
+  if (lastState?.state.panelOpen) {
+    const p = originScreenPosition(f, mirror, scale, canvas, canvas.getBoundingClientRect(), { x: window.screenX, y: window.screenY })
+    if (p && (!lastOrigin || Math.abs(p.x - lastOrigin.x) >= 1 || Math.abs(p.y - lastOrigin.y) >= 1)) {
+      lastOrigin = p
+      window.buddy.origin(p.x, p.y)
+    }
+  } else {
+    // Reset so the first frame after reopening the panel reports again.
+    lastOrigin = null
+  }
 }
 
 let last = performance.now()

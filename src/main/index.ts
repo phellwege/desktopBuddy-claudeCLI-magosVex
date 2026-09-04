@@ -7,9 +7,9 @@ import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, loadPage, rebound } from './windows'
-import { hologramBounds } from './geometry'
+import { hologramBounds, originToWindow } from './geometry'
 import { wireIpc } from './ipc'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatStatusPayload } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
 import { ChatController } from './chat'
 import { saveConfig } from './config'
@@ -67,7 +67,11 @@ async function main(): Promise<void> {
     })
   }
 
-  const placeHologram = () => hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, buddy.getState().x, charW, charH))
+  const originRef: { current: OriginPayload | null } = { current: null }
+  const placeHologram = () => {
+    hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, buddy.getState().x, charW, charH))
+    if (originRef.current) hologram.webContents.send(CH.hologramOrigin, originToWindow(originRef.current, hologram.getBounds()))
+  }
   const out = {
     delta: (text: string) => hologram.webContents.send(CH.chatDelta, { text }),
     activity: (a: ChatActivityPayload) => hologram.webContents.send(CH.chatActivity, a),
@@ -96,6 +100,7 @@ async function main(): Promise<void> {
     packPayload: { atlasUrl: 'pack://app/' + pack.atlas.image, atlasJsonUrl: 'pack://app/atlas.json',
       animations: pack.animations, scale, name: pack.name },
     theme: { ...pack.theme, name: pack.name },
+    origin: originRef,
     chat, status: () => chat.status(),
     showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
   })

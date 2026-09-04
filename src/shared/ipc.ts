@@ -9,6 +9,9 @@ export const CH = {
   overlayContextMenu: 'overlay:contextMenu',
   overlayArrived: 'overlay:arrived',
   overlayOneShotDone: 'overlay:oneShotDone',
+  overlayOrigin: 'overlay:origin',
+  hologramOrigin: 'hologram:origin',
+  hologramHover: 'hologram:hover',
   theme: 'theme',
   chatDelta: 'chat:delta',
   chatActivity: 'chat:activity',
@@ -32,6 +35,7 @@ export interface ChatPermissionPayload { id: string; toolName: string; summary: 
 export interface ChatStatusPayload { model: string | null; workspace: string; session: string; error?: string }
 export interface ChatSystemPayload { text: string }
 export interface ThemePayload extends PackTheme { name: string }
+export interface OriginPayload { x: number; y: number }
 
 export interface BuddyBridge {
   onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
@@ -44,6 +48,10 @@ export interface BuddyBridge {
   contextMenu(x: number, y: number): void
   arrived(): void
   oneShotDone(): void
+  /** x, y are screen coordinates - the overlay's own window position plus the drawn
+   * origin point, so main can translate it into any other window's content coordinates. */
+  origin(x: number, y: number): void
+  onOrigin(cb: (p: OriginPayload) => void): () => void
   onTheme(cb: (p: ThemePayload) => void): () => void
   onChatDelta(cb: (p: ChatDeltaPayload) => void): () => void
   onChatActivity(cb: (p: ChatActivityPayload) => void): () => void
@@ -52,6 +60,7 @@ export interface BuddyBridge {
   onChatStatus(cb: (p: ChatStatusPayload) => void): () => void
   onChatSystem(cb: (p: ChatSystemPayload) => void): () => void
   hologramReady(): void
+  hologramHover(over: boolean): void
   prompt(text: string): void
   permissionAnswer(id: string, allow: boolean): void
   closePanel(): void

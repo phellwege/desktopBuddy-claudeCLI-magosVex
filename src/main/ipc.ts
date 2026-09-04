@@ -1,13 +1,18 @@
 import { ipcMain, type BrowserWindow } from 'electron'
-import { CH, type ChatStatusPayload, type PackLoadedPayload, type ThemePayload } from '../shared/ipc'
+import { CH, type ChatStatusPayload, type OriginPayload, type PackLoadedPayload, type ThemePayload } from '../shared/ipc'
 import type { Buddy } from './buddy'
 import type { Actions } from './actions'
-import { setOverlayInteractive } from './windows'
+import { setHologramInteractive, setOverlayInteractive } from './windows'
+import { originToWindow } from './geometry'
 
 export interface ChatPort { prompt(text: string): void; permissionAnswer(id: string, allow: boolean): void; stop(): void }
 export interface IpcDeps {
   buddy: Buddy; actions: Actions; overlay: BrowserWindow; hologram: BrowserWindow
   packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort
+  /** Last screen-coordinate origin the overlay reported, shared with main/index.ts so it
+   * can re-send the origin (translated into the new window's coordinates) whenever the
+   * hologram window is repositioned or shown. */
+  origin: { current: OriginPayload | null }
   status(): ChatStatusPayload; showContextMenu(x: number, y: number): void
 }
 
@@ -24,6 +29,11 @@ export function wireIpc(d: IpcDeps): void {
   ipcMain.on(CH.overlayContextMenu, (_e, p: { x: number; y: number }) => d.showContextMenu(p.x, p.y))
   ipcMain.on(CH.overlayArrived, () => d.buddy.arrived())
   ipcMain.on(CH.overlayOneShotDone, () => d.buddy.oneShotDone())
+  ipcMain.on(CH.overlayOrigin, (_e, p: OriginPayload) => {
+    d.origin.current = p
+    if (d.hologram.isVisible()) d.hologram.webContents.send(CH.hologramOrigin, originToWindow(p, d.hologram.getBounds()))
+  })
+  ipcMain.on(CH.hologramHover, (_e, p: { over: boolean }) => setHologramInteractive(d.hologram, p.over))
   ipcMain.on(CH.hologramReady, () => {
     d.hologram.webContents.send(CH.theme, d.theme)
     d.hologram.webContents.send(CH.chatStatus, d.status())

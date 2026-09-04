@@ -1,6 +1,6 @@
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { HOLOGRAM_SIZE, overlayBounds } from './geometry'
+import { PANEL_SIZE, overlayBounds } from './geometry'
 
 export function rendererUrl(page: 'overlay' | 'hologram'): { url?: string; file?: string } {
   const dev = process.env.ELECTRON_RENDERER_URL
@@ -30,10 +30,11 @@ export function createOverlayWindow(charH: number): BrowserWindow {
 
 export function createHologramWindow(onBlur: () => void): BrowserWindow {
   const win = new BrowserWindow({
-    ...HOLOGRAM_SIZE, transparent: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
+    ...PANEL_SIZE, transparent: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
     resizable: false, show: false, hasShadow: false, webPreferences,
   })
   win.setAlwaysOnTop(true, 'screen-saver')
+  win.setIgnoreMouseEvents(true, { forward: true })
   win.on('blur', onBlur)
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'q') {
@@ -71,4 +72,13 @@ export function setOverlayInteractive(win: BrowserWindow, interactive: boolean):
 
 export function rebound(overlay: BrowserWindow, charH: number): void {
   overlay.setBounds(overlayBounds(screen.getPrimaryDisplay().workArea, charH))
+}
+
+// The hologram window has no cursor watchdog: unlike the overlay (which must stay
+// interactive while the pointer sits over an irregular sprite hit-region), the hologram
+// closes on blur, so a stuck-interactive window just means the next click outside it
+// closes the panel rather than falling through to the desktop.
+export function setHologramInteractive(win: BrowserWindow, interactive: boolean): void {
+  if (interactive) win.setIgnoreMouseEvents(false)
+  else win.setIgnoreMouseEvents(true, { forward: true })
 }
