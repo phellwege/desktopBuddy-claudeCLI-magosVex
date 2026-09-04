@@ -217,13 +217,18 @@ export class Buddy {
     this.activity = kind === 'hop' ? 'hopping' : kind === 'look' ? 'looking' : 'emoting'
   }
 
-  emote(kind: EmoteKind): void {
-    if (this.asleep) return
-    if (kind === 'thinking') { this.setMood('thinking'); return }
-    if (this.activity === 'projecting') return
-    if (this.activity === 'walking' || this.activity === 'running') { this.queuedEmote = kind; return }
+  emote(kind: EmoteKind): 'started' | 'queued' | 'dropped' {
+    if (this.asleep) return 'dropped'
+    if (kind === 'thinking') {
+      const before = this.animation()
+      this.setMood('thinking')
+      return this.animation() !== before ? 'started' : 'dropped'
+    }
+    if (this.activity === 'projecting') return 'dropped'
+    if (this.activity === 'walking' || this.activity === 'running') { this.queuedEmote = kind; return 'queued' }
     this.beginEmote(kind)
     this.emit()
+    return 'started'
   }
 
   setMood(mood: Mood): void {

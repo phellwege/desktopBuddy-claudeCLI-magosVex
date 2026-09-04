@@ -30,12 +30,28 @@ export class Actions implements BuddyActions {
   setMood(mood: Mood): void { this.buddy.setMood(mood) }
   emote(kind: EmoteKind): Promise<void> {
     return new Promise((resolve) => {
-      this.buddy.emote(kind)
-      if (!EMOTE_ANIMS.has(this.buddy.view().animation)) { resolve(); return }
-      const timer = setTimeout(() => { off(); resolve() }, 5000)
-      const off = this.buddy.onChange((v) => {
-        if (!EMOTE_ANIMS.has(v.animation)) { clearTimeout(timer); off(); resolve() }
-      })
+      const result = this.buddy.emote(kind)
+      if (result === 'dropped') { resolve(); return }
+      if (result === 'started') {
+        if (!EMOTE_ANIMS.has(this.buddy.view().animation)) { resolve(); return }
+        this.waitUntilEmoteEnds(resolve, 5000, false)
+        return
+      }
+      // queued behind movement: wait for the sequence "enters the emote set, then leaves it"
+      this.waitUntilEmoteEnds(resolve, 15000, true)
+    })
+  }
+  // Shared tail logic for a playing (or about-to-play) emote: resolves once the animation
+  // has left the emote set, or after timeoutMs, whichever comes first. When waitForEntry is
+  // true it first waits for the animation to enter the emote set (a queued emote has not
+  // started playing yet), then waits for it to leave; one onChange subscription either way.
+  private waitUntilEmoteEnds(resolve: () => void, timeoutMs: number, waitForEntry: boolean): void {
+    let entered = !waitForEntry
+    const timer = setTimeout(() => { off(); resolve() }, timeoutMs)
+    const off = this.buddy.onChange((v) => {
+      const inSet = EMOTE_ANIMS.has(v.animation)
+      if (!entered) { if (inSet) entered = true; return }
+      if (!inSet) { clearTimeout(timer); off(); resolve() }
     })
   }
   say(text: string): void { this.host.pushSystem(text); this.openPanel() }

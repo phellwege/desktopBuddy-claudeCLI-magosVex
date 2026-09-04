@@ -43,4 +43,31 @@ describe('Actions', () => {
     await p
     expect(b.getState().activity).toBe('idle')
   })
+  it('emote queued behind a walk does not resolve before arrival, resolves after arrival then the one-shot finishes', async () => {
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    b.goTo(0.6)
+    const a = new Actions(b, host())
+    let resolved = false
+    const p = a.emote('alarmed').then(() => { resolved = true })
+    expect(b.getState().activity).toBe('walking')
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+    b.arrived()
+    expect(b.view().animation).toBe('emote_alarmed')
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+    b.oneShotDone()
+    await p
+    expect(resolved).toBe(true)
+  })
+  it('emote while projecting resolves immediately', async () => {
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    b.openPanel()
+    const a = new Actions(b, host())
+    let resolved = false
+    const p = a.emote('happy').then(() => { resolved = true })
+    await Promise.resolve()
+    expect(resolved).toBe(true)
+    await p
+  })
 })

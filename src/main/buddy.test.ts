@@ -103,7 +103,7 @@ describe('Buddy emotes and moods', () => {
   it('plays a one-shot emote from idle and returns to idle', () => {
     const b = new Buddy({ rng: seq([0]) })
     b.tick(0)
-    b.emote('confused')
+    expect(b.emote('confused')).toBe('started')
     expect(b.view().state.activity).toBe('emoting')
     expect(b.view().animation).toBe('emote_confused')
     b.oneShotDone()
@@ -120,7 +120,7 @@ describe('Buddy emotes and moods', () => {
   it('queues an emote behind movement', () => {
     const b = new Buddy({ rng: seq([0]) })
     b.tick(0); b.goTo(0.6)
-    b.emote('alarmed')
+    expect(b.emote('alarmed')).toBe('queued')
     expect(b.view().state.activity).toBe('walking')
     b.arrived()
     expect(b.view().animation).toBe('emote_alarmed')
@@ -128,7 +128,7 @@ describe('Buddy emotes and moods', () => {
   it('drops emotes while projecting but still changes mood', () => {
     const b = new Buddy({ rng: seq([0]) })
     b.tick(0); b.openPanel()
-    b.emote('happy')
+    expect(b.emote('happy')).toBe('dropped')
     expect(b.view().animation).toBe('project')
     b.setMood('happy')
     expect(b.view().state.mood).toBe('happy')
