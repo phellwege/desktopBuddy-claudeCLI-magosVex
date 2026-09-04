@@ -19,7 +19,7 @@ def main() -> None:
     if a.key:
         rgb = np.array(Image.open(a.sheet).convert("RGB"))
         tolerance = rows_data.get("keyTolerance", 16)
-        alpha_ch = key_background_bands(rgb, band_rects(rows_data["bands"], a.scale), tolerance)
+        alpha_ch = key_background_bands(rgb, band_rects(rows_data["bands"], a.scale), tolerance, margin=int(round(40 * a.scale)))
         im = Image.fromarray(np.dstack([rgb, alpha_ch]))
     else:
         im = Image.open(a.sheet).convert("RGBA")

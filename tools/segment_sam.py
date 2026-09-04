@@ -506,7 +506,7 @@ def main() -> None:
     band = next(b for b in rows_data["bands"] if b["name"] == a.band)
     rgb = np.array(Image.open(a.sheet).convert("RGB"))
     tolerance = rows_data.get("keyTolerance", 16)
-    alpha = key_background_bands(rgb, band_rects(rows_data["bands"], 1.0), tolerance)
+    alpha = key_background_bands(rgb, band_rects(rows_data["bands"], 1.0), tolerance, margin=MARGIN_1X)
 
     model, processor = load_model(a.model, a.device)
     result = segment_band(rgb, alpha, band, 1.0, model, processor, a.device)

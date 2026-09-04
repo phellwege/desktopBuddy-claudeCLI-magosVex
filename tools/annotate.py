@@ -53,7 +53,7 @@ class App:
         self.rows = json.load(open(rows_path))
         self.rgb = np.array(Image.open(sheet_arg).convert("RGB"))
         tolerance = self.rows.get("keyTolerance", 16)
-        self.alpha = key_background_bands(self.rgb, band_rects(self.rows["bands"], 1.0), tolerance)
+        self.alpha = key_background_bands(self.rgb, band_rects(self.rows["bands"], 1.0), tolerance, margin=MARGIN)
 
         # "each" bands (props) are not annotated - only counted bands get seeded/edited.
         self.bands = [b for b in self.rows["bands"] if not b.get("each")]

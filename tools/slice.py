@@ -731,7 +731,7 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
     if key:
         rgb = np.array(Image.open(sheet).convert("RGB"))
         tolerance = rows_data.get("keyTolerance", 16)
-        alpha_ch = key_background_bands(rgb, band_rects(bands, scale), tolerance)
+        alpha_ch = key_background_bands(rgb, band_rects(bands, scale), tolerance, margin=int(round(segment_sam.MARGIN_1X * scale)))
         rgba = np.dstack([rgb, alpha_ch])
     else:
         rgba = np.array(Image.open(sheet).convert("RGBA"))

@@ -47,16 +47,24 @@ def key_background(rgb: np.ndarray, tolerance: int = 36, inset: int = 4) -> np.n
 
 
 def key_background_bands(rgb: np.ndarray, bands: list[tuple[int, int, int, int]],
-                          tolerance: int = 16, inset: int = 2) -> np.ndarray:
+                          tolerance: int = 16, inset: int = 2, margin: int = 0) -> np.ndarray:
     """Key each (x0, y0, x1, y1) pixel-space band rectangle from its own local background.
 
-    Pixels outside every band come back transparent. Where two bands overlap, a pixel is
-    background if any band covering it keys it as background (background wins).
+    The panel fill color is sampled on a ring `inset` px inside the given rectangle, but
+    the keying itself runs over the rectangle grown by `margin` px, so a figure whose
+    skull or staff rises past the band's edge is not cut off by the keying. Inside that
+    grown area both the panel fill and the sheet's outer background (sampled on the
+    sheet border) count as background. Pixels outside every grown band come back
+    transparent. Where two bands overlap, a pixel is background if any band covering it
+    keys it as background (background wins).
     """
     im = rgb[..., :3].astype(int)
     h, w = im.shape[:2]
     alpha = np.zeros((h, w), dtype=np.uint8)
     covered = np.zeros((h, w), dtype=bool)
+    o = min(4, h // 2 - 1, w // 2 - 1)
+    outer_ring = np.concatenate([im[o, o:w - o], im[h - 1 - o, o:w - o], im[o:h - o, o], im[o:h - o, w - 1 - o]])
+    outer_bg = np.median(outer_ring, axis=0)
     for bx0, by0, bx1, by1 in bands:
         bx0, by0 = max(0, bx0), max(0, by0)
         bx1, by1 = min(w, bx1), min(h, by1)
@@ -67,14 +75,18 @@ def key_background_bands(rgb: np.ndarray, bands: list[tuple[int, int, int, int]]
         i = min(inset, bh // 2 - 1, bw // 2 - 1)
         ring = np.concatenate([sub[i, i:bw - i], sub[bh - 1 - i, i:bw - i], sub[i:bh - i, i], sub[i:bh - i, bw - 1 - i]])
         bg = np.median(ring, axis=0)
-        near = np.abs(sub - bg).sum(-1) <= tolerance
-        near[:i, :] = near[bh - i:, :] = near[:, :i] = near[:, bw - i:] = True
+        gx0, gy0 = max(0, bx0 - margin), max(0, by0 - margin)
+        gx1, gy1 = min(w, bx1 + margin), min(h, by1 + margin)
+        grown = im[gy0:gy1, gx0:gx1]
+        gh, gw = grown.shape[:2]
+        near = (np.abs(grown - bg).sum(-1) <= tolerance) | (np.abs(grown - outer_bg).sum(-1) <= tolerance)
+        near[:i, :] = near[gh - i:, :] = near[:, :i] = near[:, gw - i:] = True
         background = _flood_background(near)
         fg = np.where(background, 0, 255).astype(np.uint8)
-        region = alpha[by0:by1, bx0:bx1]
-        was_covered = covered[by0:by1, bx0:bx1]
-        alpha[by0:by1, bx0:bx1] = np.where(was_covered, np.minimum(region, fg), fg)
-        covered[by0:by1, bx0:bx1] = True
+        region = alpha[gy0:gy1, gx0:gx1]
+        was_covered = covered[gy0:gy1, gx0:gx1]
+        alpha[gy0:gy1, gx0:gx1] = np.where(was_covered, np.minimum(region, fg), fg)
+        covered[gy0:gy1, gx0:gx1] = True
     return alpha
 
 

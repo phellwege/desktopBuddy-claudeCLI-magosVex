@@ -1080,3 +1080,21 @@ def test_trim_floor_rows_clips_ground_line_but_keeps_hem():
     assert out[88, 200]                           # shadow under the feet survives
     assert out[50, 150] and out[50, 249]          # body untouched
     assert trim_floor_rows(np.zeros((5, 5), dtype=bool)).sum() == 0
+
+
+def test_key_background_bands_margin_keeps_figure_parts_above_the_band():
+    # Sheet: outer background (10,10,10) with a panel of fill (50,48,46) at rows 30..90;
+    # a red figure inside the panel whose "skull" rises 12 px above the panel top into
+    # the outer background. The band rectangle is the panel; keying with a margin must
+    # keep the skull opaque and make both the panel fill and the outer margin transparent.
+    im = np.full((120, 120, 3), (10, 10, 10), dtype=np.uint8)
+    im[30:90, 20:100] = (50, 48, 46)
+    im[45:85, 50:70] = (200, 40, 40)          # body inside the panel
+    im[18:45, 55:65] = (200, 40, 40)          # skull rising above the panel top
+    band = [(20, 30, 100, 90)]
+    tight = key_background_bands(im, band, tolerance=16, inset=2)
+    grown = key_background_bands(im, band, tolerance=16, inset=2, margin=20)
+    assert tight[20, 60] == 0 and grown[20, 60] == 255          # skull above the band survives with a margin
+    assert grown[60, 60] == 255                                  # body untouched
+    assert grown[40, 30] == 0 and grown[20, 30] == 0             # panel fill and outer margin both keyed
+    assert grown[5, 60] == 0                                     # outside the grown rect stays transparent
