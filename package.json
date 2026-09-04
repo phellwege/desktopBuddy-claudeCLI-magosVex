@@ -8,6 +8,7 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "vitest run",
+    "pretest:e2e": "npm run build",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

@@ -49,6 +49,7 @@ async function main(): Promise<void> {
     sleepAfterMs: config.sleepAfterMin * 60000,
     initialMood: pack.persona.defaultMood,
   })
+  if (process.env.BUDDY_TEST === '1') (globalThis as { __buddy?: Buddy }).__buddy = buddy
 
   const overlay = createOverlayWindow()
   const hologram = createHologramWindow(() => { if (buddy.getState().panelOpen) actions.closePanel() })
