@@ -44,7 +44,8 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict) -
     x0, x1 = (int(round(v * scale)) for v in band["x"])
     y0, y1 = (int(round(v * scale)) for v in band["y"])
     sub = alpha[y0:y1, x0:x1]
-    boxes = [b.shifted(x0, y0) for b in components(sub)]
+    min_px = max(4, int(round(4 * scale * scale)))
+    boxes = [b.shifted(x0, y0) for b in components(sub, min_px=min_px)]
     if band.get("each"):
         boxes.sort(key=lambda b: (b.x0, b.y0))
         return [(b, b.cx) for b in boxes]

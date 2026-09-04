@@ -122,6 +122,24 @@ def test_build_each_mode_band(tmp_path):
     assert "props" not in draft
 
 
+def test_each_mode_ignores_specks_at_scale():
+    # Three isolated single-pixel specks (antialiasing/glow artifacts) on top of the
+    # normal synthetic sheet. At 1x they are 1 px, well under the min_px=4 floor.
+    # Nearest-upscaled 2x they become 2x2=4 px blocks; the floor must scale too
+    # (to max(4, round(4*scale*scale)) = 16 at scale 2) or they get miscounted as frames.
+    a = synthetic_sheet()
+    a[5, 100] = 255
+    a[100, 5] = 255
+    a[115, 115] = 255
+    band = {"name": "props", "x": [0, 120], "y": [0, 120], "count": 0, "each": True}
+    frames_1x = group_frames(a, band, 1.0, {})
+    assert len(frames_1x) == 4
+    a2x = np.kron(a, np.ones((2, 2), dtype=np.uint8)).astype(np.uint8)
+    band_2x = {"name": "props", "x": [0, 120], "y": [0, 120], "count": 0, "each": True}
+    frames_2x = group_frames(a2x, band_2x, 2.0, {})
+    assert len(frames_2x) == 4
+
+
 from key import key_background
 from upscale import upscale
 
@@ -199,3 +217,11 @@ def test_real_sheet_bands_match_rows(tmp_path):
     for name, f in atlas["frames"].items():
         assert 0 < f["ay"] <= f["h"] and 0 <= f["ax"] <= f["w"], name
     assert "walk_right_0" in atlas["frames"] and "run_left_2" in atlas["frames"]
+
+    # at 2x nearest-upscale, the "each" mode bands (faces, props) must not pick up
+    # antialiasing/glow specks that only clear the min_px floor because of the upscale.
+    keyed_2x = tmp_path / "keyed@2x.png"
+    assert upscale(str(keyed), str(keyed_2x), 2, "nearest") == "nearest"
+    counts_2x = build(str(keyed_2x), rows_path, ov_path, str(tmp_path / "out2x"), 2.0)
+    assert counts_2x["faces"] == 8
+    assert counts_2x["props"] == counts["props"]
