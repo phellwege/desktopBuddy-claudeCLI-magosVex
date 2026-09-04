@@ -25,7 +25,7 @@ function fakeActions() {
 function scriptedBrain(events: BrainEvent[]): Brain & { stopped: number } {
   return { stopped: 0, async *respond() { for (const e of events) yield e }, stop() { this.stopped++ } }
 }
-const settings = () => ({ workspace: 'C:\repo', model: null, sessionId: null })
+const settings = () => ({ workspace: 'C:\\repo', model: null, sessionId: null })
 
 describe('ChatController', () => {
   it('routes plain text to the brain and forwards events', async () => {
@@ -55,8 +55,8 @@ describe('ChatController', () => {
   it('updates settings for /cd, /model, /new and reports status', () => {
     const out = fakeOut(); const changes: unknown[] = []
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ ...s }) })
-    c.prompt('/cd D:\w'); c.prompt('/model sonnet'); c.prompt('/new')
-    expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\w', session: 'new' })
+    c.prompt('/cd D:\\w'); c.prompt('/model sonnet'); c.prompt('/new')
+    expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\\w', session: 'new' })
     expect(changes.length).toBe(3)
     expect(out.statuses.length).toBe(3)
   })

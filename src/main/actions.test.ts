@@ -20,6 +20,8 @@ describe('Actions', () => {
   it('goTo resolves immediately when already there', async () => {
     const b = new Buddy({ rng: () => 0, initialX: 0.5 }); b.tick(0)
     await new Actions(b, host()).goTo(0.5)
+    expect(b.getState().x).toBe(0.5)
+    expect(b.getState().activity).toBe('idle')
   })
   it('openPanel and closePanel drive the host and the state', () => {
     const b = new Buddy({ rng: () => 0 }); b.tick(0)
