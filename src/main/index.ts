@@ -113,6 +113,9 @@ async function main(): Promise<void> {
   const actions = new Actions(buddy, host)
 
   const cliPath = expandEnv(process.env.BUDDY_CLI_PATH ?? config.cliPath)
+  // Test hook: a JSON array of argv placed before the CLI flags, so a script interpreter can
+  // stand in for claude.exe (BUDDY_CLI_PATH=node.exe BUDDY_CLI_ARGS='["test/fake-claude.cjs"]').
+  const argsPrefix = parseArgsPrefix(process.env.BUDDY_CLI_ARGS)
   const cliMissing = !existsSync(cliPath)
   const useEcho = process.env.BUDDY_BRAIN === 'echo' || cliMissing
 
@@ -150,7 +153,7 @@ async function main(): Promise<void> {
   app.on('before-quit', () => { void server.close() })
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
-    cliPath, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
+    cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
     allowedTools: config.allowedTools, server, hookPath: hookScriptPath(),
     lines: { authError: pack.persona.lines.authError, cliMissing: pack.persona.lines.cliMissing, error: pack.persona.lines.error },
     onMood,
@@ -212,6 +215,14 @@ async function main(): Promise<void> {
 
   screen.on('display-metrics-changed', () => { rebound(overlay, charH); if (hologram.isVisible()) placeHologram() })
   app.on('window-all-closed', () => app.quit())
+}
+
+function parseArgsPrefix(raw: string | undefined): string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.every((a): a is string => typeof a === 'string') ? parsed : []
+  } catch { return [] }
 }
 
 // A throw here (including one after the pack has already loaded and windows may already

@@ -1,10 +1,10 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { join } from 'node:path'
 
-// See test/fake-claude-launcher.cs for why this is a compiled .exe rather than the .cjs
-// fake CLI itself: ClaudeCliBrain spawns config.cliPath directly (no shell), and on Windows
-// that can only ever be a real executable.
-const fakeCliPath = join(__dirname, '../test/fake-claude.exe')
+// ClaudeCliBrain spawns config.cliPath directly (no shell), and on Windows that can only be
+// a real executable: the app under test runs node.exe with the fake CLI script placed in
+// front of the CLI flags through the BUDDY_CLI_ARGS test hook.
+const fakeCliScript = join(__dirname, '../test/fake-claude.cjs')
 
 async function windowByUrl(app: ElectronApplication, part: string): Promise<Page> {
   await expect.poll(() => app.windows().filter(w => w.url().includes(part)).length, { timeout: 15000 }).toBe(1)
@@ -21,11 +21,9 @@ async function launch(scenario: string): Promise<{ app: ElectronApplication; hol
     env: {
       ...process.env,
       BUDDY_TEST: '1',
-      BUDDY_CLI_PATH: fakeCliPath,
+      BUDDY_CLI_PATH: process.execPath,
+      BUDDY_CLI_ARGS: JSON.stringify([fakeCliScript]),
       FAKE_CLAUDE_SCENARIO: scenario,
-      // The launcher runs `<node> <its own dir>/fake-claude.cjs <args>`; process.execPath
-      // here is this Playwright run's own node.exe, so the fake CLI never depends on node
-      // being on PATH inside the launched app's environment.
       FAKE_CLAUDE_NODE_EXE: process.execPath,
     },
   })

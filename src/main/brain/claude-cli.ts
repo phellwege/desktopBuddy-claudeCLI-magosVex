@@ -21,6 +21,9 @@ export interface ClaudeCliDeps {
   lines: { authError?: string[]; cliMissing?: string[]; error?: string[] }
   onMood(mood: Mood | 'restore'): void
   spawn?: typeof nodeSpawn // injectable for tests
+  // Placed before the CLI flags: lets an interpreter stand in for claude.exe in tests
+  // (cliPath = node.exe, argsPrefix = [fake script]). Never set for a real CLI.
+  argsPrefix?: string[]
   env?: NodeJS.ProcessEnv
 }
 
@@ -114,7 +117,7 @@ export class ClaudeCliBrain implements Brain {
     let sawActivity = false
     let doneEmitted = false
 
-    const child = spawnFn(this.deps.cliPath, args, { cwd: workspace, env })
+    const child = spawnFn(this.deps.cliPath, [...(this.deps.argsPrefix ?? []), ...args], { cwd: workspace, env })
     this.child = child
 
     child.stdout?.on('data', (chunk: Buffer) => {

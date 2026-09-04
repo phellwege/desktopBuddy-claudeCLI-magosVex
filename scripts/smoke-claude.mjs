@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // One-off smoke test against the REAL Claude Code CLI. This is the only thing in this repo
 // that ever spawns the real CLI: unit tests and the e2e suite both drive test/fake-claude.cjs
-// (through the test/fake-claude.exe launcher on Windows) so an automated run never touches
+// (node.exe plus the fake script through the BUDDY_CLI_ARGS hook) so an automated run never touches
 // the network or spends quota. Run this by hand with `npm run smoke:claude` to confirm the
 // installed CLI still answers; it is never invoked by any other script or test.
 import { spawn } from 'node:child_process'
