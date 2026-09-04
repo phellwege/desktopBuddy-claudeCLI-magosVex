@@ -9,8 +9,8 @@ import type { BuddyActions } from './actions'
 const pack = (() => { const r = loadPack(join(__dirname, '../../test/fixtures/pack-min')); if (!r.ok) throw new Error(r.errors.join()); return r.pack })()
 
 function fakeOut() {
-  const o = { deltas: [] as string[], systems: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[],
-    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string) { o.systems.push(t) }, status(s: unknown) { o.statuses.push(s) } }
+  const o = { deltas: [] as string[], systems: [] as string[], faces: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[],
+    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string, e?: string) { o.systems.push(t); o.faces.push(e ?? 'neutral') }, status(s: unknown) { o.statuses.push(s) } }
   return o as typeof o & ChatOut
 }
 function fakeActions() {
@@ -106,6 +106,7 @@ describe('ChatController', () => {
     c.prompt('hello')
     await new Promise(r => setTimeout(r, 10))
     expect(out.systems.at(-1)).toContain('boom')
+    expect(out.faces.at(-1)).toBe('sadness')
   })
   it('does not let a turn finishing after /new overwrite the fresh session, but a normal turn still stores its id', async () => {
     const out = fakeOut()

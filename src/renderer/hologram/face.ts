@@ -18,10 +18,19 @@ export class HoloFace {
     const c = document.createElement('canvas')
     c.className = 'face'
     const scale = size / Math.max(f.w, f.h)
-    c.width = Math.round(f.w * scale)
-    c.height = Math.round(f.h * scale)
+    // CSS size is what the bubble lays out; the backing store follows the device pixel
+    // ratio so the face stays crisp on HiDPI screens instead of being upscaled by the
+    // compositor.
+    const cssW = Math.round(f.w * scale)
+    const cssH = Math.round(f.h * scale)
+    const dpr = Math.max(1, window.devicePixelRatio || 1)
+    c.width = Math.round(cssW * dpr)
+    c.height = Math.round(cssH * dpr)
+    c.style.width = `${cssW}px`
+    c.style.height = `${cssH}px`
     const ctx = c.getContext('2d')!
-    ctx.imageSmoothingEnabled = false
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(this.image, f.x, f.y, f.w, f.h, 0, 0, c.width, c.height)
     ctx.globalCompositeOperation = 'source-atop'
     ctx.fillStyle = this.accent
@@ -29,7 +38,7 @@ export class HoloFace {
     ctx.fillRect(0, 0, c.width, c.height)
     ctx.globalAlpha = 0.25
     ctx.fillStyle = '#000'
-    for (const y of scanlineRows(c.height)) ctx.fillRect(0, y, c.width, 1)
+    for (const y of scanlineRows(cssH)) ctx.fillRect(0, y * dpr, c.width, dpr)
     ctx.globalAlpha = 1
     ctx.globalCompositeOperation = 'source-over'
     return c

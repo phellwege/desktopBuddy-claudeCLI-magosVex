@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
 import { loadConfig } from './config'
 import { loadPack, pickLine } from './pack'
+import type { Expression } from '../shared/types'
 import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
@@ -55,6 +56,7 @@ async function main(): Promise<void> {
   if (process.env.BUDDY_TEST === '1') (globalThis as { __buddy?: Buddy }).__buddy = buddy
 
   const overlay = createOverlayWindow(charH)
+  appendLog(logDir, 'main', `pack ${packDir}: ${Object.keys(pack.atlas.frames).length} frames, scale ${scale}, character ${Math.round(charW)}x${Math.round(charH)}, overlay ${JSON.stringify(overlay.getBounds())}`)
   const hologram = createHologramWindow(() => { if (buddy.getState().panelOpen) actions.closePanel() })
 
   for (const [name, win] of [['overlay', overlay], ['hologram', hologram]] as const) {
@@ -79,12 +81,17 @@ async function main(): Promise<void> {
     hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, x, charW, charH))
     if (originRef.current) hologram.webContents.send(CH.hologramOrigin, originToWindow(originRef.current, hologram.getBounds()))
   }
+  // A turn can end after the window is gone (quit mid-reply); sending to a destroyed
+  // webContents throws, which surfaced as an unhandled rejection in the log.
+  const toHologram = (channel: string, payload: unknown): void => {
+    if (!hologram.isDestroyed()) hologram.webContents.send(channel, payload)
+  }
   const out = {
-    delta: (text: string) => hologram.webContents.send(CH.chatDelta, { text }),
-    activity: (a: ChatActivityPayload) => hologram.webContents.send(CH.chatActivity, a),
-    done: (d: ChatDonePayload) => hologram.webContents.send(CH.chatDone, d),
-    system: (text: string) => hologram.webContents.send(CH.chatSystem, { text, expression: 'neutral' }),
-    status: (s: ChatStatusPayload) => hologram.webContents.send(CH.chatStatus, s),
+    delta: (text: string) => toHologram(CH.chatDelta, { text }),
+    activity: (a: ChatActivityPayload) => toHologram(CH.chatActivity, a),
+    done: (d: ChatDonePayload) => toHologram(CH.chatDone, d),
+    system: (text: string, expression: Expression = 'neutral') => toHologram(CH.chatSystem, { text, expression }),
+    status: (s: ChatStatusPayload) => toHologram(CH.chatStatus, s),
   }
   let greeted = false
   const host: ActionHost = {
@@ -97,7 +104,7 @@ async function main(): Promise<void> {
       if (!greeted) { greeted = true; out.system(pickLine(pack, 'greeting') ?? '') }
     },
     hidePanel: () => { setHologramInteractive(hologram, false); hologram.hide() },
-    pushSystem: (text) => hologram.webContents.send(CH.chatSystem, { text, expression: 'neutral' }),
+    pushSystem: (text) => out.system(text),
   }
   const actions = new Actions(buddy, host)
 
@@ -122,6 +129,7 @@ async function main(): Promise<void> {
   app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
 
   buddy.onChange((v) => {
+    if (overlay.isDestroyed()) return
     overlay.webContents.send(CH.buddyState, v)
     if (v.state.panelOpen && hologram.isVisible()) placeHologram()
   })

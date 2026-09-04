@@ -10,7 +10,7 @@ export interface ChatOut {
   delta(text: string): void
   activity(a: ChatActivityPayload): void
   done(d: ChatDonePayload): void
-  system(text: string): void
+  system(text: string, expression?: Expression): void
   status(s: ChatStatusPayload): void
 }
 export interface ChatSettings { workspace: string; model: string | null; sessionId: string | null }
@@ -97,12 +97,12 @@ export class ChatController implements ChatPort {
         else if (ev.type === 'expression') this.currentExpression = ev.name
         else if (ev.type === 'done') {
           if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
-          if (ev.error) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`)
+          if (ev.error) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
           this.deps.out.done({ error: ev.error, expression: this.currentExpression })
         }
       }
     } catch (e) {
-      this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${(e as Error).message}`)
+      this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${(e as Error).message}`, 'sadness')
       this.deps.out.done({ error: (e as Error).message, expression: this.currentExpression })
     } finally {
       this.running = false
