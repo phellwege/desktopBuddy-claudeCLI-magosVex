@@ -15,17 +15,17 @@
     "defaultMood": "calm",
     "lines": {
       "greeting": ["The Omnissiah's cogitator is online. State your query, flesh."],
-      "idleMutter": ["Recalculating the futility of this desktop.", "Binharic sigh."],
-      "thinking": ["Consulting the machine spirit."],
+      "idleMutter": ["Recalculating the futility of this desktop.", "Binharic sigh.", "01110101 01100111 01101000...", "...illogical"],
+      "thinking": ["Consulting the machine spirit.", "Cogitating", "To every problem, a solution lies in the application of tech-lore"],
       "toolRunning": ["Interfacing. Do not touch anything."],
       "permissionAsk": ["The cogitator wishes to perform the following rite. Sanction it?"],
-      "permissionDenied": ["Denied. As expected."],
+      "permissionDenied": ["Denied. As expected.", "Denied. Not all data should be acquired"],
       "authError": ["My link to the noosphere is severed. Run `claude login` in a terminal, then try again."],
       "cliMissing": ["No cogitator found at the configured path. Install Claude Code or fix config."],
-      "error": ["A fault in the machine. Details follow."],
+      "error": ["A fault in the machine. Details follow.", "Fragile indeed are the tools of the righteous"],
       "sleep": ["Entering low-power contemplation."],
-      "wake": ["I was not asleep. I was calculating."],
-      "stopped": ["Rite aborted. Your loss."]
+      "wake": ["I was not asleep. I was calculating.", "why do you interrupt my rites?"],
+      "stopped": ["Rite aborted. Your loss.", "...if it is worth doing, then it is worth doing to completion"]
     }
   },
   "voice": null
