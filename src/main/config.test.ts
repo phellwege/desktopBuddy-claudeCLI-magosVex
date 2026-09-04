@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,6 +32,16 @@ describe('config', () => {
     writeFileSync(p, '{ not json')
     expect(loadConfig(p)).toEqual(DEFAULT_CONFIG)
     expect(readFileSync(p, 'utf8')).toBe('{ not json')
+  })
+  it('falls back to the default for a wrong-typed field, with a logged line, keeping the rest', () => {
+    const p = tmp()
+    writeFileSync(p, JSON.stringify({ scale: 'big', model: 'sonnet' }))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cfg = loadConfig(p)
+    expect(cfg.scale).toBe(DEFAULT_CONFIG.scale)
+    expect(cfg.model).toBe('sonnet')
+    expect(spy).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('scale'))
+    spy.mockRestore()
   })
   it('round-trips through saveConfig', () => {
     const p = tmp()

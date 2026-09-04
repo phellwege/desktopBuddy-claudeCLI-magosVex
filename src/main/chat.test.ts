@@ -131,6 +131,39 @@ describe('ChatController', () => {
     await new Promise(r => setTimeout(r, 10))
     expect(c2.status().session).toBe('s2')
   })
+  it('awaitPermissionAnswer resolves on a matching permissionAnswer with the allow decision', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    const pending = c.awaitPermissionAnswer('p1')
+    c.permissionAnswer('p1', true)
+    expect(await pending).toEqual({ allow: true, reason: 'user allowed' })
+    expect(out.faces).not.toContain('anger')
+  })
+  it('a denied permission posts the permissionDenied line with anger and resolves allow: false', async () => {
+    const out = fakeOut()
+    const withLine = { ...pack, persona: { ...pack.persona, lines: { ...pack.persona.lines, permissionDenied: ['Denied, heretic.'] } } }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack: withLine, out, settings: settings() })
+    const pending = c.awaitPermissionAnswer('p2')
+    c.permissionAnswer('p2', false)
+    expect(await pending).toEqual({ allow: false, reason: 'user denied' })
+    expect(out.systems.at(-1)).toBe('Denied, heretic.')
+    expect(out.faces.at(-1)).toBe('anger')
+  })
+  it('permissionAnswer for an unknown or already-answered id is a no-op', () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    expect(() => c.permissionAnswer('nope', true)).not.toThrow()
+    expect(out.systems).toEqual([])
+  })
+  it('setExpression stamps the expression carried on the next done payload', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'done' }]),
+      actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('hello')
+    c.setExpression('love')
+    await new Promise(r => setTimeout(r, 10))
+    expect(out.doneArgs.at(-1)).toEqual({ error: undefined, expression: 'love' })
+  })
   it('every slash command confirms with one system line', async () => {
     const out = fakeOut()
     const ctrl = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })

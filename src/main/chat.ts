@@ -19,6 +19,9 @@ export class ChatController implements ChatPort {
   private running = false
   private turnSerial = 0
   private currentExpression: Expression = 'neutral'
+  // Permission requests the local server is waiting on: keyed by the hook's tool_use_id,
+  // resolved by permissionAnswer() once the user answers the card in the panel.
+  private readonly pendingPermissions = new Map<string, (d: { allow: boolean; reason: string }) => void>()
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void }) {
@@ -109,6 +112,22 @@ export class ChatController implements ChatPort {
     }
   }
 
-  permissionAnswer(_id: string, _allow: boolean): void { /* Plan B */ }
+  // Called by the local server's onPermission callback (bound in main/index.ts) once it has
+  // shown the permission card; resolves when the user answers, or never, if the server's own
+  // timeout fires first and answers the hook on its own.
+  awaitPermissionAnswer(id: string): Promise<{ allow: boolean; reason: string }> {
+    return new Promise((resolve) => { this.pendingPermissions.set(id, resolve) })
+  }
+  permissionAnswer(id: string, allow: boolean): void {
+    const resolve = this.pendingPermissions.get(id)
+    if (!resolve) return
+    this.pendingPermissions.delete(id)
+    if (!allow) this.deps.out.system(pickLine(this.deps.pack, 'permissionDenied') ?? 'Denied.', 'anger')
+    resolve({ allow, reason: allow ? 'user allowed' : 'user denied' })
+  }
+  // Called directly by the local server's set_expression tool during a turn (buddy tool
+  // calls never reach the stream parser, so this is the only path an in-turn expression
+  // change has - BrainEvent{type:'expression'} still works too, for the echo brain).
+  setExpression(name: Expression): void { this.currentExpression = name }
   stop(): void { this.deps.brain.stop() }
 }

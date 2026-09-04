@@ -1,19 +1,22 @@
 import { app, dialog, screen } from 'electron'
-import { mkdirSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { existsSync, mkdirSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { loadConfig } from './config'
+import { expandEnv, loadConfig, saveConfig } from './config'
 import { loadPack, pickLine } from './pack'
-import type { Expression } from '../shared/types'
+import type { Expression, Mood } from '../shared/types'
 import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, loadPage, rebound, setHologramInteractive } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
 import { wireIpc } from './ipc'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
+import { ClaudeCliBrain } from './brain/claude-cli'
+import type { Brain } from './brain/types'
 import { ChatController } from './chat'
-import { saveConfig } from './config'
+import { hookScriptPath, startLocalServer, type PermissionRequest } from './server'
 import { createTray } from './tray'
 import { showContextMenu } from './menu'
 import { appendLog } from './log'
@@ -109,11 +112,81 @@ async function main(): Promise<void> {
   }
   const actions = new Actions(buddy, host)
 
+  const cliPath = expandEnv(process.env.BUDDY_CLI_PATH ?? config.cliPath)
+  const cliMissing = !existsSync(cliPath)
+  const useEcho = process.env.BUDDY_BRAIN === 'echo' || cliMissing
+
+  // Both callbacks below are handed to startLocalServer before the ChatController that owns
+  // their real logic exists yet (the brain needs the server, and the controller needs the
+  // brain): they close over this ref instead, filled in once the controller is built.
+  let chatRef: ChatController | undefined
+  const onPermission = async (req: PermissionRequest): Promise<{ allow: boolean; reason: string }> => {
+    actions.openPanel()
+    const line = pickLine(pack, 'permissionAsk') ?? `Allow ${req.toolName}?`
+    out.system(line, 'begging')
+    const payload: ChatPermissionPayload = { id: req.id, toolName: req.toolName, summary: req.summary, line }
+    toHologram(CH.chatPermission, payload)
+    return chatRef!.awaitPermissionAnswer(req.id)
+  }
+  // The first tool activity of a turn forces mood to "thinking"; on the way out the brain
+  // asks to restore it, but only if nothing else (a set_mood tool call) changed it meanwhile.
+  let moodBeforeThinking: Mood | null = null
+  const onMood = (m: Mood | 'restore'): void => {
+    if (m === 'restore') {
+      if (moodBeforeThinking !== null && actions.getState().mood === 'thinking') actions.setMood(moodBeforeThinking)
+      moodBeforeThinking = null
+      return
+    }
+    moodBeforeThinking = actions.getState().mood
+    actions.setMood(m)
+  }
+
+  const server = await startLocalServer({
+    actions,
+    setExpression: (name) => chatRef?.setExpression(name),
+    onPermission,
+    permissionTimeoutMs: config.permissionTimeoutSec * 1000,
+  })
+  app.on('before-quit', () => { void server.close() })
+
+  const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
+    cliPath, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
+    allowedTools: config.allowedTools, server, hookPath: hookScriptPath(),
+    lines: { authError: pack.persona.lines.authError, cliMissing: pack.persona.lines.cliMissing, error: pack.persona.lines.error },
+    onMood,
+  })
+
   const chat = new ChatController({
-    brain: new EchoBrain(pack, actions), actions, pack, out,
+    brain, actions, pack, out,
     settings: { workspace: config.workspace, model: config.model, sessionId: null },
     onSettingsChange: (s) => { config.workspace = s.workspace; config.model = s.model; saveConfig(configPath, config) },
   })
+  chatRef = chat
+
+  // Runs `<cli> auth status` once, five seconds to answer, and never blocks startup on it:
+  // its only effect is one line appended to the status row once (or never) it resolves.
+  function checkCliAuth(path: string): void {
+    try {
+      const child = spawn(path, ['auth', 'status'], { stdio: ['ignore', 'pipe', 'ignore'] })
+      let buf = ''
+      const timer = setTimeout(() => child.kill(), 5000)
+      child.stdout?.on('data', (c: Buffer) => { buf += c.toString('utf8') })
+      child.on('close', () => {
+        clearTimeout(timer)
+        try {
+          const parsed = JSON.parse(buf) as { loggedIn?: unknown }
+          if (typeof parsed.loggedIn === 'boolean') {
+            out.status({ ...chat.status(), error: parsed.loggedIn ? 'cli: logged in' : 'cli: not logged in' })
+          }
+        } catch { /* not JSON; leave the status row alone */ }
+      })
+      child.on('error', () => clearTimeout(timer))
+    } catch { /* best effort only */ }
+  }
+  if (process.env.BUDDY_BRAIN === 'echo') out.system('echo brain (BUDDY_BRAIN=echo)')
+  else if (cliMissing) out.system(`echo brain (cli not found at ${cliPath})`)
+  else checkCliAuth(cliPath)
+
   wireIpc({
     buddy, actions, overlay, hologram,
     packPayload: { atlasUrl: 'pack://app/' + pack.atlas.image, atlasJsonUrl: 'pack://app/atlas.json',

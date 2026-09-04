@@ -31,14 +31,49 @@ export function expandEnv(s: string): string {
   return s.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (m, name: string) => process.env[name] ?? m)
 }
 
+function isStringArray(v: unknown): boolean {
+  return Array.isArray(v) && v.every((x) => typeof x === 'string')
+}
+function isFiniteNumber(v: unknown): boolean {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+// One validator per field, checked against the raw JSON before it overwrites a default: a
+// field with the wrong type is dropped (logged) rather than let through to crash something
+// downstream that trusted the Config type.
+const VALIDATORS: { [K in keyof Config]: (v: unknown) => boolean } = {
+  pack: (v) => typeof v === 'string',
+  cliPath: (v) => typeof v === 'string',
+  workspace: (v) => typeof v === 'string',
+  extraDirs: isStringArray,
+  model: (v) => v === null || typeof v === 'string',
+  allowedTools: isStringArray,
+  permissionTimeoutSec: isFiniteNumber,
+  wanderIntervalSec: (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number'),
+  sleepAfterMin: isFiniteNumber,
+  scale: isFiniteNumber,
+}
+
+function validateConfig(raw: Record<string, unknown>): Config {
+  const out = { ...DEFAULT_CONFIG } as Config
+  const target = out as unknown as Record<string, unknown>
+  for (const key of Object.keys(DEFAULT_CONFIG) as (keyof Config)[]) {
+    if (!(key in raw)) continue
+    const value = raw[key]
+    if (VALIDATORS[key](value)) target[key] = value
+    else console.error(`config: "${key}" has the wrong type, falling back to the default`)
+  }
+  return out
+}
+
 export function loadConfig(path: string): Config {
   if (!existsSync(path)) {
     saveConfig(path, DEFAULT_CONFIG)
     return { ...DEFAULT_CONFIG }
   }
   try {
-    const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<Config>
-    return { ...DEFAULT_CONFIG, ...raw }
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    return validateConfig(raw)
   } catch {
     return { ...DEFAULT_CONFIG }
   }
