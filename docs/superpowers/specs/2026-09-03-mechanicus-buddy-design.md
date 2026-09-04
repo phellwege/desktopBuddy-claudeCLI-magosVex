@@ -603,3 +603,19 @@ mechanicus-buddy/
 - Long-lived CLI process (11.8).
 - Multiple monitors, drag, perching.
 - Additional packs; a pack picker in the tray.
+
+## 19. Amendment 2026-09-04: persona applies to readback, not to displayed text
+
+Decision (Peter): the hologram shows Claude Code's reply text unaltered by the
+persona. The persona is applied only when the user clicks a per-message speaker
+button: a one-shot, cheap-model call (`claude -p --model haiku`, no tools, no
+session, persona prompt plus "summarize this reply concisely in character")
+produces a short in-character summary that is spoken by the voice layer and not
+displayed. Consequences:
+
+- Plan B: `--append-system-prompt` carries only the body-tools note, not the
+  persona text. `persona.md` becomes the voice persona.
+- Slice 2 (voice): the speaker button, the summarizer, and the TTS call are one
+  feature. Summaries are cached per message. Cost is one Haiku turn per click.
+- Canned pack lines (greeting, permission card, errors) remain in character; they
+  never come from Claude.
