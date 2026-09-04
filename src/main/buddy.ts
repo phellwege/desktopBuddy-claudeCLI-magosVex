@@ -154,7 +154,7 @@ export class Buddy {
     this.targetX = undefined
     const wasCommanded = this.commanded
     this.commanded = false
-    if (this.pendingSleep) {
+    if (this.pendingSleep && !this.panelOpen) {
       this.pendingSleep = false
       this.queuedEmote = undefined
       this.asleep = true
@@ -296,6 +296,7 @@ export class Buddy {
   }
   interact(): void {
     this.lastInteractionAt = this.now
+    this.pendingSleep = false
     if (this.asleep) this.wake()
   }
 }
