@@ -1,4 +1,5 @@
 { "keyTolerance": 40,
+  "defaultSplit": "sam",
   "bands": [
   { "name": "turnaround", "x": [20, 520],   "y": [65, 205],  "count": 5, "numeralStrip": [48, 63] },
   { "name": "idle",       "x": [530, 840],  "y": [65, 205],  "count": 3, "numeralStrip": [48, 63] },

@@ -281,6 +281,43 @@ def test_build_each_mode_band(tmp_path):
     assert "props" not in draft
 
 
+def _build_capturing_default_split(tmp_path, rows_obj, monkeypatch, split=None):
+    """Build a trivial two-frame synthetic sheet through `build()`, faking out
+    `group_frames` so no real segmentation runs, and return the `default_split` kwarg
+    `build()` actually passed it - the thing under test, not the segmentation result."""
+    from PIL import Image
+    a = synthetic_sheet()
+    rgba = np.dstack([np.full_like(a, 200)] * 3 + [a])
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"; rows.write_text(json.dumps(rows_obj))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+
+    seen = {}
+
+    def fake_group_frames(alpha, band, scale, overrides, **kwargs):
+        seen["default_split"] = kwargs.get("default_split")
+        return [(Box(0, 0, 10, 10), 5.0), (Box(20, 0, 30, 10), 25.0)]
+    monkeypatch.setattr(slice_mod, "group_frames", fake_group_frames)
+
+    build(str(sheet), str(rows), str(ov), str(tmp_path / "out"), 1.0, split=split)
+    return seen["default_split"]
+
+
+def test_build_uses_rows_json_defaultsplit_when_split_not_given(tmp_path, monkeypatch):
+    rows_obj = {"defaultSplit": "sam", "bands": [{"name": "t", "x": [0, 120], "y": [0, 120], "count": 2}]}
+    assert _build_capturing_default_split(tmp_path, rows_obj, monkeypatch) == "sam"
+
+
+def test_build_falls_back_to_objects_when_rows_json_has_no_defaultsplit(tmp_path, monkeypatch):
+    rows_obj = {"bands": [{"name": "t", "x": [0, 120], "y": [0, 120], "count": 2}]}
+    assert _build_capturing_default_split(tmp_path, rows_obj, monkeypatch) == "objects"
+
+
+def test_build_explicit_split_param_overrides_rows_json_defaultsplit(tmp_path, monkeypatch):
+    rows_obj = {"defaultSplit": "sam", "bands": [{"name": "t", "x": [0, 120], "y": [0, 120], "count": 2}]}
+    assert _build_capturing_default_split(tmp_path, rows_obj, monkeypatch, split="components") == "components"
+
+
 def test_each_mode_ignores_specks_at_scale():
     # Three isolated single-pixel specks (antialiasing/glow artifacts) on top of the
     # normal synthetic sheet. At 1x they are 1 px, well under the min_px=4 floor.
@@ -406,6 +443,16 @@ def test_upscale_nearest_doubles_size(tmp_path):
     Image.fromarray(np.zeros((3, 5, 4), dtype=np.uint8)).save(src)
     assert upscale(str(src), str(dst), 2, "nearest") == "nearest"
     assert Image.open(dst).size == (10, 6)
+
+
+def test_upscale_default_method_is_nearest(tmp_path):
+    """The default method must be the lossless "nearest" the sam/annotated split modes
+    require, not the old "auto" (which would silently prefer Real-ESRGAN if the exe were
+    on PATH, breaking the exact-pixel-repetition invariant those modes rely on)."""
+    from PIL import Image
+    src = tmp_path / "s.png"; dst = tmp_path / "d.png"
+    Image.fromarray(np.zeros((3, 5, 4), dtype=np.uint8)).save(src)
+    assert upscale(str(src), str(dst)) == "nearest"  # factor and method both default
 
 
 # ---------------------------------------------------------------------------------
@@ -550,7 +597,9 @@ def test_real_sheet_bands_match_rows(tmp_path):
     rgb = np.array(Image.open(RAW).convert("RGB"))
     alpha = key_background_bands(rgb, band_rects(rows["bands"], 1.0), tolerance)
     keyed = tmp_path / "keyed.png"; Image.fromarray(np.dstack([rgb, alpha])).save(keyed)
-    counts = build(str(keyed), rows_path, ov_path, str(tmp_path / "out"), 1.0)
+    # Explicit "objects" split: this test exercises the watershed exclusion algorithm
+    # specifically (see below), independent of rows.json's own "defaultSplit" (now "sam").
+    counts = build(str(keyed), rows_path, ov_path, str(tmp_path / "out"), 1.0, split="objects")
     expected = {b["name"]: b["count"] for b in rows["bands"] if not b.get("each")}
     assert {k: counts[k] for k in expected} == expected
     assert counts["faces"] == 10
@@ -584,7 +633,7 @@ def test_real_sheet_bands_match_rows(tmp_path):
     # antialiasing/glow specks that only clear the min_px floor because of the upscale.
     keyed_2x = tmp_path / "keyed@2x.png"
     assert upscale(str(keyed), str(keyed_2x), 2, "nearest") == "nearest"
-    counts_2x = build(str(keyed_2x), rows_path, ov_path, str(tmp_path / "out2x"), 2.0)
+    counts_2x = build(str(keyed_2x), rows_path, ov_path, str(tmp_path / "out2x"), 2.0, split="objects")
     assert counts_2x["faces"] == 10
     assert counts_2x["props"] == counts["props"]
 

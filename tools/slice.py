@@ -1,4 +1,16 @@
-"""Slice a labeled sprite sheet into an atlas using rows.json bands."""
+"""Slice a labeled sprite sheet into an atlas using rows.json bands.
+
+End-to-end recipe, from a raw 1x sheet to a renderable pack:
+
+    python tools/upscale.py raw/sheet.png build/raw@2x.png
+    tools/.venv-sam/Scripts/python.exe tools/slice.py build/raw@2x.png build/pack --key --scale 2
+    # copy build/pack/atlas.png and build/pack/atlas.json into packs/<name>/
+    python tools/render_frames.py packs/mechanicus build/frames.png
+
+The slicer's own default split mode comes from rows.json's own "defaultSplit" key (see
+`build()`) rather than a hard-coded default, so it runs in the SAM venv above; pass
+--split explicitly to override it for a single invocation.
+"""
 import argparse, json, os, sys
 from dataclasses import dataclass, field
 import numpy as np
@@ -703,10 +715,14 @@ def draft_animations(names_by_band: dict[str, list[str]]) -> dict:
 
 
 def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key: bool = False,
-          split: str = "objects", model=None, processor=None,
+          split: str | None = None, model=None, processor=None,
           diagnostics_path: str | None = None, annotations_path: str | None = None) -> dict:
     rows_data = json.load(open(rows))
     bands = rows_data["bands"]
+    # `split=None` (the CLI's own default too) means "use rows.json's own default": its
+    # top-level "defaultSplit" if it has one, else "objects" for backwards compatibility
+    # with rows.json files (mostly test fixtures) that predate "defaultSplit" entirely.
+    effective_split = split if split is not None else rows_data.get("defaultSplit", "objects")
     if key:
         rgb = np.array(Image.open(sheet).convert("RGB"))
         tolerance = rows_data.get("keyTolerance", 16)
@@ -718,17 +734,17 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
     alpha = rgba[..., 3]
     ov = json.load(open(overrides)) if os.path.exists(overrides) else {}
     os.makedirs(out_dir, exist_ok=True)
-    uses_sam = split == "sam" or any(b.get("split") == "sam" for b in bands)
+    uses_sam = effective_split == "sam" or any(b.get("split") == "sam" for b in bands)
     diagnostics: dict | None = {} if uses_sam else None
     annotations = None
-    if split == "annotated" or any(b.get("split") == "annotated" for b in bands):
+    if effective_split == "annotated" or any(b.get("split") == "annotated" for b in bands):
         if not annotations_path:
             raise ValueError("annotated split needs --annotations <pack>.json")
         annotations = annotations_io.load_annotations(annotations_path)
     all_frames, names_by_band, counts = [], {}, {}
     for band in bands:
         frames = group_frames(alpha, band, scale, ov, rgb=rgb, model=model, processor=processor,
-                               diagnostics=diagnostics, default_split=split, all_bands=bands,
+                               diagnostics=diagnostics, default_split=effective_split, all_bands=bands,
                                annotations=annotations)
         facing = band.get("facing")
         other = {"left": "right", "right": "left"}.get(facing)
@@ -765,15 +781,20 @@ def main() -> None:
     p.add_argument("--overrides", default=os.path.join(os.path.dirname(__file__), "overrides.json"))
     p.add_argument("--scale", type=float, default=1.0)
     p.add_argument("--key", action="store_true", help="sheet is a raw RGB sheet; key it band-by-band before slicing")
-    p.add_argument("--split", choices=["objects", "components", "sam", "annotated"], default="objects",
-                    help="default split mode for counted bands without their own \"split\" key in rows.json")
+    p.add_argument("--split", choices=["objects", "components", "sam", "annotated"], default=None,
+                    help="default split mode for counted bands without their own \"split\" key in "
+                         "rows.json; defaults to rows.json's own \"defaultSplit\" (or \"objects\" if "
+                         "it doesn't have one)")
     p.add_argument("--sam-model", default=segment_sam.DEFAULT_MODEL, help="SAM 2 model name (sam split only)")
     p.add_argument("--device", default="cuda", help="torch device for SAM inference (sam split only)")
     p.add_argument("--annotations", help="path to tools/annotations/<pack>.json (annotated split only); "
                                           "no model load, runs in the regular venv")
     a = p.parse_args()
     model = processor = None
-    if a.split == "sam":
+    effective_split = a.split
+    if effective_split is None:
+        effective_split = json.load(open(a.rows)).get("defaultSplit", "objects")
+    if effective_split == "sam":
         model, processor = segment_sam.load_model(a.sam_model, a.device)
     for band, n in build(a.sheet, a.rows, a.overrides, a.out_dir, a.scale, a.key,
                           split=a.split, model=model, processor=processor,
