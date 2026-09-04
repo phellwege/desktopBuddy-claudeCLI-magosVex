@@ -7,12 +7,26 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
   return page
 }
 
+let app: ElectronApplication | undefined
+
+test.beforeEach(async () => {
+  app = await electron.launch({ args: ['.'], env: { ...process.env, BUDDY_TEST: '1' } })
+})
+
+test.afterEach(async () => {
+  if (app) {
+    const toClose = app
+    app = undefined
+    await toClose.close()
+  }
+})
+
 test('overlay sits on the work area bottom, panel opens, /goto moves him, Escape closes', async () => {
-  const app = await electron.launch({ args: ['.'], env: { ...process.env, BUDDY_TEST: '1' } })
-  const overlay = await windowByUrl(app, 'overlay')
+  const electronApp = app!
+  const overlay = await windowByUrl(electronApp, 'overlay')
   await expect(overlay.locator('#buddy')).toBeAttached()
 
-  const geo = await app.evaluate(({ BrowserWindow, screen }) => {
+  const geo = await electronApp.evaluate(({ BrowserWindow, screen }) => {
     const w = BrowserWindow.getAllWindows().find(x => !x.isFocusable())!
     return { b: w.getBounds(), wa: screen.getPrimaryDisplay().workArea }
   })
@@ -20,19 +34,18 @@ test('overlay sits on the work area bottom, panel opens, /goto moves him, Escape
   expect(geo.b.height).toBe(260)
   expect(geo.b.y + geo.b.height).toBe(geo.wa.y + geo.wa.height)
 
-  await app.evaluate(({ ipcMain }) => { ipcMain.emit('overlay:click') })
-  const hologram = await windowByUrl(app, 'hologram')
-  await expect.poll(() => app.evaluate(() => (globalThis as { __buddy?: { getState(): { panelOpen: boolean } } }).__buddy!.getState().panelOpen)).toBe(true)
+  await electronApp.evaluate(({ ipcMain }) => { ipcMain.emit('overlay:click') })
+  const hologram = await windowByUrl(electronApp, 'hologram')
+  await expect.poll(() => electronApp.evaluate(() => (globalThis as { __buddy?: { getState(): { panelOpen: boolean } } }).__buddy!.getState().panelOpen)).toBe(true)
 
   await hologram.locator('#input').fill('/goto 80')
   await hologram.locator('#input').press('Enter')
-  await expect.poll(() => app.evaluate(() => (globalThis as { __buddy?: { getState(): { x: number } } }).__buddy!.getState().x), { timeout: 15000 }).toBeCloseTo(0.8, 5)
+  await expect.poll(() => electronApp.evaluate(() => (globalThis as { __buddy?: { getState(): { x: number } } }).__buddy!.getState().x), { timeout: 15000 }).toBeCloseTo(0.8, 5)
 
   await hologram.locator('#input').fill('hello')
   await hologram.locator('#input').press('Enter')
   await expect(hologram.locator('.msg.buddy')).toContainText('hello', { timeout: 15000 })
 
   await hologram.locator('#input').press('Escape')
-  await expect.poll(() => app.evaluate(() => (globalThis as { __buddy?: { getState(): { panelOpen: boolean } } }).__buddy!.getState().panelOpen)).toBe(false)
-  await app.close()
+  await expect.poll(() => electronApp.evaluate(() => (globalThis as { __buddy?: { getState(): { panelOpen: boolean } } }).__buddy!.getState().panelOpen)).toBe(false)
 })
