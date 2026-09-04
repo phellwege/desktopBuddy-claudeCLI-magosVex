@@ -152,10 +152,11 @@ export class ClaudeCliBrain implements Brain {
                 doneEmitted = true
                 if (out.error && isAuthError(out.error)) {
                   const authLine = pickLine(this.deps.lines.authError)
-                  if (authLine) yield { type: 'status', text: authLine }
+                  if (authLine) yield { type: 'status', text: authLine, expression: 'sadness' }
                 }
                 yield { type: 'done', sessionId: out.sessionId ?? sessionIdFromInit, error: out.error }
-                break
+                // The result line is terminal: nothing after it belongs to this turn.
+                return
               }
               default: break
             }
@@ -164,15 +165,18 @@ export class ClaudeCliBrain implements Brain {
           doneEmitted = true
           if (item.error.code === 'ENOENT') {
             const missingLine = pickLine(this.deps.lines.cliMissing)
-            if (missingLine) yield { type: 'status', text: missingLine }
+            if (missingLine) yield { type: 'status', text: missingLine, expression: 'sadness' }
           }
           yield { type: 'done', error: item.error.message }
+          return
         } else if (item.kind === 'close' && !doneEmitted) {
+          // The session id learned from init survives a stop or a crash, so the next turn
+          // resumes the same conversation instead of starting over.
           if (this.stopped) {
-            yield { type: 'done', error: `stopped (exit code ${item.code ?? 'null'})` }
+            yield { type: 'done', sessionId: sessionIdFromInit, error: `stopped (exit code ${item.code ?? 'null'})` }
           } else {
             const tail = stderrLines.slice(-5).join('\n')
-            yield { type: 'done', error: `exit code ${item.code ?? 'null'}${tail ? ': ' + tail : ''}` }
+            yield { type: 'done', sessionId: sessionIdFromInit, error: `exit code ${item.code ?? 'null'}${tail ? ': ' + tail : ''}` }
           }
         }
       }

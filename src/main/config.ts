@@ -3,6 +3,8 @@ import { dirname } from 'node:path'
 
 export interface Config {
   pack: string
+  // Must be a real executable (claude.exe): a .cmd shim cannot be spawned without a shell,
+  // and the brain never uses one because the inline JSON arguments would need cmd quoting.
   cliPath: string
   workspace: string
   extraDirs: string[]

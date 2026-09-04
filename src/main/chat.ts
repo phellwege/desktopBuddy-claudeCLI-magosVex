@@ -96,7 +96,7 @@ export class ChatController implements ChatPort {
       for await (const ev of this.deps.brain.respond(text, ctx)) {
         if (ev.type === 'text') this.deps.out.delta(ev.delta)
         else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
-        else if (ev.type === 'status') this.deps.out.system(ev.text)
+        else if (ev.type === 'status') this.deps.out.system(ev.text, ev.expression)
         else if (ev.type === 'expression') this.currentExpression = ev.name
         else if (ev.type === 'done') {
           if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }

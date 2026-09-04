@@ -133,7 +133,7 @@ describe('ClaudeCliBrain', () => {
   it('prefixes an auth error done with the authError status line', async () => {
     const brain = new ClaudeCliBrain(baseDeps({ spawn: fakeSpawn('auth'), lines: { authError: ['Present your credentials.'] } }))
     const events = await collect(brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null }))
-    expect(events).toContainEqual({ type: 'status', text: 'Present your credentials.' })
+    expect(events).toContainEqual({ type: 'status', text: 'Present your credentials.' , expression: 'sadness' })
     const done = events.at(-1) as { type: string; error?: string }
     expect(done.type).toBe('done')
     expect(done.error).toBe('Not logged in. Please run /login')
@@ -170,6 +170,8 @@ describe('ClaudeCliBrain', () => {
     }
     expect(last?.type).toBe('done')
     expect((last as { error?: string }).error).toContain('stopped')
+    // The id learned from init survives the stop so the next turn resumes this session.
+    expect((last as { sessionId?: string }).sessionId).toBe('s1')
   }, 10000)
 
   it('reports cliMissing on ENOENT and never spawns a real child', async () => {
@@ -177,7 +179,7 @@ describe('ClaudeCliBrain', () => {
       cliPath: 'C:\\definitely\\not\\a\\real\\claude.exe',
       lines: { cliMissing: ['The cogitator is absent.'] },
     })).respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null }))
-    expect(events).toContainEqual({ type: 'status', text: 'The cogitator is absent.' })
+    expect(events).toContainEqual({ type: 'status', text: 'The cogitator is absent.' , expression: 'sadness' })
     const done = events.at(-1) as { type: string; error?: string }
     expect(done.type).toBe('done')
     expect(done.error).toBeTruthy()
