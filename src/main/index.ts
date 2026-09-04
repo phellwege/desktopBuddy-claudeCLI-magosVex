@@ -105,6 +105,7 @@ async function main(): Promise<void> {
     },
     hidePanel: () => { setHologramInteractive(hologram, false); hologram.hide() },
     pushSystem: (text) => out.system(text),
+    log: (line) => appendLog(logDir, 'main', line),
   }
   const actions = new Actions(buddy, host)
 

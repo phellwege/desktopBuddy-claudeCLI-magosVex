@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { Buddy } from './buddy'
-import { Actions, type ActionHost } from './actions'
+import { Actions, arrivalTimeoutMs, type ActionHost } from './actions'
+import { RUN_SPEED } from '../shared/types'
 
-function host(): ActionHost & { shown: number; hidden: number; texts: string[] } {
-  return { shown: 0, hidden: 0, texts: [],
+function host(): ActionHost & { shown: number; hidden: number; texts: string[]; log: ReturnType<typeof vi.fn<(line: string) => void>> } {
+  return { shown: 0, hidden: 0, texts: [], log: vi.fn<(line: string) => void>(),
     showPanel() { this.shown++ }, hidePanel() { this.hidden++ }, pushSystem(t) { this.texts.push(t) } }
 }
 
@@ -79,5 +80,16 @@ describe('Actions', () => {
     b.oneShotDone()
     await p
     expect(b.getState().activity).toBe('projecting')
+  })
+  it('goTo resolves through the arrival timeout when the renderer never reports', async () => {
+    vi.useFakeTimers()
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    const h = host(); const a = new Actions(b, h)
+    const p = a.goTo(0.9)
+    vi.advanceTimersByTime(arrivalTimeoutMs(0.4, RUN_SPEED) + 1)
+    await p
+    expect(b.getState().activity).toBe('idle')
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('arrival timeout'))
+    vi.useRealTimers()
   })
 })

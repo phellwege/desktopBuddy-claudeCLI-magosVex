@@ -42,4 +42,9 @@ describe('renderMarkdown', () => {
     div.innerHTML = html
     expect(div.textContent?.trim()).toBe('a < b > c')
   })
+  it('links render as plain text with the url', () => {
+    const html = renderMarkdown('see [docs](https://example.com)')
+    expect(html).not.toContain('<a ')
+    expect(html).toContain('docs (https://example.com)')
+  })
 })

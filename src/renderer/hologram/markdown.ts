@@ -20,6 +20,11 @@ marked.use({
       const body = hljs.highlight(text, { language }).value
       return `<pre><code class="hljs language-${language}">${body}</code></pre>\n`
     },
+    // The hologram window blocks navigation as a backstop, but links still should not
+    // read as clickable: render them as plain text carrying the url alongside it.
+    link({ href, text }: { href: string; text: string }) {
+      return `${text} (${href})`
+    },
   },
 })
 

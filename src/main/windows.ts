@@ -28,6 +28,14 @@ export function createOverlayWindow(charH: number): BrowserWindow {
   return win
 }
 
+// Sanitized markdown renders links as plain text (see the hologram markdown renderer),
+// but this is a second line of defense: nothing loaded into the panel, typed or
+// streamed, should be able to steer the window to another page or pop a new one.
+export function blockNavigation(win: BrowserWindow): void {
+  win.webContents.on('will-navigate', (event) => { event.preventDefault() })
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+}
+
 export function createHologramWindow(onBlur: () => void): BrowserWindow {
   const win = new BrowserWindow({
     ...PANEL_SIZE, transparent: true, frame: false, alwaysOnTop: true, skipTaskbar: true,
@@ -36,6 +44,7 @@ export function createHologramWindow(onBlur: () => void): BrowserWindow {
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setIgnoreMouseEvents(true, { forward: true })
   win.on('blur', onBlur)
+  blockNavigation(win)
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'q') {
       event.preventDefault()
