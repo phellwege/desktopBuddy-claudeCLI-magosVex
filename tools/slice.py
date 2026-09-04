@@ -417,6 +417,7 @@ def _fragments_anchor_crop(alpha: np.ndarray, band: dict, obj_masks: list[np.nda
                             cells: list[tuple[float, float, float, float]],
                             crop_box: tuple[int, int, int, int], order: list[int],
                             cx_values: list[float | None] | None = None,
+                            attach_fragments: bool = True,
                             ) -> tuple[list[tuple[Box, float]], list[tuple[int, int, int, int]],
                                        list[tuple[int, tuple[int, int, int, int]]], list[np.ndarray]]:
     """Shared fragment-absorption, anchor, and crop pipeline for both `_group_frames_sam`
@@ -455,6 +456,11 @@ def _fragments_anchor_crop(alpha: np.ndarray, band: dict, obj_masks: list[np.nda
     crop_region[cy0:cy1, cx0:cx1] = True
     unclaimed = (alpha > 0) & crop_region & (owner == 0)
     frag_labels, num_frag = ndimage.label(unclaimed, structure=STRUCT8)
+    if not attach_fragments:
+        # Annotated mode: the user's mask is the truth. Anything it excludes (a numeral
+        # removed with a negative point, a neighbor's staff) must never be re-attached.
+        frag_labels = np.zeros_like(frag_labels)
+        num_frag = 0
 
     numeral_strip = band.get("numeralStrip")
     owner_masks = [m.copy() for m in obj_masks]
@@ -670,7 +676,7 @@ def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_dat
 
     order = list(range(n))
     frames, _dropped, _attached, _owner_masks = _fragments_anchor_crop(
-        alpha, band, obj_masks, cells, crop_box, order, cx_values=cx_values)
+        alpha, band, obj_masks, cells, crop_box, order, cx_values=cx_values, attach_fragments=False)
     return frames
 
 

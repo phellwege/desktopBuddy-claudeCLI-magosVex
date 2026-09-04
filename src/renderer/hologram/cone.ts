@@ -3,6 +3,14 @@
 // occlusion: the hologram window has exactly one thing to project onto.
 const DEFAULT_RGB: [number, number, number] = [91, 192, 190]
 
+// Intensity. The portfolio original sits on a black page; a desktop wallpaper needs a
+// much stronger presence, so these are tuned up and kept in one place.
+export const LINES = 280            // jittered light lines from the source to the panel edge
+export const LINE_ALPHA = 0.34      // base alpha of a line before flicker, fade, and pulse
+export const LINE_WIDTH = 0.9       // base stroke width in px
+export const WEDGE_ALPHA = 0.16     // filled beam between the source and the panel's bottom edge
+export const GLOW_RADIUS = 18       // source glow radius in px
+
 export function hexToRgb(hex: string): [number, number, number] {
   const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(hex)
   if (short) {
@@ -87,7 +95,7 @@ export class ProjectionCone {
   private target: { left: number; top: number; right: number; bottom: number } | null = null
   private t = 0
   private raf = 0
-  constructor(private canvas: HTMLCanvasElement, private lines = 220) {}
+  constructor(private canvas: HTMLCanvasElement, private lines = LINES) {}
   setColor(hex: string): void { this.rgb = hexToRgb(hex) }
   setSource(x: number, y: number): void { this.source = { x, y } }
   setTarget(rect: DOMRect | null): void { this.target = rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null }
@@ -114,6 +122,19 @@ export class ProjectionCone {
     // window that is often taller than it is wide.
     const diag = Math.hypot(w, h)
 
+    // Soft beam: a filled wedge from the source to the panel's bottom corners, so the
+    // projection reads at a glance even where the thin lines get lost in a wallpaper.
+    const wedge = ctx.createLinearGradient(sourceX, sourceY, sourceX, rect.bottom)
+    wedge.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${WEDGE_ALPHA * (0.85 + Math.sin(t * 2.7) * 0.15)})`)
+    wedge.addColorStop(1, `rgba(${r}, ${g}, ${b}, ${WEDGE_ALPHA * 0.3})`)
+    ctx.beginPath()
+    ctx.moveTo(sourceX, sourceY)
+    ctx.lineTo(rect.left, rect.bottom)
+    ctx.lineTo(rect.right, rect.bottom)
+    ctx.closePath()
+    ctx.fillStyle = wedge
+    ctx.fill()
+
     let lineIndex = 0
     for (const pt of edgePoints(rect, this.lines, t)) {
       const dx = pt.x - sourceX
@@ -123,7 +144,7 @@ export class ProjectionCone {
       const flicker = 0.6 + Math.sin(t * 3.5 + lineIndex * 0.37) * 0.2 + Math.sin(t * 8.1 + lineIndex * 0.13) * 0.12
       const distFade = Math.max(0, 1 - dist / diag)
       const scanPulse = (Math.sin(t * 3 - dist * 0.005 + lineIndex * 0.04) + 1) * 0.5
-      const alpha = flicker * distFade * 0.12 * (0.5 + scanPulse * 0.5)
+      const alpha = flicker * distFade * LINE_ALPHA * (0.5 + scanPulse * 0.5)
 
       ctx.beginPath()
       ctx.moveTo(sourceX, sourceY)
@@ -134,7 +155,7 @@ export class ProjectionCone {
       grad.addColorStop(0.6, `rgba(${r}, ${g}, ${b}, ${alpha * 0.2})`)
       grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, ${alpha * 1.8})`)
       ctx.strokeStyle = grad
-      ctx.lineWidth = 0.3 + Math.sin(t * 4.5 + lineIndex * 0.47) * 0.15
+      ctx.lineWidth = LINE_WIDTH + Math.sin(t * 4.5 + lineIndex * 0.47) * 0.3
       ctx.stroke()
 
       lineIndex++
@@ -185,7 +206,7 @@ export class ProjectionCone {
     ctx.restore()
 
     // Source glow.
-    const glowSize = 8 + Math.sin(t * 4) * 3
+    const glowSize = GLOW_RADIUS + Math.sin(t * 4) * 4
     const glowGrad = ctx.createRadialGradient(sourceX, sourceY, 0, sourceX, sourceY, glowSize)
     glowGrad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.4)`)
     glowGrad.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, 0.15)`)
