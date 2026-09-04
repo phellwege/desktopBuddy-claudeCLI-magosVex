@@ -855,3 +855,17 @@ def test_real_sheet_sam_mode_matches_counts_and_areas():
         median = float(np.median(areas))
         for a in areas:
             assert 0.3 * median <= a <= 1.6 * median, (name, a, median)
+
+
+def test_trim_floor_rows_clips_ground_line_but_keeps_hem():
+    from segment_sam import trim_floor_rows
+    m = np.zeros((100, 400), dtype=bool)
+    m[10:90, 150:250] = True            # body, 100 px wide
+    m[86:90, 130:270] = True            # flared hem, 20 percent wider each side
+    m[88:90, 20:380] = True             # ground line spanning the panel
+    out = trim_floor_rows(m, rows_frac=0.12, widen_frac=0.4)
+    assert out[87, 135] and out[87, 265]          # hem survives (within 40 percent widen)
+    assert not out[88, 25] and not out[89, 375]   # floor line clipped
+    assert out[88, 200]                           # shadow under the feet survives
+    assert out[50, 150] and out[50, 249]          # body untouched
+    assert trim_floor_rows(np.zeros((5, 5), dtype=bool)).sum() == 0

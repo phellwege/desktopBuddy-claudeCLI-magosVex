@@ -37,6 +37,7 @@ FRAGMENT_MAX_DISTANCE_1X = 12
 # A non-touching fragment smaller than this (px) is dropped outright rather than
 # attached by distance - too small to be worth claiming, likely keying/AA noise.
 FRAGMENT_MIN_AREA_1X = 6
+NOTCH_REACH_1X = 12  # a fragment within this many px of an object's own box may join the touching chain; anything farther goes through the shape and distance gates
 # The rectangle a fragment may be attached into is its target object's own cell widened
 # by this fraction on every side (same fraction the SAM prompt box itself overshoots a
 # cell by) - a fragment outside even that reach is presumed to belong to a neighboring
@@ -345,7 +346,10 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
     cx0, cy0, cx1, cy1 = result["crop_box"]
 
     owner = segment_sam.resolve_ownership(masks, logits)
-    obj_masks = [(owner == (i + 1)) for i in range(n)]
+    # Ground lines under seated poses come back inside SAM's mask; trim them to the
+    # body's width so they neither widen the crop nor ship. Trimmed pixels keep their
+    # owner id in `owner`, so they are never treated as fragments either.
+    obj_masks = [segment_sam.trim_floor_rows(owner == (i + 1)) for i in range(n)]
     obj_areas = [int(m.sum()) for m in obj_masks]
     median_area = float(np.median(obj_areas)) if obj_areas else 0.0
     lo, hi = AREA_MIN_RATIO * median_area, AREA_MAX_RATIO * median_area
@@ -395,6 +399,23 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
             continue
         pending.add(f)
 
+    # Only fragments that hug an object's own outline may join the touching chain: a
+    # notch SAM missed at a jagged hem, a companion split across an antialiasing seam.
+    # A floor line or rubble streak touches the figure's base too, but reaches far
+    # beyond its box, and left in the chain it glues on and even bridges to a
+    # neighbor's staff. Everything outside that reach goes through the shape and
+    # distance gates below instead.
+    reach_rects = [(bb[0] - NOTCH_REACH_1X, bb[1] - NOTCH_REACH_1X, bb[2] + NOTCH_REACH_1X, bb[3] + NOTCH_REACH_1X)
+                   for bb in (segment_sam.mask_bbox(m) for m in obj_masks) if bb is not None]
+    near_pending: set[int] = set()
+    for f in pending:
+        fb = frag_box_by_id[f]
+        frag_rect = (fb.x0, fb.y0, fb.x1, fb.y1)
+        if any(segment_sam.rect_contains(rr, frag_rect) for rr in reach_rects):
+            near_pending.add(f)
+    far_pending = pending - near_pending
+    pending = near_pending
+
     # Chain-attach anything physically touching an object, or a fragment already
     # attached to one, to a fixed point - so a chain of touching pieces (a skull's
     # cheek touching its jaw touching its neck cable touching the body) all resolve
@@ -412,7 +433,7 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
                 changed = True
 
     still_pending: set[int] = set()
-    for f in pending:
+    for f in pending | far_pending:
         fb = frag_box_by_id[f]
         if (fb.w / max(fb.h, 1) > MAX_FRAGMENT_ASPECT
                 or segment_sam.is_hairline(fb.w, fb.h, HAIRLINE_MAX_THICKNESS_1X, HAIRLINE_MIN_LENGTH_1X)):

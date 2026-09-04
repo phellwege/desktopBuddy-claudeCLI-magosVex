@@ -157,6 +157,46 @@ def compute_anchor(mask: np.ndarray) -> tuple[int, int]:
     return ax, ay
 
 
+FLOOR_ROWS_FRAC = 0.12
+FLOOR_WIDEN_FRAC = 0.10
+FLOOR_LINE_MAX_THICKNESS = 3
+
+
+def trim_floor_rows(mask: np.ndarray, rows_frac: float = FLOOR_ROWS_FRAC,
+                    widen_frac: float = FLOOR_WIDEN_FRAC) -> np.ndarray:
+    """Clip the bottom rows of an object mask to the body's horizontal extent.
+
+    Seated and fallen poses on the sheet rest on a drawn ground line that runs across
+    the panel. SAM includes that line with the figure, and since a band never clips a
+    frame, the line would drag the crop across the sheet. Rows in the bottom
+    `rows_frac` of the mask's height may not extend past the extent of the rows above
+    them by more than `widen_frac` of that extent's width on either side. A flared hem
+    or a shadow under the feet survives; a long floor line does not.
+    """
+    rows = np.where(mask.any(axis=1))[0]
+    if rows.size == 0:
+        return mask
+    y0, y1 = int(rows[0]), int(rows[-1])
+    cut = y1 - max(1, int(round((y1 - y0 + 1) * rows_frac)))
+    if cut <= y0:
+        return mask
+    body_cols = np.where(mask[y0:cut + 1].any(axis=0))[0]
+    if body_cols.size == 0:
+        return mask
+    bx0, bx1 = int(body_cols[0]), int(body_cols[-1])
+    margin = int(round((bx1 - bx0 + 1) * widen_frac))
+    # Only thin columns get cleared: a ground line is 1 to 3 px tall where it leaves
+    # the body, while a flared hem or a prop base outside the margin is thick.
+    bottom = mask[cut + 1:y1 + 1]
+    col_height = bottom.sum(axis=0)
+    outside = np.ones(mask.shape[1], dtype=bool)
+    outside[max(0, bx0 - margin):bx1 + margin + 1] = False
+    clear = outside & (col_height <= FLOOR_LINE_MAX_THICKNESS)
+    out = mask.copy()
+    out[cut + 1:y1 + 1, clear] = False
+    return out
+
+
 def touching_owner(frag: np.ndarray, masks: list[np.ndarray]) -> int | None:
     """Index into `masks` of whichever mask has the most 4-neighbor-adjacent pixels
     touching `frag` (a boolean fragment mask), or None if `frag` touches no mask at all.
