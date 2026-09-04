@@ -408,6 +408,135 @@ def test_upscale_nearest_doubles_size(tmp_path):
     assert Image.open(dst).size == (10, 6)
 
 
+# ---------------------------------------------------------------------------------
+# Annotated mode (tools/annotations_io.py + slice.py's "annotated" split): hand
+# -corrected masks from tools/annotate.py, no SAM/model involved - runs in the regular
+# tools/.venv like every other test in this file.
+# ---------------------------------------------------------------------------------
+
+import annotations_io
+
+
+def test_annotations_save_load_round_trip(tmp_path):
+    labels = np.zeros((10, 12), dtype=np.int32)
+    labels[2:5, 2:5] = 1
+    labels[6:9, 6:9] = 2
+    data = annotations_io.new_annotations("raw/sheet.png", (12, 10))
+    data["frames"]["t_0"] = {"box": [0, 0, 6, 10], "points": [[3.0, 3.0, 1]], "approved": True, "label": 1}
+    data["frames"]["t_1"] = {"box": [6, 0, 12, 10],
+                              "points": [[7.0, 7.0, 1], [7.0, 2.0, 0]], "approved": False, "label": 2}
+    assert annotations_io.next_label(data) == 3
+
+    json_path = tmp_path / "mechanicus.json"
+    assert not annotations_io.exists(str(json_path))
+    annotations_io.save_annotations(str(json_path), data, labels)
+    assert annotations_io.exists(str(json_path))
+    assert (tmp_path / "mechanicus-masks.png").exists()
+
+    loaded_data, loaded_labels = annotations_io.load_annotations(str(json_path))
+    assert loaded_data == data
+    assert loaded_labels.dtype == np.int32
+    assert np.array_equal(loaded_labels, labels)
+
+
+def test_annotations_save_load_round_trip_16bit_labels(tmp_path):
+    # A label above 255 must survive the round trip too (the masks PNG switches to
+    # 16-bit automatically - see annotations_io.save_annotations).
+    labels = np.zeros((5, 5), dtype=np.int32)
+    labels[1:3, 1:3] = 300
+    data = annotations_io.new_annotations("raw/sheet.png", (5, 5))
+    data["frames"]["t_0"] = {"box": [0, 0, 5, 5], "points": [[2.0, 2.0, 1]], "approved": True, "label": 300}
+    json_path = tmp_path / "p.json"
+    annotations_io.save_annotations(str(json_path), data, labels)
+    _, loaded_labels = annotations_io.load_annotations(str(json_path))
+    assert np.array_equal(loaded_labels, labels)
+
+
+def _synthetic_two_body_annotations(sheet_size=(120, 120)):
+    """Two 20x70 bodies at x=10 and x=60, y=40-109, matching synthetic_sheet()'s own
+    layout but hand-labeled directly (no SAM) - label 1 for body 0, label 2 for body 1."""
+    w, h = sheet_size
+    alpha = np.zeros((h, w), dtype=np.uint8)
+    alpha[40:110, 10:30] = 255
+    alpha[40:110, 60:80] = 255
+    labels = np.zeros((h, w), dtype=np.int32)
+    labels[40:110, 10:30] = 1
+    labels[40:110, 60:80] = 2
+    ann = annotations_io.new_annotations("raw/sheet.png", sheet_size)
+    ann["frames"]["idle_0"] = {"box": [0, 20, 60, 120], "points": [[20.0, 90.0, 1]], "approved": True, "label": 1}
+    ann["frames"]["idle_1"] = {"box": [60, 20, 120, 120], "points": [[70.0, 90.0, 1]], "approved": True, "label": 2}
+    return alpha, labels, ann
+
+
+def test_annotated_split_crops_match_hand_written_masks(tmp_path):
+    from PIL import Image
+    alpha, labels, ann = _synthetic_two_body_annotations()
+    rgba = np.dstack([np.full_like(alpha, 200)] * 3 + [alpha])
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [{"name": "idle", "x": [0, 120], "y": [0, 120], "count": 2}]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    ann_json = tmp_path / "mechanicus.json"
+    annotations_io.save_annotations(str(ann_json), ann, labels)
+
+    out = tmp_path / "out"
+    counts = build(str(sheet), str(rows), str(ov), str(out), 1.0,
+                    split="annotated", annotations_path=str(ann_json))
+    assert counts == {"idle": 2}
+    atlas = json.loads((out / "atlas.json").read_text())
+    assert set(atlas["frames"]) == {"idle_0", "idle_1"}
+    atlas_img = np.array(Image.open(out / "atlas.png"))
+    for name, label in (("idle_0", 1), ("idle_1", 2)):
+        f = atlas["frames"][name]
+        expected = labels == label
+        ys, xs = np.where(expected)
+        bx0, by0, bx1, by1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+        assert (f["w"], f["h"]) == (bx1 - bx0, by1 - by0)
+        crop_alpha = atlas_img[f["y"]:f["y"] + f["h"], f["x"]:f["x"] + f["w"], 3] > 0
+        assert np.array_equal(crop_alpha, expected[by0:by1, bx0:bx1])
+
+
+def test_annotated_split_scale_2x_matches_nearest_upscaled_masks(tmp_path):
+    from PIL import Image
+    from upscale import upscale
+    alpha, labels, ann = _synthetic_two_body_annotations()
+    rgba = np.dstack([np.full_like(alpha, 200)] * 3 + [alpha])
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    sheet_2x = tmp_path / "sheet@2x.png"
+    assert upscale(str(sheet), str(sheet_2x), 2, "nearest") == "nearest"
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [{"name": "idle", "x": [0, 120], "y": [0, 120], "count": 2}]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    ann_json = tmp_path / "mechanicus.json"
+    annotations_io.save_annotations(str(ann_json), ann, labels)
+
+    out2x = tmp_path / "out2x"
+    counts = build(str(sheet_2x), str(rows), str(ov), str(out2x), 2.0,
+                    split="annotated", annotations_path=str(ann_json))
+    assert counts == {"idle": 2}
+    atlas = json.loads((out2x / "atlas.json").read_text())
+    f0 = atlas["frames"]["idle_0"]
+    assert (f0["w"], f0["h"], f0["ax"], f0["ay"]) == (40, 140, 20, 140)
+
+
+def test_annotated_split_count_mismatch_raises():
+    alpha, labels, ann = _synthetic_two_body_annotations()
+    del ann["frames"]["idle_1"]  # only one frame present; rows.json will expect two
+    band = {"name": "idle", "x": [0, 120], "y": [0, 120], "count": 2}
+    with pytest.raises(ValueError, match="idle"):
+        slice_mod._group_frames_annotated(alpha, band, 1.0, ann, labels, all_bands=[band])
+
+
+def test_annotated_split_missing_specific_frame_raises():
+    alpha, labels, ann = _synthetic_two_body_annotations()
+    # Same frame count (2), but the wrong names - "idle_0" and "idle_2" instead of
+    # "idle_0"/"idle_1" - so the length check alone would not catch this.
+    ann["frames"]["idle_2"] = ann["frames"].pop("idle_1")
+    band = {"name": "idle", "x": [0, 120], "y": [0, 120], "count": 2}
+    with pytest.raises(ValueError, match="idle_1"):
+        slice_mod._group_frames_annotated(alpha, band, 1.0, ann, labels, all_bands=[band])
+
+
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
 
 

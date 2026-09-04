@@ -9,6 +9,7 @@ from skimage.segmentation import watershed
 sys.path.insert(0, os.path.dirname(__file__))
 from key import key_background_bands, band_rects
 import segment_sam
+import annotations_io
 
 MIN_BODY_H_1X = 60
 MAX_DX_1X = 90
@@ -100,7 +101,8 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict, *
                   rgb: np.ndarray | None = None, model=None, processor=None,
                   diagnostics: dict | None = None,
                   default_split: str = "objects",
-                  all_bands: list[dict] | None = None) -> list[tuple[Box, float]]:
+                  all_bands: list[dict] | None = None,
+                  annotations: tuple[dict, np.ndarray] | None = None) -> list[tuple[Box, float]]:
     x0, x1 = (int(round(v * scale)) for v in band["x"])
     y0, y1 = (int(round(v * scale)) for v in band["y"])
     ov = overrides.get(band["name"], {})
@@ -128,6 +130,11 @@ def group_frames(alpha: np.ndarray, band: dict, scale: float, overrides: dict, *
             raise ValueError(f"band {band['name']}: sam split needs the original rgb sheet")
         return _group_frames_sam(rgb, alpha, band, scale, model=model, processor=processor,
                                   diagnostics=diagnostics, all_bands=all_bands)
+    if split == "annotated":
+        if annotations is None:
+            raise ValueError(f"band {band['name']}: annotated split needs loaded annotations")
+        ann_data, ann_labels = annotations
+        return _group_frames_annotated(alpha, band, scale, ann_data, ann_labels, all_bands=all_bands)
     raise ValueError(f"band {band['name']}: unknown split mode {split!r}")
 
 
@@ -343,7 +350,7 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
 
     result = segment_sam.segment_band(rgb, alpha, band, 1.0, model, processor, other_bands=all_bands)
     masks, logits, points, cells = result["masks"], result["logits"], result["points"], result["cells"]
-    cx0, cy0, cx1, cy1 = result["crop_box"]
+    crop_box = result["crop_box"]
 
     owner = segment_sam.resolve_ownership(masks, logits)
     # Ground lines under seated poses come back inside SAM's mask; trim them to the
@@ -367,9 +374,67 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
                 f"(< {CELL_OWN_OVERLAP_MIN_FRACTION}) - it may have swallowed a "
                 f"neighboring panel's figure through the crop margin")
 
-    # Fragments: any keyed pixel inside the SAM crop that no object claims. Scoped to
+    # SAM mode reports frames left to right by each object's own prompt point
+    # x-coordinate (the point, not the mask, so a mask that leans doesn't reorder it).
+    point_xs = [p[0] for p in points]
+    order = sorted(range(n), key=lambda i: point_xs[i])
+    frames, dropped_boxes, attached_boxes, owner_masks = _fragments_anchor_crop(
+        alpha, band, obj_masks, cells, crop_box, order, cx_values=point_xs)
+
+    if diagnostics is not None:
+        contacts = [{"pair": [a, b], "contact": segment_sam.contact_length(owner_masks[a], owner_masks[b])}
+                    for a, b in zip(order, order[1:])]
+        diagnostics[name] = {
+            "boxes": [list(map(float, b)) for b in result["boxes"]],
+            "points": [list(map(float, p)) for p in points],
+            "cells": [list(map(float, c)) for c in cells],
+            "crop_box": list(crop_box),
+            "areas": obj_areas,
+            "dropped_fragments": [list(b) for b in dropped_boxes],
+            "attached_fragments": [[t, list(b)] for t, b in attached_boxes],
+            "contact": contacts,
+        }
+    return frames
+
+
+def _fragments_anchor_crop(alpha: np.ndarray, band: dict, obj_masks: list[np.ndarray],
+                            cells: list[tuple[float, float, float, float]],
+                            crop_box: tuple[int, int, int, int], order: list[int],
+                            cx_values: list[float | None] | None = None,
+                            ) -> tuple[list[tuple[Box, float]], list[tuple[int, int, int, int]],
+                                       list[tuple[int, tuple[int, int, int, int]]], list[np.ndarray]]:
+    """Shared fragment-absorption, anchor, and crop pipeline for both `_group_frames_sam`
+    and `_group_frames_annotated`: given `obj_masks` (one boolean mask per frame, already
+    intersected with the keyed alpha, indexed in the band's own raw cell order) plus each
+    frame's own raw cell rect (`cells`, same order) and the shared region fragments are
+    searched within (`crop_box`), absorb every unclaimed keyed pixel per the rules
+    `_group_frames_sam`'s own docstring describes (numeral-strip/text-label drop,
+    touching-chain reattachment, aspect/hairline drop, last-resort distance attach),
+    compute each frame's anchor (`segment_sam.compute_anchor` on the object alone, before
+    fragments are unioned in) and crop box, and return frames in `order` (a permutation
+    of range(len(obj_masks))) - SAM mode passes the left-to-right order by each object's
+    own prompt point; annotated mode passes range(n) directly, since frame identity there
+    already IS the `<band>_<index>` order the annotation file uses.
+
+    `cx_values[i]`, if given and not None, is reported as frame i's own "cx" (SAM mode's
+    prompt point x, preserved verbatim so callers/tests can still see the original
+    prompt); a frame with no such value (or `cx_values` omitted) reports its own final
+    box center x instead.
+
+    Returns (frames, dropped_boxes, attached_boxes, owner_masks) - the latter two so
+    callers that build a `diagnostics` entry (SAM mode only) can do so from the same
+    data this function collected, without recomputing anything.
+    """
+    name = band["name"]
+    n = len(obj_masks)
+    cx0, cy0, cx1, cy1 = crop_box
+
+    # Fragments: any keyed pixel inside the shared crop that no object claims. Scoped to
     # the crop, never to the band rectangle, so a frame's extent is never limited by the
     # band rectangle - only by how much of the crop margin the figure actually needed.
+    owner = np.zeros(alpha.shape, dtype=np.int16)
+    for i, m in enumerate(obj_masks, start=1):
+        owner[m] = i
     crop_region = np.zeros(alpha.shape, dtype=bool)
     crop_region[cy0:cy1, cx0:cx1] = True
     unclaimed = (alpha > 0) & crop_region & (owner == 0)
@@ -471,8 +536,6 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
         owner_masks[target] |= fp
         attached_boxes.append((target, (fb.x0, fb.y0, fb.x1, fb.y1)))
 
-    point_xs = [p[0] for p in points]
-    order = sorted(range(n), key=lambda i: point_xs[i])
     frames = []
     for i in order:
         om = owner_masks[i]
@@ -488,21 +551,90 @@ def _group_frames_sam(rgb: np.ndarray, alpha: np.ndarray, band: dict, scale: flo
         box.owner_mask = om[box.y0:box.y1, box.x0:box.x1].copy()
         ax_obj, ay_obj = segment_sam.compute_anchor(obj_masks[i])
         box.anchor = (ax_obj - box.x0, ay_obj - box.y0)
-        frames.append((box, point_xs[i]))
+        cx = cx_values[i] if cx_values is not None and cx_values[i] is not None else box.cx
+        frames.append((box, cx))
 
-    if diagnostics is not None:
-        contacts = [{"pair": [a, b], "contact": segment_sam.contact_length(owner_masks[a], owner_masks[b])}
-                    for a, b in zip(order, order[1:])]
-        diagnostics[name] = {
-            "boxes": [list(map(float, b)) for b in result["boxes"]],
-            "points": [list(map(float, p)) for p in points],
-            "cells": [list(map(float, c)) for c in cells],
-            "crop_box": [cx0, cy0, cx1, cy1],
-            "areas": obj_areas,
-            "dropped_fragments": [list(b) for b in dropped_boxes],
-            "attached_fragments": [[t, list(b)] for t, b in attached_boxes],
-            "contact": contacts,
-        }
+    return frames, dropped_boxes, attached_boxes, owner_masks
+
+
+def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_data: dict,
+                             ann_labels: np.ndarray, all_bands: list[dict] | None = None,
+                             ) -> list[tuple[Box, float]]:
+    """Annotated-mode grouping: object masks come from a hand-corrected tools/annotate.py
+    session (tools/annotations/<pack>.json + <pack>-masks.png) instead of a fresh SAM
+    call - no model, no GPU, so this (and the "annotated" split as a whole) runs in the
+    regular tools/.venv. Each frame's mask is `ann_labels == frame["label"]` intersected
+    with the keyed alpha - used verbatim, per the annotator's own contract with the user
+    that what they approved is what ships - then the exact same fragment-absorption,
+    anchor, and crop pipeline `_group_frames_sam` uses (`_fragments_anchor_crop`) takes
+    over: a hand-fixed object mask still needs its frame's stray keyed pixels (a floating
+    skull, a staff notch) reattached the same way an automatic SAM mask would, and needs
+    the same feet-anchor convention.
+
+    Frame order is always range(count): unlike SAM mode (which reorders left to right by
+    each object's own prompt point, since a fresh model run has no other identity for a
+    frame), an annotated frame's `<band>_<index>` name from tools/annotate.py already IS
+    its intended output order - reproducing it exactly is the whole point of "the slicer
+    rebuilds from the saved masks exactly".
+
+    Raises ValueError (naming the band, and the frame where relevant) if the annotations
+    don't have exactly `count` frames for this band, or if any specific `<band>_<index>`
+    frame is missing.
+
+    Always operates at 1x internally, like `_group_frames_sam`: at scale != 1 the keyed
+    alpha the caller passes in is a lossless nearest-neighbor enlargement of the 1x sheet
+    (guaranteed by the pipeline's own upscale step), so this recovers the exact 1x alpha
+    by subsampling, runs the whole algorithm once there against the annotations' own 1x
+    masks, then scales the result back up by nearest-neighbor pixel repetition.
+    """
+    factor = int(round(scale))
+    if abs(factor - scale) > 1e-6 or factor < 1:
+        raise ValueError(f"band {band['name']}: annotated split needs an integer scale, got {scale}")
+    if factor != 1:
+        alpha_1x = alpha[::factor, ::factor]
+        frames_1x = _group_frames_annotated(alpha_1x, band, 1.0, ann_data, ann_labels, all_bands)
+        return upscale_frames_nearest(frames_1x, factor)
+
+    name = band["name"]
+    n = band["count"]
+    x0, x1 = (int(round(v)) for v in band["x"])
+    y0, y1 = (int(round(v)) for v in band["y"])
+
+    frames_meta = ann_data.get("frames", {})
+    band_frame_names = [k for k in frames_meta
+                         if k.rsplit("_", 1)[0] == name and k.rsplit("_", 1)[-1].isdigit()]
+    if len(band_frame_names) != n:
+        raise ValueError(
+            f"band {name}: annotations have {len(band_frame_names)} frames, rows.json expects {n}")
+
+    obj_masks = []
+    for i in range(n):
+        fname = f"{name}_{i}"
+        if fname not in frames_meta:
+            raise ValueError(f"band {name}: frame {fname!r} missing from annotations")
+        label = frames_meta[fname]["label"]
+        obj_masks.append((ann_labels == label) & (alpha > 0))
+
+    cells: list[tuple[float, float, float, float] | None] = [None] * n
+    for idx, cell_x0, cell_x1, cell_y0, cell_y1, _is_first, _is_last in segment_sam._cell_layout(band, x0, y0, x1, y1):
+        cells[idx] = (float(cell_x0), float(cell_y0), float(cell_x1), float(cell_y1))
+
+    crop_box = segment_sam._safe_crop_bounds(band, all_bands, x0, y0, x1, y1, segment_sam.MARGIN_1X, alpha.shape)
+
+    # Reported frame cx: mean x of this frame's own recorded positive points, so a
+    # caller inspecting the returned (Box, cx) pairs sees something meaningful even
+    # though annotated mode has no fresh SAM prompt point of its own; falls back to the
+    # final box's own center x (inside _fragments_anchor_crop) if a frame has none
+    # recorded (e.g. all points were cleared and it was never re-segmented or reset).
+    cx_values: list[float | None] = []
+    for i in range(n):
+        pts = frames_meta[f"{name}_{i}"].get("points", [])
+        pos_x = [p[0] for p in pts if len(p) > 2 and p[2] == 1]
+        cx_values.append(float(np.mean(pos_x)) if pos_x else None)
+
+    order = list(range(n))
+    frames, _dropped, _attached, _owner_masks = _fragments_anchor_crop(
+        alpha, band, obj_masks, cells, crop_box, order, cx_values=cx_values)
     return frames
 
 
@@ -572,7 +704,7 @@ def draft_animations(names_by_band: dict[str, list[str]]) -> dict:
 
 def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key: bool = False,
           split: str = "objects", model=None, processor=None,
-          diagnostics_path: str | None = None) -> dict:
+          diagnostics_path: str | None = None, annotations_path: str | None = None) -> dict:
     rows_data = json.load(open(rows))
     bands = rows_data["bands"]
     if key:
@@ -588,10 +720,16 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
     os.makedirs(out_dir, exist_ok=True)
     uses_sam = split == "sam" or any(b.get("split") == "sam" for b in bands)
     diagnostics: dict | None = {} if uses_sam else None
+    annotations = None
+    if split == "annotated" or any(b.get("split") == "annotated" for b in bands):
+        if not annotations_path:
+            raise ValueError("annotated split needs --annotations <pack>.json")
+        annotations = annotations_io.load_annotations(annotations_path)
     all_frames, names_by_band, counts = [], {}, {}
     for band in bands:
         frames = group_frames(alpha, band, scale, ov, rgb=rgb, model=model, processor=processor,
-                               diagnostics=diagnostics, default_split=split, all_bands=bands)
+                               diagnostics=diagnostics, default_split=split, all_bands=bands,
+                               annotations=annotations)
         facing = band.get("facing")
         other = {"left": "right", "right": "left"}.get(facing)
         names = []
@@ -627,16 +765,19 @@ def main() -> None:
     p.add_argument("--overrides", default=os.path.join(os.path.dirname(__file__), "overrides.json"))
     p.add_argument("--scale", type=float, default=1.0)
     p.add_argument("--key", action="store_true", help="sheet is a raw RGB sheet; key it band-by-band before slicing")
-    p.add_argument("--split", choices=["objects", "components", "sam"], default="objects",
+    p.add_argument("--split", choices=["objects", "components", "sam", "annotated"], default="objects",
                     help="default split mode for counted bands without their own \"split\" key in rows.json")
     p.add_argument("--sam-model", default=segment_sam.DEFAULT_MODEL, help="SAM 2 model name (sam split only)")
     p.add_argument("--device", default="cuda", help="torch device for SAM inference (sam split only)")
+    p.add_argument("--annotations", help="path to tools/annotations/<pack>.json (annotated split only); "
+                                          "no model load, runs in the regular venv")
     a = p.parse_args()
     model = processor = None
     if a.split == "sam":
         model, processor = segment_sam.load_model(a.sam_model, a.device)
     for band, n in build(a.sheet, a.rows, a.overrides, a.out_dir, a.scale, a.key,
-                          split=a.split, model=model, processor=processor).items():
+                          split=a.split, model=model, processor=processor,
+                          annotations_path=a.annotations).items():
         print(f"{band}: {n}")
 
 
