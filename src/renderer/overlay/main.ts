@@ -17,9 +17,18 @@ let lastState: BuddyStatePayload | null = null
 let hitFrame = ''
 let drawn: { f: AtlasFrame; mirror: boolean } | null = null
 
-const loadImage = (url: string) => new Promise<HTMLImageElement>((res, rej) => {
-  const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url
-})
+async function loadImage(url: string): Promise<HTMLImageElement> {
+  const blob = await (await fetch(url)).blob()
+  const objectUrl = URL.createObjectURL(blob)
+  try {
+    const im = new Image()
+    await new Promise<void>((res, rej) => { im.onload = () => res(); im.onerror = () => rej(new Error(`image failed: ${url}`)); im.src = objectUrl })
+    return im
+  } finally {
+    // the decoded image keeps its pixels; the URL can go
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
+  }
+}
 const walkable = () => Math.max(1, window.innerWidth - canvas.width)
 const place = () => { canvas.style.transform = `translateX(${Math.round(motion.x * walkable())}px)` }
 
