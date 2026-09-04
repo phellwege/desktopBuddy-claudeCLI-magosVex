@@ -625,7 +625,12 @@ def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_dat
         if fname not in frames_meta:
             raise ValueError(f"band {name}: frame {fname!r} missing from annotations")
         label = frames_meta[fname]["label"]
-        obj_masks.append((ann_labels == label) & (alpha > 0))
+        mask = (ann_labels == label) & (alpha > 0)
+        if not mask.any():
+            raise ValueError(
+                f"band {name}: frame {fname!r} (label {label}) has an empty mask - "
+                f"nothing in the masks PNG carries this label, or it never overlaps the keyed alpha")
+        obj_masks.append(mask)
 
     cells: list[tuple[float, float, float, float] | None] = [None] * n
     for idx, cell_x0, cell_x1, cell_y0, cell_y1, _is_first, _is_last in segment_sam._cell_layout(band, x0, y0, x1, y1):
@@ -741,6 +746,13 @@ def build(sheet: str, rows: str, overrides: str, out_dir: str, scale: float, key
         if not annotations_path:
             raise ValueError("annotated split needs --annotations <pack>.json")
         annotations = annotations_io.load_annotations(annotations_path)
+        # Approval is the annotator's own workflow signal for "a human has eyeballed this
+        # frame", not a build gate - the slicer rebuilds from whatever masks are on disk
+        # regardless of approval state, so an unapproved frame still ships. This just
+        # surfaces the count so a build from an in-progress annotation session says so.
+        ann_frames = annotations[0].get("frames", {})
+        approved = sum(1 for f in ann_frames.values() if f.get("approved"))
+        print(f"annotated: {approved}/{len(ann_frames)} frames approved")
     all_frames, names_by_band, counts = [], {}, {}
     for band in bands:
         frames = group_frames(alpha, band, scale, ov, rgb=rgb, model=model, processor=processor,

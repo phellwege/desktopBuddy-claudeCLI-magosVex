@@ -584,6 +584,39 @@ def test_annotated_split_missing_specific_frame_raises():
         slice_mod._group_frames_annotated(alpha, band, 1.0, ann, labels, all_bands=[band])
 
 
+def test_annotated_split_empty_mask_raises_naming_the_frame():
+    # Relabel idle_1 to a label no pixel in the masks image actually carries - a stand-in
+    # for a frame that was created in the annotator but never actually painted, or whose
+    # only pixels fall outside the keyed alpha.
+    alpha, labels, ann = _synthetic_two_body_annotations()
+    ann["frames"]["idle_1"]["label"] = 999
+    band = {"name": "idle", "x": [0, 120], "y": [0, 120], "count": 2}
+    with pytest.raises(ValueError, match="idle_1"):
+        slice_mod._group_frames_annotated(alpha, band, 1.0, ann, labels, all_bands=[band])
+
+
+def test_build_annotated_prints_approval_summary_but_ships_unapproved_frames(tmp_path, capsys):
+    """Approval is the annotator's own review signal, not a build gate: build() must still
+    slice every frame regardless of approval state, while telling the operator via a
+    printed summary how much of the session has actually been reviewed."""
+    from PIL import Image
+    alpha, labels, ann = _synthetic_two_body_annotations()
+    ann["frames"]["idle_1"]["approved"] = False
+    rgba = np.dstack([np.full_like(alpha, 200)] * 3 + [alpha])
+    sheet = tmp_path / "sheet.png"; Image.fromarray(rgba).save(sheet)
+    rows = tmp_path / "rows.json"
+    rows.write_text(json.dumps({"bands": [{"name": "idle", "x": [0, 120], "y": [0, 120], "count": 2}]}))
+    ov = tmp_path / "ov.json"; ov.write_text("{}")
+    ann_json = tmp_path / "mechanicus.json"
+    annotations_io.save_annotations(str(ann_json), ann, labels)
+
+    out = tmp_path / "out"
+    counts = build(str(sheet), str(rows), str(ov), str(out), 1.0,
+                    split="annotated", annotations_path=str(ann_json))
+    assert counts == {"idle": 2}  # unapproved frame still shipped
+    assert "annotated: 1/2 frames approved" in capsys.readouterr().out
+
+
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw", "sheet.png")
 
 
