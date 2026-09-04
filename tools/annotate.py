@@ -30,6 +30,7 @@ PORT = 7861
 UPSCALE = 3
 MARGIN = segment_sam.MARGIN_1X  # 40px - same margin used for the viewer crop and re-segment
 VIEW_MARGIN = 28  # px around the selected frame in the viewer crop; neighbors only show at the edges
+BOX_GROW = 24  # px of room around each positive point when growing the prompt box
 
 COLORS = [(255, 80, 80), (80, 200, 255), (120, 255, 120), (255, 220, 80),
           (200, 120, 255), (255, 150, 60), (100, 255, 220), (255, 100, 200)]
@@ -150,7 +151,18 @@ class App:
 
     # -- SAM re-segment ----------------------------------------------------------------
 
-    def resegment(self, name: str) -> None:
+    def prompt_box(self, name: str) -> list[float]:
+        """The stored box grown to cover every positive point with BOX_GROW px of room,
+        so SAM is never told to stay inside a box the user has clicked outside of."""
+        meta = self.data["frames"][name]
+        bx0, by0, bx1, by1 = meta["box"]
+        for px, py, lbl in meta["points"]:
+            if lbl == 1:
+                bx0, by0 = min(bx0, px - BOX_GROW), min(by0, py - BOX_GROW)
+                bx1, by1 = max(bx1, px + BOX_GROW), max(by1, py + BOX_GROW)
+        return [float(bx0), float(by0), float(bx1), float(by1)]
+
+    def resegment(self, name: str, use_box: bool = True) -> None:
         import torch
         band = self.frame_band[name]
         model, processor = self.model()
@@ -158,7 +170,7 @@ class App:
         crop_rgb = self.rgb[cy0:cy1, cx0:cx1]
         crop_h, crop_w = crop_rgb.shape[:2]
         meta = self.data["frames"][name]
-        bx0, by0, bx1, by1 = meta["box"]
+        bx0, by0, bx1, by1 = self.prompt_box(name)
         local_box = [max(0.0, bx0 - cx0), max(0.0, by0 - cy0),
                      min(float(crop_w), bx1 - cx0), min(float(crop_h), by1 - cy0)]
         pts = [[p[0] - cx0, p[1] - cy0] for p in meta["points"]]
@@ -171,8 +183,9 @@ class App:
             lbls = [1]
 
         image = Image.fromarray(crop_rgb)
-        inputs = processor(image, input_boxes=[[local_box]], input_points=[[pts]],
-                            input_labels=[[lbls]], return_tensors="pt").to(self.device)
+        prompt_kwargs = {"input_boxes": [[local_box]]} if use_box else {}
+        inputs = processor(image, input_points=[[pts]], input_labels=[[lbls]],
+                            return_tensors="pt", **prompt_kwargs).to(self.device)
         with torch.no_grad():
             outputs = model(**inputs, multimask_output=False)
         resized = processor.post_process_masks(
@@ -296,9 +309,9 @@ def on_image_click(name: str, click_type: str, evt: gr.SelectData):
     return render_band_crop(app, name), points_table(app, name)
 
 
-def on_resegment(name: str):
+def on_resegment(name: str, use_box: bool = True):
     app = APP
-    app.resegment(name)
+    app.resegment(name, use_box=bool(use_box))
     return (render_band_crop(app, name), points_table(app, name), approved_text(app, name),
             status_text(app), render_full_sheet(app))
 
@@ -341,6 +354,7 @@ def build_ui(app: App) -> gr.Blocks:
                                        label="Band crop - click to add a point")
             with gr.Column(scale=1):
                 click_type = gr.Radio(["positive", "negative"], value="positive", label="Click type")
+                use_box = gr.Checkbox(value=True, label="Use box prompt (box grows to your positive points; uncheck to segment from points only)")
                 points_df = gr.Dataframe(headers=["x", "y", "type"], interactive=False, label="Points")
                 approved_md = gr.Markdown()
                 status_md = gr.Markdown()
@@ -358,7 +372,7 @@ def build_ui(app: App) -> gr.Blocks:
         prev_btn.click(on_prev, inputs=frame_dd, outputs=frame_dd)
         next_btn.click(on_next, inputs=frame_dd, outputs=frame_dd)
         band_image.select(on_image_click, inputs=[frame_dd, click_type], outputs=[band_image, points_df])
-        resegment_btn.click(on_resegment, inputs=frame_dd,
+        resegment_btn.click(on_resegment, inputs=[frame_dd, use_box],
                              outputs=[band_image, points_df, approved_md, status_md, sheet_image])
         clear_btn.click(on_clear_points, inputs=frame_dd, outputs=[band_image, points_df])
         reset_btn.click(on_reset_auto, inputs=frame_dd,
