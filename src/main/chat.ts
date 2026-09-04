@@ -1,5 +1,5 @@
 import type { ChatActivityPayload, ChatDonePayload, ChatStatusPayload } from '../shared/ipc'
-import type { PackData } from '../shared/types'
+import type { Expression, PackData } from '../shared/types'
 import type { BuddyActions } from './actions'
 import type { Brain } from './brain/types'
 import type { ChatPort } from './ipc'
@@ -18,6 +18,7 @@ export interface ChatSettings { workspace: string; model: string | null; session
 export class ChatController implements ChatPort {
   private running = false
   private turnSerial = 0
+  private currentExpression: Expression = 'neutral'
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void }) {
@@ -85,6 +86,7 @@ export class ChatController implements ChatPort {
   private async ask(text: string): Promise<void> {
     this.running = true
     const serial = this.turnSerial
+    this.currentExpression = 'neutral'
     try {
       const ctx = { state: this.deps.actions.getState(), workspace: this.settings.workspace,
         model: this.settings.model, sessionId: this.settings.sessionId }
@@ -92,15 +94,16 @@ export class ChatController implements ChatPort {
         if (ev.type === 'text') this.deps.out.delta(ev.delta)
         else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
         else if (ev.type === 'status') this.deps.out.system(ev.text)
+        else if (ev.type === 'expression') this.currentExpression = ev.name
         else if (ev.type === 'done') {
           if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
           if (ev.error) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`)
-          this.deps.out.done({ error: ev.error })
+          this.deps.out.done({ error: ev.error, expression: this.currentExpression })
         }
       }
     } catch (e) {
       this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${(e as Error).message}`)
-      this.deps.out.done({ error: (e as Error).message })
+      this.deps.out.done({ error: (e as Error).message, expression: this.currentExpression })
     } finally {
       this.running = false
     }

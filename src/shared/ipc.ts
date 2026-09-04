@@ -1,4 +1,4 @@
-import type { AnimationKey, Animations, BuddyState, PackTheme } from './types'
+import type { AnimationKey, Animations, BuddyState, Expression, PackTheme } from './types'
 
 export const CH = {
   packLoaded: 'pack:loaded',
@@ -26,14 +26,14 @@ export const CH = {
   chatStop: 'chat:stop',
 } as const
 
-export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; animations: Animations; scale: number; name: string }
+export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; animations: Animations; scale: number; name: string; faces: Record<Expression, string> | null }
 export interface BuddyStatePayload { state: BuddyState; animation: AnimationKey; speed: number }
 export interface ChatDeltaPayload { text: string }
 export interface ChatActivityPayload { id: string; label: string; done: boolean }
-export interface ChatDonePayload { error?: string }
+export interface ChatDonePayload { error?: string; expression?: Expression }
 export interface ChatPermissionPayload { id: string; toolName: string; summary: string; line: string }
 export interface ChatStatusPayload { model: string | null; workspace: string; session: string; error?: string }
-export interface ChatSystemPayload { text: string }
+export interface ChatSystemPayload { text: string; expression?: Expression }
 export interface ThemePayload extends PackTheme { name: string }
 export interface OriginPayload { x: number; y: number; xFraction: number }
 

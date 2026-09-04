@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     delta: (text: string) => hologram.webContents.send(CH.chatDelta, { text }),
     activity: (a: ChatActivityPayload) => hologram.webContents.send(CH.chatActivity, a),
     done: (d: ChatDonePayload) => hologram.webContents.send(CH.chatDone, d),
-    system: (text: string) => hologram.webContents.send(CH.chatSystem, { text }),
+    system: (text: string) => hologram.webContents.send(CH.chatSystem, { text, expression: 'neutral' }),
     status: (s: ChatStatusPayload) => hologram.webContents.send(CH.chatStatus, s),
   }
   let greeted = false
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
       if (!greeted) { greeted = true; out.system(pickLine(pack, 'greeting') ?? '') }
     },
     hidePanel: () => { setHologramInteractive(hologram, false); hologram.hide() },
-    pushSystem: (text) => hologram.webContents.send(CH.chatSystem, { text }),
+    pushSystem: (text) => hologram.webContents.send(CH.chatSystem, { text, expression: 'neutral' }),
   }
   const actions = new Actions(buddy, host)
 
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   wireIpc({
     buddy, actions, overlay, hologram,
     packPayload: { atlasUrl: 'pack://app/' + pack.atlas.image, atlasJsonUrl: 'pack://app/atlas.json',
-      animations: pack.animations, scale, name: pack.name },
+      animations: pack.animations, scale, name: pack.name, faces: pack.faces },
     theme: { ...pack.theme, name: pack.name },
     origin: originRef,
     placeHologram, lastPlacedX,

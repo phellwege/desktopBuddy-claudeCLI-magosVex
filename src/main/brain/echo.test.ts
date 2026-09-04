@@ -20,4 +20,16 @@ describe('EchoBrain', () => {
     expect(events.at(-1)).toEqual({ type: 'done' })
     expect(actions.moods).toEqual(['happy'])
   })
+  it('yields a happy expression on a low rng roll', async () => {
+    const b = new EchoBrain(pack, actions, { delayMs: 0, rng: () => 0 })
+    const events = []
+    for await (const e of b.respond('hi', ctx)) events.push(e)
+    expect(events.at(-2)).toEqual({ type: 'expression', name: 'happy' })
+  })
+  it('yields a neutral expression on a high rng roll', async () => {
+    const b = new EchoBrain(pack, actions, { delayMs: 0, rng: () => 0.99 })
+    const events = []
+    for await (const e of b.respond('hi', ctx)) events.push(e)
+    expect(events.at(-2)).toEqual({ type: 'expression', name: 'neutral' })
+  })
 })

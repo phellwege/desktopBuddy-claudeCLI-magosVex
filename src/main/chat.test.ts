@@ -9,8 +9,8 @@ import type { BuddyActions } from './actions'
 const pack = (() => { const r = loadPack(join(__dirname, '../../test/fixtures/pack-min')); if (!r.ok) throw new Error(r.errors.join()); return r.pack })()
 
 function fakeOut() {
-  const o = { deltas: [] as string[], systems: [] as string[], dones: 0, statuses: [] as unknown[],
-    delta(t: string) { o.deltas.push(t) }, activity() {}, done() { o.dones++ }, system(t: string) { o.systems.push(t) }, status(s: unknown) { o.statuses.push(s) } }
+  const o = { deltas: [] as string[], systems: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[],
+    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string) { o.systems.push(t) }, status(s: unknown) { o.statuses.push(s) } }
   return o as typeof o & ChatOut
 }
 function fakeActions() {
@@ -83,6 +83,22 @@ describe('ChatController', () => {
     const withLine = { ...pack, persona: { ...pack.persona, lines: { ...pack.persona.lines, stopped: ['Rite aborted.'] } } }
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack: withLine, out, settings: settings() })
     await c.prompt('/stop'); expect(out.systems.at(-1)).toBe('Rite aborted.')
+  })
+  it('carries the expression yielded by the brain in the done payload', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'expression', name: 'happy' }, { type: 'done' }]),
+      actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('hello')
+    await new Promise(r => setTimeout(r, 10))
+    expect(out.doneArgs.at(-1)).toEqual({ error: undefined, expression: 'happy' })
+  })
+  it('defaults the done payload expression to neutral when the brain yields none', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'done' }]),
+      actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('hello')
+    await new Promise(r => setTimeout(r, 10))
+    expect(out.doneArgs.at(-1)).toEqual({ error: undefined, expression: 'neutral' })
   })
   it('reports a brain error with the pack error line', async () => {
     const out = fakeOut()

@@ -47,6 +47,7 @@ export function wireIpc(d: IpcDeps): void {
   })
   ipcMain.on(CH.hologramHover, (_e, p: { over: boolean }) => setHologramInteractive(d.hologram, p.over))
   ipcMain.on(CH.hologramReady, () => {
+    d.hologram.webContents.send(CH.packLoaded, d.packPayload)
     d.hologram.webContents.send(CH.theme, d.theme)
     d.hologram.webContents.send(CH.chatStatus, d.status())
   })

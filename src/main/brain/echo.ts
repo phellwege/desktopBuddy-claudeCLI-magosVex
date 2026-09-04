@@ -22,6 +22,7 @@ export class EchoBrain implements Brain {
       yield { type: 'text', delta: word }
       if (delay > 0) await sleep(delay)
     }
+    yield { type: 'expression', name: rng() < 0.1 ? 'happy' : 'neutral' }
     yield { type: 'done' }
   }
   stop(): void { this.stopped = true }
