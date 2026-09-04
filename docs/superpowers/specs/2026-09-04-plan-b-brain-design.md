@@ -54,8 +54,11 @@ anger | love | sadness | cringe | begging`. A pack may omit any; missing ones fa
 to `neutral`, and a pack with no `faces` block shows no avatar.
 
 - Every message bubble from him carries the expression chosen for that message, drawn
-  from the atlas at 48 px on a small canvas at the bubble's left. The title bar shows the
-  most recent expression. Old messages never change.
+  from the atlas on a small canvas inside the bubble, left of the reply text, about 56 px
+  tall. It is rendered as a hologram in the style of the portfolio's planets: the frame
+  tinted with the pack's accent color, translucent with a slow flicker (opacity around
+  0.7 plus two small sine terms), and horizontal scanlines over it. There is no avatar in
+  the title bar. Old messages never change.
 - Claude chooses per reply with the `set_expression` tool (one call per reply; the tools
   note says love is reserved for a genuinely brilliant idea and should almost never
   appear). No call means neutral.
