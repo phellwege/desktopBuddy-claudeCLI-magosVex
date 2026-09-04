@@ -75,6 +75,46 @@ describe('loadPack', () => {
   })
 })
 
+describe('faces', () => {
+  it('gives faces: null when the pack has no faces block', () => {
+    const r = loadPack(FIXTURE)
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(r.pack.faces).toBeNull()
+  })
+  it('fills every expression from a partial block, falling back to neutral', () => {
+    const dir = copyFixture(d => writeFileSync(join(d, 'animations.json'), JSON.stringify({
+      idle: { frames: ['a0', 'a1'] }, walk: { right: ['w0'] },
+      faces: { neutral: 'a0', happy: 'a1' },
+    })))
+    const r = loadPack(dir)
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(r.pack.faces).toEqual({
+      neutral: 'a0', happy: 'a1', disbelief: 'a0', irritation: 'a0', anger: 'a0',
+      love: 'a0', sadness: 'a0', cringe: 'a0', begging: 'a0',
+    })
+  })
+  it('errors on an unknown expression name', () => {
+    const dir = copyFixture(d => writeFileSync(join(d, 'animations.json'), JSON.stringify({
+      idle: { frames: ['a0', 'a1'] }, walk: { right: ['w0'] },
+      faces: { neutral: 'a0', bogus: 'a1' },
+    })))
+    const r = loadPack(dir)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors.join('\n')).toContain('unknown expression "bogus"')
+  })
+  it('errors on an unknown frame name in the faces block', () => {
+    const dir = copyFixture(d => writeFileSync(join(d, 'animations.json'), JSON.stringify({
+      idle: { frames: ['a0', 'a1'] }, walk: { right: ['w0'] },
+      faces: { neutral: 'nope' },
+    })))
+    const r = loadPack(dir)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors.join('\n')).toContain('unknown frame "nope"')
+  })
+})
+
 describe('pickLine', () => {
   it('returns null for an empty list and a member otherwise', () => {
     const r = loadPack(FIXTURE)

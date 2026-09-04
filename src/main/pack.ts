@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
-import type { AnimationDef, AnimationKey, Animations, LineKey, PackData } from '../shared/types'
+import { EXPRESSIONS } from '../shared/types'
+import type { AnimationDef, AnimationKey, Animations, Expression, LineKey, PackData } from '../shared/types'
 
 export const ANIMATION_KEYS: AnimationKey[] = ['idle', 'walk', 'run', 'hop', 'fall', 'sit', 'sleep',
   'look', 'project', 'emote_happy', 'emote_thinking', 'emote_confused', 'emote_alarmed']
@@ -39,6 +40,7 @@ const RawAnimSchema = z.object({ frames: z.array(z.string()).optional(), right: 
   loop: z.boolean().optional(), mirror: z.boolean().optional() })
 type RawAnim = z.infer<typeof RawAnimSchema>
 const AnimationsSchema = z.record(z.string(), RawAnimSchema)
+const FacesRawSchema = z.record(z.string(), z.string())
 
 export type LoadResult = { ok: true; pack: PackData } | { ok: false; errors: string[] }
 
@@ -84,6 +86,22 @@ export function resolveAnimations(raw: Record<string, RawAnim>, frameNames: Set<
   return out as Animations
 }
 
+export function resolveFaces(raw: Record<string, string> | undefined, frameNames: Set<string>, errors: string[]): Record<Expression, string> | null {
+  if (!raw) return null
+  const before = errors.length
+  for (const name of Object.keys(raw)) {
+    if (!EXPRESSIONS.includes(name as Expression)) errors.push(`animations.faces: unknown expression "${name}"`)
+  }
+  for (const frame of Object.values(raw)) {
+    if (!frameNames.has(frame)) errors.push(`animations.faces: unknown frame "${frame}"`)
+  }
+  if (!raw.neutral) errors.push('animations.faces: missing required "neutral"')
+  if (errors.length > before) return null
+  const out = {} as Record<Expression, string>
+  for (const name of EXPRESSIONS) out[name] = raw[name] ?? raw.neutral!
+  return out
+}
+
 export function loadPack(dir: string): LoadResult {
   const errors: string[] = []
   const root = resolve(dir)
@@ -91,9 +109,25 @@ export function loadPack(dir: string): LoadResult {
   const atlasRaw = readJson(join(root, 'atlas.json'), errors)
   const animRaw = readJson(join(root, 'animations.json'), errors)
   if (errors.length) return { ok: false, errors }
+  // "faces" is a sibling of the animation keys inside animations.json, not an animation
+  // itself, so it is split off before the per-key animations schema (which would otherwise
+  // flag it as an unknown key) ever sees the object.
+  let animOnly: unknown = animRaw
+  let facesRaw: unknown
+  if (animRaw && typeof animRaw === 'object' && !Array.isArray(animRaw)) {
+    const { faces, ...rest } = animRaw as Record<string, unknown>
+    animOnly = rest
+    facesRaw = faces
+  }
   const m = ManifestSchema.safeParse(manifestRaw)
   const a = AtlasSchema.safeParse(atlasRaw)
-  const an = AnimationsSchema.safeParse(animRaw)
+  const an = AnimationsSchema.safeParse(animOnly)
+  let facesData: Record<string, string> | undefined
+  if (facesRaw !== undefined) {
+    const fv = FacesRawSchema.safeParse(facesRaw)
+    if (!fv.success) errors.push(...issues('animations.json faces', fv.error))
+    else facesData = fv.data
+  }
   if (!m.success) errors.push(...issues('manifest.json', m.error))
   if (!a.success) errors.push(...issues('atlas.json', a.error))
   if (!an.success) errors.push(...issues('animations.json', an.error))
@@ -101,13 +135,16 @@ export function loadPack(dir: string): LoadResult {
   const promptPath = join(root, m.data.persona.promptFile)
   if (!existsSync(promptPath)) errors.push(`persona: missing ${m.data.persona.promptFile}`)
   if (!existsSync(join(root, a.data.image))) errors.push(`atlas: missing image ${a.data.image}`)
-  const animations = resolveAnimations(an.data, new Set(Object.keys(a.data.frames)), errors)
+  const frameNames = new Set(Object.keys(a.data.frames))
+  const animations = resolveAnimations(an.data, frameNames, errors)
+  const faces = resolveFaces(facesData, frameNames, errors)
   if (errors.length || !animations) return { ok: false, errors }
+  if (faces) animations.faces = faces
   const lines = Object.fromEntries(LINE_KEYS.map(k => [k, m.data.persona.lines[k] ?? []])) as Record<LineKey, string[]>
   return { ok: true, pack: {
     dir: root, name: m.data.name, scale: m.data.scale, theme: m.data.theme,
     persona: { prompt: readFileSync(promptPath, 'utf8'), defaultMood: m.data.persona.defaultMood, lines },
-    atlas: a.data, animations,
+    atlas: a.data, animations, faces,
   } }
 }
 

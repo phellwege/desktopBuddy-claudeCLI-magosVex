@@ -13,5 +13,8 @@
   "emote_happy":    { "frames": ["celebrate_0", "celebrate_1"], "fps": 5 },
   "emote_thinking": { "frames": ["interact_2"], "fps": 1 },
   "emote_confused": { "frames": ["interact_2", "interact_3"], "fps": 3 },
-  "emote_alarmed":  { "frames": ["alert_0", "alert_1", "alert_2"], "fps": 5 }
+  "emote_alarmed":  { "frames": ["alert_0", "alert_1", "alert_2"], "fps": 5 },
+  "faces": { "neutral": "faces_0", "happy": "faces_1", "disbelief": "faces_2",
+             "irritation": "faces_3", "anger": "faces_4", "love": "faces_6",
+             "sadness": "faces_7", "cringe": "faces_8", "begging": "faces_9" }
 }
