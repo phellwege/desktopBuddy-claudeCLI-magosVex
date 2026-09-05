@@ -44,6 +44,7 @@ export function parseReadbackOutput(stdout: string): ReadbackResult {
   let parsed: unknown
   try { parsed = JSON.parse(stdout.trim()) } catch { return { ok: false, reason: 'malformed JSON' } }
   const o = parsed as { type?: string; subtype?: string; is_error?: boolean; result?: unknown }
+  if (o.type !== 'result') return { ok: false, reason: `unexpected type ${o.type ?? 'missing'}` }
   if (o.is_error === true) return { ok: false, reason: `is_error: ${String(o.result).slice(0, 120)}` }
   if (o.subtype !== 'success') return { ok: false, reason: `subtype ${o.subtype ?? 'missing'}` }
   const text = typeof o.result === 'string' ? o.result.trim() : ''

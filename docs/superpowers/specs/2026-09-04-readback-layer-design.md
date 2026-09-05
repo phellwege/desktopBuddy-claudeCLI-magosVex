@@ -48,6 +48,10 @@ persona never reaches it, so answers, tool use, and code stay exactly as they ar
    because the answer is on screen. The same happens for a turn that ends with an error.
 6. With readback off (config, echo brain, missing CLI), the bubble streams plain text as
    before, with no dots and no arrow.
+7. A system line landing mid-turn (an error line, the stopped line, a CLI status line)
+   does not orphan the bubble: the renderer keeps every reply bubble the turn created and
+   settles all of them at `done`. The face and the readback go to the turn's last bubble;
+   earlier ones settle to plain text.
 
 Old bubbles never change after their readback lands or fails.
 
@@ -195,15 +199,16 @@ Nothing here spends quota; every test uses `test/fake-claude.cjs`.
 - `chat.test.ts`: a clean turn triggers one readback with the joined reply text and the
   right id; an error turn, an empty reply, and `readback: undefined` trigger none; a null
   result produces a log line and no `out.readback`.
-- Fake CLI: new `readback` scenario, chosen when argv carries `--model haiku`, which
+- Fake CLI: new `readback` behavior, chosen when argv carries `--output-format json` (the
+  main turn uses `stream-json`; the scenario env var is inherited and cannot be the key), which
   prints one JSON result whose text is `Readback: ` plus the first 40 characters of stdin.
   A `readback-fail` variant prints an `is_error` result.
 - `e2e/brain.spec.ts`: after the text scenario, the bubble's headline contains
   `Readback:`, the plain section is hidden, clicking the toggle reveals the original
   `Hello`, and the face is still present. A second case with `readback: false` in the
   test config shows a plain bubble and no toggle.
-- One manual real-CLI check behind the existing `npm run smoke:claude` (add a readback
-  step to the script).
+- One manual real-CLI check behind the existing `npm run smoke:claude` (the script's readback
+  step uses a stand-in persona line, not the pack's `persona.md`; verified 2026-09-04).
 
 ## 10. Files
 

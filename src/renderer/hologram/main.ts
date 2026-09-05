@@ -43,6 +43,11 @@ let readbackOn = false
 // Bubbles waiting for their readback, by message id. Cleared when it lands, fails, or after
 // 30 s (the fallback settles the bubble to plain text).
 const awaitingReadback = new Map<number, { bubble: HTMLDivElement; timer: number }>()
+// Reply bubbles of the in-flight turn. A system line (an error line, the stopped line, a
+// CLI status line) clears `current` so later text starts a fresh bubble under it, but every
+// bubble the turn created still has to settle at done, or a waiting bubble would keep its
+// dots forever over hidden text. This list survives until done.
+let turnReplies: HTMLDivElement[] = []
 
 let atlas: Atlas | null = null
 let atlasImage: HTMLImageElement | null = null
@@ -92,6 +97,7 @@ function add(cls: string, html: string): HTMLDivElement {
 // (chat:status) that this reply will be followed by a readback.
 function newReply(): HTMLDivElement {
   const bubble = add('buddy', '')
+  turnReplies.push(bubble)
   if (readbackOn) {
     const textEl = bubble.querySelector('.text') as HTMLElement
     const dots = document.createElement('div'); dots.className = 'dots'
@@ -116,10 +122,12 @@ function flush(): void {
 }
 function settlePlain(bubble: HTMLDivElement): void {
   // Readback failed, timed out, or the turn errored: show the plain text, no arrow.
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 4
   bubble.querySelector('.dots')?.remove()
   const plain = bubble.querySelector('.plain') as HTMLElement | null
   if (plain) plain.hidden = false
   bubble.classList.remove('waiting')
+  if (atBottom) log.scrollTop = log.scrollHeight
 }
 function settleReadback(bubble: HTMLDivElement, text: string): void {
   const textEl = bubble.querySelector('.text') as HTMLElement | null
@@ -139,8 +147,11 @@ function settleReadback(bubble: HTMLDivElement, text: string): void {
   headline.innerHTML = renderMarkdown(text)
   // A bare arrow (Peter's call): no label, a tooltip carries the meaning.
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'plain-toggle'
-  toggle.title = 'plain text'; toggle.setAttribute('aria-label', 'show plain text')
-  const label = (): void => { toggle.textContent = plain!.hidden ? '▾' : '▴' }
+  toggle.title = 'plain text'
+  const label = (): void => {
+    toggle.textContent = plain!.hidden ? '▾' : '▴'
+    toggle.setAttribute('aria-label', plain!.hidden ? 'show plain text' : 'hide plain text')
+  }
   label()
   toggle.addEventListener('click', () => { plain!.hidden = !plain!.hidden; label() })
   textEl.insertBefore(toggle, plain)
@@ -204,16 +215,16 @@ window.buddy.onChatActivity((a) => {
 })
 window.buddy.onChatDone((p: ChatDonePayload) => {
   flush()
-  if (current) renderFaceInto(current, p.expression ?? 'neutral')
-  if (current) {
-    if (p.error || !p.readback) settlePlain(current)
-    else {
-      const bubble = current
-      const timer = window.setTimeout(() => { awaitingReadback.delete(p.id); settlePlain(bubble) }, 30000)
-      awaitingReadback.set(p.id, { bubble, timer })
-    }
+  // The face and the readback belong to the turn's last reply bubble, even when a system
+  // line landed after it; every earlier bubble of the same turn settles to plain text.
+  const last = turnReplies.at(-1) ?? null
+  if (last) renderFaceInto(last, p.expression ?? 'neutral')
+  for (const bubble of turnReplies) {
+    if (bubble !== last || p.error || !p.readback) { settlePlain(bubble); continue }
+    const timer = window.setTimeout(() => { awaitingReadback.delete(p.id); settlePlain(bubble) }, 30000)
+    awaitingReadback.set(p.id, { bubble, timer })
   }
-  current = null; buffer = ''; activities.clear()
+  turnReplies = []; current = null; buffer = ''; activities.clear()
 })
 window.buddy.onChatReadback(({ id, text, failed }: ChatReadbackPayload) => {
   const entry = awaitingReadback.get(id)

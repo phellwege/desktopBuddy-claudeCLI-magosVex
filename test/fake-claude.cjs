@@ -65,6 +65,18 @@ async function runCrash() {
   process.exitCode = 2
 }
 
+// Streams a partial reply, then dies without a result line: the turn ends with an error
+// after text is already on screen.
+async function runTextCrash() {
+  await emit([
+    { type: 'system', subtype: 'init', session_id: 's1', model: 'm' },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hel' } } },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'lo' } } },
+  ])
+  process.stderr.write('fake crash after text\n')
+  process.exitCode = 2
+}
+
 async function runMcp() {
   await emit([{ type: 'system', subtype: 'init', session_id: 's1', model: 'm' }])
   const raw = argValue('--mcp-config')
@@ -148,6 +160,7 @@ async function main() {
     case 'tool': return runTool()
     case 'auth': return runAuth()
     case 'crash': return runCrash()
+    case 'text-crash': return runTextCrash()
     case 'mcp': return runMcp()
     case 'permission': return runPermission()
     case 'text':

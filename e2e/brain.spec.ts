@@ -144,3 +144,16 @@ test('with readback off the bubble streams plain and has no dots or toggle', asy
   await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
   await expect(lastReply.locator('.readback')).toHaveCount(0)
 })
+
+test('a turn that errors with readback on settles to plain text, no dots left behind', async () => {
+  const { hologram } = await launch('text-crash')
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.plain')).toBeVisible({ timeout: 15000 })
+  await expect(lastReply.locator('.plain')).toContainText('Hello')
+  await expect(lastReply).not.toHaveClass(/waiting/)
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
+  await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
+  await expect(hologram.locator('#log')).toContainText(/exit code/i)
+})
