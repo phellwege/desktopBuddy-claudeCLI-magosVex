@@ -41,3 +41,11 @@ for the permission design change made after verification against the installed C
 - Multi-monitor travel and drag: `2026-09-04-future-multi-monitor.md`.
 - The other three faction packs in `raw/sheets/` (sprite pipeline is ready; annotation is
   the manual part).
+
+## Dev-server hot reload of the hologram window (2026-09-05)
+
+Editing a hologram renderer file while the app runs from `npm run dev` reloads that
+window in place. Once that left main believing the panel was open while nothing showed,
+so clicks on the body seemed dead and he sat frozen until a restart. Until the
+hologram-ready handshake resyncs panel state (open or closed, hover flags, pending card),
+make renderer edits in a worktree or restart the app right after.
