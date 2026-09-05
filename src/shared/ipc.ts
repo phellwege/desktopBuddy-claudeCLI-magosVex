@@ -4,6 +4,7 @@ export const CH = {
   packLoaded: 'pack:loaded',
   buddyState: 'buddy:state',
   overlayStage: 'overlay:stage',
+  overlayMutter: 'overlay:mutter',
   overlayReady: 'overlay:ready',
   overlayHover: 'overlay:hover',
   overlayClick: 'overlay:click',
@@ -39,6 +40,8 @@ export interface BuddyStatePayload { state: BuddyState; animation: AnimationKey;
 // collapsed back to a strip). The renderer needs it because character positions are
 // absolute virtual coordinates while CSS transforms are window-relative.
 export interface StagePayload { origin: Point; wa: Rect; charW: number }
+// An idle thought bubble: text to show, and how long it stays up before hiding itself.
+export interface OverlayMutterPayload { text: string; ttlMs: number }
 export interface ChatDeltaPayload { text: string }
 export interface ChatActivityPayload { id: string; label: string; done: boolean }
 // readback: true when main will follow this reply with a chat:readback for the same id.
@@ -58,6 +61,7 @@ export interface BuddyBridge {
   onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
   onBuddyState(cb: (p: BuddyStatePayload) => void): () => void
   onOverlayStage(cb: (p: StagePayload) => void): () => void
+  onOverlayMutter(cb: (p: OverlayMutterPayload) => void): () => void
   overlayReady(): void
   hover(over: boolean): void
   click(): void

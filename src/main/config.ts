@@ -18,6 +18,8 @@ export interface Config {
   readback: boolean
   wanderIntervalSec: [number, number]
   sleepAfterMin: number
+  // How often an idle thought bubble may appear, in minutes. 0 disables mutters.
+  mutterIntervalMin: number
   scale: number
 }
 
@@ -33,6 +35,7 @@ export const DEFAULT_CONFIG: Config = {
   readback: true,
   wanderIntervalSec: [8, 30],
   sleepAfterMin: 10,
+  mutterIntervalMin: 2,
   scale: 1.0,
 }
 
@@ -64,6 +67,9 @@ const VALIDATORS: { [K in keyof Config]: (v: unknown) => boolean } = {
   readback: (v) => typeof v === 'boolean',
   wanderIntervalSec: (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number'),
   sleepAfterMin: isFiniteNumber,
+  // 0 disables mutters outright; otherwise 0.1..60 min (below 0.1 is indistinguishable
+  // from spam, above 60 might as well be off).
+  mutterIntervalMin: (v) => isFiniteNumber(v) && (v === 0 || (v >= 0.1 && v <= 60)),
   scale: isFiniteNumber,
 }
 

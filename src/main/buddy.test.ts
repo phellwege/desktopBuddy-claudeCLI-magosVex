@@ -294,6 +294,72 @@ describe('Buddy sleep', () => {
   })
 })
 
+describe('Buddy mutter', () => {
+  it('does nothing before the interval, then mutters, then again a full interval later', () => {
+    const b = new Buddy({ rng: seq([0]), mutterIntervalMs: 120000, wanderIntervalMs: [1e9, 1e9] })
+    let mutters = 0
+    b.onMutter(() => mutters++)
+    b.tick(0)
+    b.tick(119999)
+    expect(mutters).toBe(0)
+    b.tick(120000)
+    expect(mutters).toBe(1)
+    b.tick(200000)
+    expect(mutters).toBe(1)
+    b.tick(240000)
+    expect(mutters).toBe(2)
+  })
+  it('does not mutter while the panel is open', () => {
+    const b = new Buddy({ rng: seq([0]), mutterIntervalMs: 120000, wanderIntervalMs: [1e9, 1e9] })
+    let mutters = 0
+    b.onMutter(() => mutters++)
+    b.tick(0)
+    b.openPanel()
+    b.tick(120000)
+    b.tick(240000)
+    expect(mutters).toBe(0)
+  })
+  it('falling asleep at the same tick wins over a due mutter', () => {
+    const b = new Buddy({ rng: seq([0]), mutterIntervalMs: 120000, sleepAfterMs: 600000, wanderIntervalMs: [1e9, 1e9] })
+    let mutters = 0
+    b.onMutter(() => mutters++)
+    b.tick(0)
+    b.tick(600000)
+    expect(b.view().state.asleep).toBe(true)
+    expect(mutters).toBe(0)
+  })
+  it('does not mutter while walking', () => {
+    const b = new Buddy({ rng: seq([0, 0.9]), mutterIntervalMs: 120000 })
+    let mutters = 0
+    b.onMutter(() => mutters++)
+    b.tick(0)
+    b.tick(8000)
+    expect(b.view().state.activity).toBe('running')
+    b.tick(8000 + 120000)
+    expect(mutters).toBe(0)
+  })
+  it('interact() resets the timer so the next mutter is a full interval later', () => {
+    const b = new Buddy({ rng: seq([0]), mutterIntervalMs: 120000, wanderIntervalMs: [1e9, 1e9] })
+    let mutters = 0
+    b.onMutter(() => mutters++)
+    b.tick(0)
+    b.tick(100000)
+    b.interact()
+    b.tick(219999)
+    expect(mutters).toBe(0)
+    b.tick(220000)
+    expect(mutters).toBe(1)
+  })
+  it('a mutterIntervalMs of 0 disables mutters entirely', () => {
+    const b = new Buddy({ rng: seq([0]), mutterIntervalMs: 0, wanderIntervalMs: [1e9, 1e9] })
+    let mutters = 0
+    b.onMutter(() => mutters++)
+    b.tick(0)
+    b.tick(1e7)
+    expect(mutters).toBe(0)
+  })
+})
+
 describe('Buddy travel', () => {
   // Routes come from the real planner over the real three-screen fixture, so these exercise
   // the state machine and the route geometry together rather than hand-written legs.
