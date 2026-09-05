@@ -9,8 +9,8 @@ import type { BuddyActions } from './actions'
 const pack = (() => { const r = loadPack(join(__dirname, '../../test/fixtures/pack-min')); if (!r.ok) throw new Error(r.errors.join()); return r.pack })()
 
 function fakeOut() {
-  const o = { deltas: [] as string[], systems: [] as string[], faces: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[], readbacks: [] as unknown[],
-    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string, e?: string) { o.systems.push(t); o.faces.push(e ?? 'neutral') }, status(s: unknown) { o.statuses.push(s) }, readback(p: unknown) { o.readbacks.push(p) } }
+  const o = { deltas: [] as string[], systems: [] as string[], faces: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[], readbacks: [] as unknown[], clears: 0,
+    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string, e?: string) { o.systems.push(t); o.faces.push(e ?? 'neutral') }, status(s: unknown) { o.statuses.push(s) }, readback(p: unknown) { o.readbacks.push(p) }, clear() { o.clears++ } }
   return o as typeof o & ChatOut
 }
 function fakeReadback(result: { ok: true; text: string } | { ok: false; reason: string }) {
@@ -63,6 +63,16 @@ describe('ChatController', () => {
     expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\\w', session: 'new', readback: false })
     expect(changes.length).toBe(3)
     expect(out.statuses.length).toBe(3)
+  })
+  it('/clear does everything /new does, then clears the panel and confirms with "cleared"', async () => {
+    const out = fakeOut(); const changes: unknown[] = []
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out,
+      settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ ...s }) })
+    await c.prompt('/clear')
+    expect(out.clears).toBe(1)
+    expect(out.systems.at(-1)).toBe('cleared')
+    expect(c.status().session).toBe('new')
+    expect(changes.at(-1)).toMatchObject({ sessionId: null })
   })
   it('refuses a second prompt while busy and /stop stops the brain', async () => {
     const out = fakeOut()
@@ -162,6 +172,30 @@ describe('ChatController', () => {
     c2.prompt('two')
     await new Promise(r => setTimeout(r, 10))
     expect(c2.status().session).toBe('s2')
+  })
+  it('retries once with a fresh session when the CLI rejects a resumed session, posting the expired line once', async () => {
+    const out = fakeOut()
+    const contexts: { sessionId: string | null }[] = []
+    let calls = 0
+    const brain: Brain = {
+      async *respond(_text, ctx) {
+        calls++
+        contexts.push({ sessionId: ctx.sessionId })
+        if (calls === 1) { yield { type: 'done', error: 'No conversation found with session ID x' }; return }
+        yield { type: 'text', delta: 'Hello' }
+        yield { type: 'done', sessionId: 's-new' }
+      },
+      stop() {},
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'stale-session' } })
+    await c.prompt('hi')
+    await new Promise(r => setTimeout(r, 20))
+    expect(calls).toBe(2)
+    expect(contexts).toEqual([{ sessionId: 'stale-session' }, { sessionId: null }])
+    expect(out.systems.filter(s => s === 'session expired, starting fresh')).toHaveLength(1)
+    expect(out.deltas).toEqual(['Hello'])
+    expect(out.dones).toBe(1)
+    expect(c.status().session).toBe('s-new')
   })
   it('awaitPermissionAnswer resolves on a matching permissionAnswer with the allow decision', async () => {
     const out = fakeOut()

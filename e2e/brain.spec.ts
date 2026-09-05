@@ -182,3 +182,19 @@ test('a turn that errors with readback on settles to plain text, no dots left be
   await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
   await expect(hologram.locator('#log')).toContainText(/exit code/i)
 })
+
+test('/clear empties the log down to a single cleared line', async () => {
+  const { hologram } = await launch('text')
+
+  await hologram.locator('#input').fill('hello')
+  await hologram.locator('#input').press('Enter')
+
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.face')).toHaveCount(1, { timeout: 15000 })
+
+  await hologram.locator('#input').fill('/clear')
+  await hologram.locator('#input').press('Enter')
+
+  await expect.poll(async () => (await hologram.locator('#log').textContent())?.trim(), { timeout: 15000 }).toBe('cleared')
+  await expect(hologram.locator('.msg.buddy')).toHaveCount(0)
+})

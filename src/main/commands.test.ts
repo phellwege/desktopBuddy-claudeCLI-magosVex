@@ -30,7 +30,7 @@ describe('parseCommand', () => {
     expect(parseCommand('/emote dance')).toEqual({ ok: false, error: 'unknown emote: dance' })
   })
   it('parses bare commands', () => {
-    for (const k of ['sleep', 'wake', 'stop', 'new', 'help'] as const) {
+    for (const k of ['sleep', 'wake', 'stop', 'new', 'clear', 'help'] as const) {
       expect(parseCommand('/' + k)).toEqual({ ok: true, command: { kind: k } })
     }
   })

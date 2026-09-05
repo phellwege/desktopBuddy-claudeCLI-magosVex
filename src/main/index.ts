@@ -1,8 +1,10 @@
 import { app, dialog, screen } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { expandEnv, loadConfig, saveConfig } from './config'
+import { loadState, saveState, sessionTranscriptExists } from './state'
 import { loadPack, pickLine } from './pack'
 import type { Expression, Mood } from '../shared/types'
 import { registerPackScheme, handlePackProtocol } from './protocol'
@@ -34,6 +36,18 @@ async function main(): Promise<void> {
   const configPath = join(app.getPath('userData'), 'config.json')
   const config = loadConfig(configPath)
   mkdirSync(logDir, { recursive: true })
+  // Session persistence (separate file from config.json on purpose: state.json is
+  // machine-written bookkeeping, not a setting the user edits). Resume the remembered session
+  // only if it still belongs to the current workspace and its transcript is actually still on
+  // disk - otherwise a relaunch just starts fresh, same as before this existed.
+  const statePath = join(app.getPath('userData'), 'state.json')
+  const savedState = loadState(statePath)
+  let resumeSessionId: string | null = null
+  if (savedState && savedState.sessionId && savedState.workspace === config.workspace
+    && sessionTranscriptExists(homedir(), config.workspace, savedState.sessionId)) {
+    resumeSessionId = savedState.sessionId
+    appendLog(logDir, 'main', `resuming session ${resumeSessionId}`)
+  }
   // Never exit from these: a crash handler's job is to record and keep the buddy running.
   process.on('uncaughtException', (err) => {
     appendLog(logDir, 'main', `uncaughtException: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
@@ -88,7 +102,7 @@ async function main(): Promise<void> {
   }
   // A turn can end after the window is gone (quit mid-reply); sending to a destroyed
   // webContents throws, which surfaced as an unhandled rejection in the log.
-  const toHologram = (channel: string, payload: unknown): void => {
+  const toHologram = (channel: string, payload?: unknown): void => {
     if (!hologram.isDestroyed()) hologram.webContents.send(channel, payload)
   }
   const out = {
@@ -98,6 +112,7 @@ async function main(): Promise<void> {
     system: (text: string, expression: Expression = 'neutral') => toHologram(CH.chatSystem, { text, expression }),
     status: (s: ChatStatusPayload) => toHologram(CH.chatStatus, s),
     readback: (p: ChatReadbackPayload) => toHologram(CH.chatReadback, p),
+    clear: () => toHologram(CH.chatClear),
   }
   let greeted = false
   const host: ActionHost = {
@@ -107,7 +122,11 @@ async function main(): Promise<void> {
       // swallowing clicks across the whole hologram until a mousemove reset it.
       setHologramInteractive(hologram, false)
       placeHologram(); hologram.show(); hologram.focus()
-      if (!greeted) { greeted = true; out.system(pickLine(pack, 'greeting') ?? '') }
+      if (!greeted) {
+        greeted = true
+        out.system(pickLine(pack, 'greeting') ?? '')
+        if (resumeSessionId) out.system(`resumed session ${resumeSessionId.slice(0, 8)}`)
+      }
     },
     hidePanel: () => { setHologramInteractive(hologram, false); hologram.hide() },
     pushSystem: (text) => out.system(text),
@@ -205,12 +224,13 @@ async function main(): Promise<void> {
 
   const chat = new ChatController({
     brain, actions, pack, out,
-    settings: { workspace: config.workspace, model: config.model, sessionId: null },
+    settings: { workspace: config.workspace, model: config.model, sessionId: resumeSessionId },
     onSettingsChange: (s) => {
       config.workspace = s.workspace; config.model = s.model; saveConfig(configPath, config)
-      // A null session id means a fresh CLI session is starting (/new, or /cd before any
-      // turn has run yet): the allow-list belongs to the session that is ending, not the one
-      // about to start.
+      saveState(statePath, { sessionId: s.sessionId, workspace: s.workspace })
+      // A null session id means a fresh CLI session is starting (/new, /cd, or /clear before
+      // any turn has run yet): the allow-list belongs to the session that is ending, not the
+      // one about to start.
       if (s.sessionId === null) sessionAllows.clear()
     },
     readback, log: (line) => appendLog(logDir, 'main', line),

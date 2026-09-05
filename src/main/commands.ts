@@ -4,7 +4,7 @@ export type Command =
   | { kind: 'goto'; x: number; run: boolean }
   | { kind: 'mood'; mood: Mood }
   | { kind: 'emote'; emote: EmoteKind }
-  | { kind: 'sleep' } | { kind: 'wake' } | { kind: 'stop' } | { kind: 'new' } | { kind: 'help' }
+  | { kind: 'sleep' } | { kind: 'wake' } | { kind: 'stop' } | { kind: 'new' } | { kind: 'clear' } | { kind: 'help' }
   | { kind: 'cd'; path: string }
   | { kind: 'model'; model: string | null }
 
@@ -21,7 +21,7 @@ export const HELP_TEXT = [
   '/run <target>                     run there',
   '/mood <calm|happy|thinking|confused|alarmed>',
   '/emote <happy|thinking|confused|alarmed|look|hop>',
-  '/sleep  /wake  /stop  /new',
+  '/sleep  /wake  /stop  /new  /clear',
   '/cd <path>      change workspace (next session)',
   '/model [name]   set or clear the model (next session)',
   '/help',
@@ -60,7 +60,7 @@ export function parseCommand(input: string): ParseResult {
       if (!emote || !EMOTES.includes(emote)) return { ok: false, error: `unknown emote: ${rest[0] ?? ''}` }
       return { ok: true, command: { kind: 'emote', emote } }
     }
-    case 'sleep': case 'wake': case 'stop': case 'new': case 'help':
+    case 'sleep': case 'wake': case 'stop': case 'new': case 'clear': case 'help':
       return { ok: true, command: { kind: word } }
     case 'cd':
       if (!arg) return { ok: false, error: 'usage: /cd <path>' }

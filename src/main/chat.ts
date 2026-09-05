@@ -14,6 +14,7 @@ export interface ChatOut {
   system(text: string, expression?: Expression): void
   status(s: ChatStatusPayload): void
   readback(p: ChatReadbackPayload): void
+  clear(): void
 }
 export interface ChatSettings { workspace: string; model: string | null; sessionId: string | null }
 
@@ -79,6 +80,13 @@ export class ChatController implements ChatPort {
         this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
         this.deps.out.system('new session')
         break
+      case 'clear':
+        // Everything /new does (a fresh session, which also drops the session allow-list via
+        // settingsChanged), plus wiping the panel's own log.
+        this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
+        this.deps.out.clear()
+        this.deps.out.system('cleared')
+        break
       case 'cd':
         // A session belongs to the directory it started in, so a new workspace means a new
         // session; that also clears the session allow-list in main.
@@ -97,26 +105,46 @@ export class ChatController implements ChatPort {
     const serial = this.turnSerial
     const id = ++this.messageSerial
     let reply = ''
+    let retried = false
     this.currentExpression = 'neutral'
     try {
-      const ctx = { state: this.deps.actions.getState(), workspace: this.settings.workspace,
-        model: this.settings.model, sessionId: this.settings.sessionId }
-      for await (const ev of this.deps.brain.respond(text, ctx)) {
-        if (ev.type === 'text') { this.deps.out.delta(ev.delta); reply += ev.delta }
-        else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
-        else if (ev.type === 'status') this.deps.out.system(ev.text, ev.expression)
-        else if (ev.type === 'expression') this.currentExpression = ev.name
-        else if (ev.type === 'done') {
-          if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
-          // A user-initiated /stop already posted the pack's "stopped" line synchronously
-          // (see the 'stop' case in run()); the killed child's own done event still carries
-          // an error ("stopped (exit code ...)"), but it must not also post the pack's error
-          // line, or a stop would show two lines instead of one.
-          if (ev.error && !ev.stopped) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
-          const willReadback = !ev.error && reply.trim().length > 0 && Boolean(this.deps.readback)
-          this.deps.out.done({ id, error: ev.error, expression: this.currentExpression, readback: willReadback })
-          if (willReadback) void this.readback(id, reply)
+      // A resumed session the CLI no longer recognizes (its transcript was deleted, or the id
+      // is simply stale) fails immediately with a "no conversation found" result; this loop
+      // runs the turn again exactly once, from a fresh session, instead of surfacing a raw CLI
+      // error for something the user did not cause. `retried` bounds it to one retry per prompt.
+      for (;;) {
+        const sessionAtStart = this.settings.sessionId
+        const ctx = { state: this.deps.actions.getState(), workspace: this.settings.workspace,
+          model: this.settings.model, sessionId: this.settings.sessionId }
+        let retry = false
+        for await (const ev of this.deps.brain.respond(text, ctx)) {
+          if (ev.type === 'text') { this.deps.out.delta(ev.delta); reply += ev.delta }
+          else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
+          else if (ev.type === 'status') this.deps.out.system(ev.text, ev.expression)
+          else if (ev.type === 'expression') this.currentExpression = ev.name
+          else if (ev.type === 'done') {
+            const staleResume = !retried && sessionAtStart && Boolean(ev.error) && /no conversation found/i.test(ev.error ?? '')
+            // A rejected resume must not re-save the dead id on its way out.
+            if (ev.sessionId && serial === this.turnSerial && !staleResume) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
+            if (staleResume) {
+              retried = true; retry = true
+              this.settings.sessionId = null; this.settingsChanged()
+              this.deps.out.system('session expired, starting fresh')
+              reply = ''
+              this.currentExpression = 'neutral'
+              break
+            }
+            // A user-initiated /stop already posted the pack's "stopped" line synchronously
+            // (see the 'stop' case in run()); the killed child's own done event still carries
+            // an error ("stopped (exit code ...)"), but it must not also post the pack's error
+            // line, or a stop would show two lines instead of one.
+            if (ev.error && !ev.stopped) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
+            const willReadback = !ev.error && reply.trim().length > 0 && Boolean(this.deps.readback)
+            this.deps.out.done({ id, error: ev.error, expression: this.currentExpression, readback: willReadback })
+            if (willReadback) void this.readback(id, reply)
+          }
         }
+        if (!retry) break
       }
     } catch (e) {
       this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${(e as Error).message}`, 'sadness')
