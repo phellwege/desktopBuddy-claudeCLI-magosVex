@@ -17,11 +17,24 @@ describe('parseCommand', () => {
     expect(parseCommand('/goto 250')).toEqual({ ok: true, command: { kind: 'goto', x: 1, run: false } })
     expect(parseCommand('/goto -5')).toEqual({ ok: true, command: { kind: 'goto', x: 0, run: false } })
   })
+  it('parses a display prefix on /goto and /run', () => {
+    expect(parseCommand('/goto 2:50')).toEqual({ ok: true, command: { kind: 'goto', x: 0.5, run: false, display: 2 } })
+    expect(parseCommand('/run 1:left')).toEqual({ ok: true, command: { kind: 'goto', x: 0, run: true, display: 1 } })
+  })
+  it('rejects a display prefix that is not a positive integer', () => {
+    const usage = 'usage: /goto [display:]<0-100|left|center|right>'
+    expect(parseCommand('/goto 0:50')).toEqual({ ok: false, error: usage })
+    expect(parseCommand('/goto x:50')).toEqual({ ok: false, error: usage })
+    expect(parseCommand('/goto 2:sideways')).toEqual({ ok: false, error: usage })
+  })
+  it('parses /displays', () => {
+    expect(parseCommand('/displays')).toEqual({ ok: true, command: { kind: 'displays' } })
+  })
   it('parses /run as goto with run', () => {
     expect(parseCommand('/run 80')).toEqual({ ok: true, command: { kind: 'goto', x: 0.8, run: true } })
   })
   it('rejects /goto with garbage', () => {
-    expect(parseCommand('/goto sideways')).toEqual({ ok: false, error: 'usage: /goto <0-100|left|center|right>' })
+    expect(parseCommand('/goto sideways')).toEqual({ ok: false, error: 'usage: /goto [display:]<0-100|left|center|right>' })
   })
   it('parses moods and emotes and rejects unknown ones', () => {
     expect(parseCommand('/mood confused')).toEqual({ ok: true, command: { kind: 'mood', mood: 'confused' } })

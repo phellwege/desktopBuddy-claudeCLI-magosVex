@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Buddy } from './buddy'
 import { RUN_SPEED, WALK_SPEED } from '../shared/types'
+import { byOrd, fromFraction, planTravel, roster, type ScreenLike } from './displays'
 
 function seq(values: number[]) {
   let i = 0
@@ -290,5 +291,160 @@ describe('Buddy sleep', () => {
     expect(b.getState().panelOpen).toBe(false)
     expect(b.getState().asleep).toBe(true)
     expect(b.view().animation).toBe('sleep')
+  })
+})
+
+describe('Buddy travel', () => {
+  // Routes come from the real planner over the real three-screen fixture, so these exercise
+  // the state machine and the route geometry together rather than hand-written legs.
+  const D3: ScreenLike = { id: 3, primary: false, workArea: { x: -575, y: -1440, width: 5120, height: 1392 } }
+  const D2: ScreenLike = { id: 2, primary: true, workArea: { x: 0, y: 0, width: 1920, height: 1032 } }
+  const D1: ScreenLike = { id: 1, primary: false, workArea: { x: 1920, y: 0, width: 1920, height: 1032 } }
+  const RIG = roster([D1, D2, D3]) // ord 1 = ultrawide (above), 2 = primary, 3 = right-hand panel
+  const CHAR_W = 200
+
+  const plan = (fromOrd: number, toOrd: number, landFraction: number, startFraction = 0.5) => planTravel({
+    from: byOrd(RIG, fromOrd)!, to: byOrd(RIG, toOrd)!,
+    startVX: fromFraction(startFraction, byOrd(RIG, fromOrd)!.wa, CHAR_W),
+    landFraction, charW: CHAR_W, runThreshold: 0.25,
+  })
+  // Standing on the primary, mid-screen, awake and idle.
+  const onPrimary = () => { const b = new Buddy({ rng: seq([0]), initialX: 0.5, initialDisplay: 2 }); b.tick(0); return b }
+
+  it('plays a three-leg route as walk, hover, walk, then idles', () => {
+    const b = onPrimary()
+    const legs = plan(2, 1, 0.5)
+    expect(legs).toHaveLength(3)
+    b.travel(legs)
+    expect(b.view().state.activity).toBe('running')   // the launch leg crosses half the primary
+    b.arrived()
+    expect(b.view().state.activity).toBe('hovering')
+    expect(b.view().animation).toBe('hover')
+    b.arrived()
+    expect(b.view().state.activity).toBe('walking')
+    b.arrived()
+    expect(b.view().state.activity).toBe('idle')
+    expect(b.view().state.leg).toBeUndefined()
+  })
+
+  it('changes display exactly once, when the flight leg lands', () => {
+    const b = onPrimary()
+    const seen: number[] = []
+    b.onChange(v => seen.push(v.state.display))
+    b.travel(plan(2, 1, 0.5))
+    expect(b.getState().display).toBe(2)
+    b.arrived()                                        // launch walk done, now airborne
+    expect(b.getState().display).toBe(2)               // still on the source until he lands
+    b.arrived()                                        // flight done
+    expect(b.getState().display).toBe(1)
+    b.arrived()
+    expect(b.getState().display).toBe(1)
+    expect(new Set(seen)).toEqual(new Set([2, 1]))
+  })
+
+  it('fires arrival listeners once for the whole journey, not once per leg', () => {
+    const b = onPrimary()
+    let arrivals = 0
+    b.onArrive(() => { arrivals++ })
+    b.travel(plan(2, 1, 0.5))
+    b.arrived(); expect(arrivals).toBe(0)
+    b.arrived(); expect(arrivals).toBe(0)
+    b.arrived(); expect(arrivals).toBe(1)
+  })
+
+  it('opens a seam crossing with the hop one-shot, then settles into the hover loop', () => {
+    const b = onPrimary()
+    const legs = plan(2, 3, 0.5)                       // beside: primary to the right-hand panel
+    expect(legs.some(l => l.kind === 'fly' && l.hop)).toBe(true)
+    b.travel(legs)
+    b.arrived()                                        // run to the seam is done
+    expect(b.view().state.activity).toBe('hovering')
+    expect(b.view().animation).toBe('hop')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('hovering')   // still airborne
+    expect(b.view().animation).toBe('hover')
+  })
+
+  it('lands on the requested fraction of the target display', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 3, 0.25))
+    b.arrived(); b.arrived(); b.arrived()
+    expect(b.getState().display).toBe(3)
+    expect(b.getState().x).toBeCloseTo(0.25, 6)
+  })
+
+  it('does not force the projecting pose while airborne, and takes it on landing', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 1, 0.5))
+    b.arrived()
+    expect(b.getState().activity).toBe('hovering')
+    b.openPanel()
+    expect(b.getState().activity).toBe('hovering')     // keeps flying rather than posing mid-air
+    expect(b.getState().panelOpen).toBe(true)
+    b.arrived(); b.arrived()
+    expect(b.getState().activity).toBe('projecting')
+  })
+
+  it('defers sleep until he has landed', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 1, 0.5))
+    b.arrived()
+    b.sleep()
+    expect(b.getState().asleep).toBe(false)
+    expect(b.getState().activity).toBe('hovering')
+    b.arrived(); b.arrived()
+    expect(b.getState().asleep).toBe(true)
+    expect(b.getState().display).toBe(1)               // still travelled all the way there
+  })
+
+  it('queues an emote raised mid-flight instead of interrupting it', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 1, 0.5))
+    b.arrived()
+    expect(b.emote('alarmed')).toBe('queued')
+    expect(b.getState().activity).toBe('hovering')
+    b.arrived(); b.arrived()
+    expect(b.view().animation).toBe('emote_alarmed')
+  })
+
+  it('a second journey supersedes the first and drops its remaining legs', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 1, 0.5))
+    b.arrived()
+    expect(b.getState().activity).toBe('hovering')
+    b.travel(plan(2, 3, 0.5))                          // change of mind, now head sideways
+    expect(b.getState().activity).toBe('running')      // back on the ground, running to the seam
+    b.arrived(); b.arrived(); b.arrived()
+    expect(b.getState().display).toBe(3)
+  })
+
+  it('a same-display goTo mid-flight drops the journey', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 1, 0.5))
+    b.arrived()
+    b.goTo(0.1)
+    expect(b.getState().leg).toBeUndefined()
+    expect(b.getState().targetX).toBeCloseTo(0.1)
+    b.arrived()
+    expect(b.getState().display).toBe(2)               // never left the primary
+    expect(b.getState().activity).toBe('idle')
+  })
+
+  it('an empty route settles immediately without moving', () => {
+    const b = onPrimary()
+    b.travel([])
+    expect(b.getState().activity).toBe('idle')
+    expect(b.getState().display).toBe(2)
+    expect(b.getState().x).toBeCloseTo(0.5)
+  })
+
+  it('wandering never leaves the current display', () => {
+    const b = new Buddy({ rng: seq([0, 0.9]), initialX: 0, initialDisplay: 3 })
+    b.tick(0); b.tick(8000)
+    expect(b.getState().activity).toBe('running')
+    expect(b.getState().display).toBe(3)
+    expect(b.getState().leg).toBeUndefined()
+    b.arrived()
+    expect(b.getState().display).toBe(3)
   })
 })

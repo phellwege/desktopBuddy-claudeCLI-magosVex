@@ -20,10 +20,20 @@ function fakeReadback(result: { ok: true; text: string } | { ok: false; reason: 
 function fakeActions() {
   const a = { calls: [] as string[],
     goTo: async (x: number, o?: { run?: boolean }) => { a.calls.push(`goTo ${x} ${o?.run ?? false}`) },
+    travel: async () => { a.calls.push('travel') },
+    goToDisplay: async (d: number | undefined, x: number, o?: { run?: boolean }) => {
+      a.calls.push(d === undefined ? `goTo ${x} ${o?.run ?? false}` : `goTo ${d}:${x} ${o?.run ?? false}`)
+    },
+    // Two displays attached, so the roster and the unknown-ordinal path are both reachable.
+    displays: () => [
+      { ord: 1, width: 1920, height: 1032, primary: true, current: true },
+      { ord: 2, width: 2560, height: 1392, primary: false, current: false },
+    ],
+    checkDisplay: (d: number) => (d === 1 || d === 2) ? null : `no display ${d} (1-2 attached)`,
     setMood: (m: string) => { a.calls.push(`mood ${m}`) },
     emote: async (k: string) => { a.calls.push(`emote ${k}`) },
     say() {}, openPanel() {}, closePanel() {}, sleep: () => a.calls.push('sleep'), wake: () => a.calls.push('wake'),
-    getState: () => ({ x: 0.5, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: true, asleep: false }) }
+    getState: () => ({ x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: true, asleep: false }) }
   return a as typeof a & BuddyActions
 }
 function scriptedBrain(events: BrainEvent[]): Brain & { stopped: number } {
@@ -47,9 +57,10 @@ describe('ChatController', () => {
   it('runs slash commands through actions', async () => {
     const out = fakeOut(); const a = fakeActions()
     const c = new ChatController({ brain: scriptedBrain([]), actions: a, pack, out, settings: settings() })
-    c.prompt('/goto 40'); c.prompt('/run right'); c.prompt('/mood confused'); c.prompt('/emote hop'); c.prompt('/sleep'); c.prompt('/wake')
+    c.prompt('/goto 40'); c.prompt('/run right'); c.prompt('/goto 2:50')
+    c.prompt('/mood confused'); c.prompt('/emote hop'); c.prompt('/sleep'); c.prompt('/wake')
     await new Promise(r => setTimeout(r, 10))
-    expect(a.calls).toEqual(['goTo 0.4 false', 'goTo 1 true', 'mood confused', 'emote hop', 'sleep', 'wake'])
+    expect(a.calls).toEqual(['goTo 0.4 false', 'goTo 1 true', 'goTo 2:0.5 false', 'mood confused', 'emote hop', 'sleep', 'wake'])
   })
   it('shows help and command errors as system lines', () => {
     const out = fakeOut()
@@ -261,6 +272,9 @@ describe('ChatController', () => {
     const ctrl = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: settings() })
     await ctrl.prompt('/goto 20'); expect(out.systems.at(-1)).toBe('moving to 20%')
     await ctrl.prompt('/run 80'); expect(out.systems.at(-1)).toBe('running to 80%')
+    await ctrl.prompt('/goto 2:50'); expect(out.systems.at(-1)).toBe('moving to 50% on display 2')
+    await ctrl.prompt('/goto 9:50'); expect(out.systems.at(-1)).toBe('no display 9 (1-2 attached)')
+    await ctrl.prompt('/displays'); expect(out.systems.at(-1)).toBe('1: 1920x1032 primary (here)\n2: 2560x1392')
     await ctrl.prompt('/mood happy'); expect(out.systems.at(-1)).toBe('mood: happy')
     await ctrl.prompt('/emote alarmed'); expect(out.systems.at(-1)).toBe('emote: alarmed')
     await ctrl.prompt('/sleep'); expect(out.systems.at(-1)).toBe('sleeping')

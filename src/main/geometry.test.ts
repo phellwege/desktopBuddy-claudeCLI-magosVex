@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { hologramBounds, overlayBounds, originToWindow, shouldReplaceHologramX, PANEL_SIZE, OVERLAY_HEIGHT } from './geometry'
+import { hologramBounds, overlayBounds, originToWindow, shouldReplaceHologramX, unionRect, travelBounds, PANEL_SIZE, OVERLAY_HEIGHT, TRAVEL_MARGIN } from './geometry'
+
+// The real rig: an ultrawide above two 1080p panels, overhanging both.
+const ULTRA = { x: -575, y: -1440, width: 5120, height: 1392 }
+const PRIMARY = { x: 0, y: 0, width: 1920, height: 1032 }
+const RIGHT = { x: 1920, y: 0, width: 1920, height: 1032 }
 
 const wa = { x: 0, y: 0, width: 2560, height: 1392 }
 describe('geometry', () => {
@@ -58,6 +63,44 @@ describe('geometry', () => {
 
   it('originToWindow subtracts the window position', () => {
     expect(originToWindow({ x: 500, y: 700 }, { x: 400, y: 600, width: 10, height: 10 })).toEqual({ x: 100, y: 100 })
+  })
+
+  describe('travel bounds', () => {
+    it('unions two rects across negative origins', () => {
+      // The ultrawide reaches x=-575..4545 and y=-1440..-48; the right-hand panel reaches
+      // x=1920..3840 and y=0..1032. Together: 4415 x 2472 anchored at (-575, -1440).
+      expect(unionRect(ULTRA, RIGHT)).toEqual({ x: -575, y: -1440, width: 5120, height: 2472 })
+      expect(unionRect(PRIMARY, RIGHT)).toEqual({ x: 0, y: 0, width: 3840, height: 1032 })
+    })
+    it('is order independent', () => {
+      expect(unionRect(ULTRA, PRIMARY)).toEqual(unionRect(PRIMARY, ULTRA))
+    })
+    it('adds a margin so the sprite is never clipped at the window edge', () => {
+      const b = travelBounds(PRIMARY, ULTRA)
+      const u = unionRect(PRIMARY, ULTRA)
+      expect(b.x).toBe(u.x - TRAVEL_MARGIN)
+      expect(b.y).toBe(u.y - TRAVEL_MARGIN)
+      expect(b.width).toBe(u.width + 2 * TRAVEL_MARGIN)
+      expect(b.height).toBe(u.height + 2 * TRAVEL_MARGIN)
+    })
+    it('contains both floors and the whole straight path between them', () => {
+      const b = travelBounds(PRIMARY, ULTRA)
+      const from = { x: 960, y: PRIMARY.y + PRIMARY.height }   // primary floor
+      const to = { x: 1820, y: ULTRA.y + ULTRA.height }        // ultrawide floor
+      for (let t = 0; t <= 1; t += 0.05) {
+        const p = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }
+        expect(p.x).toBeGreaterThanOrEqual(b.x)
+        expect(p.x).toBeLessThanOrEqual(b.x + b.width)
+        expect(p.y).toBeGreaterThanOrEqual(b.y)
+        expect(p.y).toBeLessThanOrEqual(b.y + b.height)
+      }
+    })
+    it('of a display with itself is just that display plus the margin', () => {
+      expect(travelBounds(PRIMARY, PRIMARY)).toEqual({
+        x: -TRAVEL_MARGIN, y: -TRAVEL_MARGIN,
+        width: 1920 + 2 * TRAVEL_MARGIN, height: 1032 + 2 * TRAVEL_MARGIN,
+      })
+    })
   })
 
   describe('shouldReplaceHologramX', () => {

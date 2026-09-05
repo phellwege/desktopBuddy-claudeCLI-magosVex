@@ -14,6 +14,8 @@ export type AnimationKey = 'idle' | 'walk' | 'run' | 'hop' | 'fall' | 'sit' | 's
 // A point on the virtual desktop, in device-independent pixels. Regularly negative: a
 // display placed above or left of the primary has a negative origin.
 export interface Point { x: number; y: number }
+// A rectangle on the virtual desktop: a display's work area, or a window's bounds.
+export interface Rect { x: number; y: number; width: number; height: number }
 // One stage of a journey. `to` is the character's floor-center point at the end of the
 // leg. A walk holds the display's floor; a fly crosses the gap between two displays.
 export type Leg =

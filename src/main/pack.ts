@@ -5,13 +5,16 @@ import { EXPRESSIONS } from '../shared/types'
 import type { AnimationDef, AnimationKey, Animations, Expression, LineKey, PackData } from '../shared/types'
 
 export const ANIMATION_KEYS: AnimationKey[] = ['idle', 'walk', 'run', 'hop', 'fall', 'sit', 'sleep',
-  'look', 'project', 'emote_happy', 'emote_thinking', 'emote_confused', 'emote_alarmed']
+  'look', 'project', 'hover', 'emote_happy', 'emote_thinking', 'emote_confused', 'emote_alarmed']
 const LINE_KEYS: LineKey[] = ['greeting', 'idleMutter', 'thinking', 'toolRunning', 'permissionAsk',
   'permissionDenied', 'authError', 'cliMissing', 'error', 'sleep', 'wake', 'stopped']
 const DEFAULT_FPS: Partial<Record<AnimationKey, number>> = { idle: 6, walk: 8, run: 12 }
-const LOOPING = new Set<AnimationKey>(['idle', 'walk', 'run', 'sit', 'sleep', 'project', 'emote_thinking'])
+// hover loops because a flight lasts as long as its leg does, not as long as the art: it
+// ends on arrival at the far display, never on the animation finishing.
+const LOOPING = new Set<AnimationKey>(['idle', 'walk', 'run', 'sit', 'sleep', 'project', 'hover', 'emote_thinking'])
 const FALLBACK: Partial<Record<AnimationKey, AnimationKey>> = {
   run: 'walk', hop: 'idle', fall: 'idle', sit: 'idle', sleep: 'sit', look: 'idle', project: 'idle',
+  hover: 'idle',
   emote_happy: 'idle', emote_thinking: 'idle', emote_confused: 'idle', emote_alarmed: 'idle',
 }
 

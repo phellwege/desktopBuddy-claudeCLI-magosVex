@@ -1,12 +1,24 @@
 import type { BuddyState, EmoteKind, Mood, PlannedLeg } from '../shared/types'
 import type { Buddy } from './buddy'
 
+// What the model and the user see of a display: a stable ordinal, its pixel size, and
+// whether it is the primary or the one he is standing on.
+export interface DisplaySummary { ord: number; width: number; height: number; primary: boolean; current: boolean }
+
 export interface ActionHost {
   showPanel(): void; hidePanel(): void; pushSystem(text: string): void; log(line: string): void
   // Width of the current display's walk band, in pixels: speeds are px/s, so converting an
   // x fraction into a distance needs it. Defaults to a 1920 px display when absent, which
   // reproduces the timeouts this had before speeds became pixel-based.
   bandWidth?(): number
+  // The display roster, and a planner that turns a target into a route. Both are supplied
+  // by main, which owns the Electron screen module. Absent in tests and wherever there is
+  // nothing to plan across, in which case travel degrades to a plain same-screen move.
+  displays?(): DisplaySummary[]
+  planTravel?(display: number, xFraction: number, run?: boolean): { legs: PlannedLeg[]; estimatedMs: number }
+  // Called with the whole route before the first leg starts, so the overlay window can grow
+  // to span both displays (and the panel can step aside) before anything moves.
+  beginFlight?(legs: PlannedLeg[]): void
 }
 export const DEFAULT_BAND_WIDTH = 1720
 
@@ -21,6 +33,10 @@ export function arrivalTimeoutMs(distance: number, speed: number): number {
 export interface BuddyActions {
   goTo(xFraction: number, opts?: { run?: boolean }): Promise<void>
   travel(legs: PlannedLeg[], estimatedMs: number): Promise<void>
+  goToDisplay(display: number | undefined, xFraction: number, opts?: { run?: boolean }): Promise<void>
+  displays(): DisplaySummary[]
+  /** null when the ordinal names an attached display, otherwise the error to show. */
+  checkDisplay(display: number): string | null
   setMood(mood: Mood): void
   emote(kind: EmoteKind): Promise<void>
   say(text: string): void
@@ -91,11 +107,30 @@ export class Actions implements BuddyActions {
     )
   }
 
+  displays(): DisplaySummary[] {
+    return this.host.displays?.() ?? [{ ord: 1, width: 0, height: 0, primary: true, current: true }]
+  }
+  checkDisplay(display: number): string | null {
+    const list = this.displays()
+    if (list.some(d => d.ord === display)) return null
+    return `no display ${display} (${list.length === 1 ? 'only 1 attached' : `1-${list.length} attached`})`
+  }
+
+  // The one entry point for a commanded move. Without a display, or on a build with no
+  // roster to plan against, this is exactly the old same-screen walk.
+  async goToDisplay(display: number | undefined, xFraction: number, opts?: { run?: boolean }): Promise<void> {
+    const planned = display === undefined ? undefined : this.host.planTravel?.(display, xFraction, opts?.run)
+    if (!planned) { await this.goTo(xFraction, opts); return }
+    await this.travel(planned.legs, planned.estimatedMs)
+  }
+
   travel(legs: PlannedLeg[], estimatedMs: number): Promise<void> {
     return this.journey(
       () => {
+        if (legs.length === 0) { this.buddy.travel(legs); return undefined }
+        this.host.beginFlight?.(legs)
         this.buddy.travel(legs)
-        return legs.length === 0 ? undefined : estimatedMs + 2000
+        return estimatedMs + 2000
       },
       (ms) => `arrival timeout: travel of ${legs.length} legs never reported arrival after ${ms} ms`,
     )

@@ -7,6 +7,7 @@ const on = makeOn(ipcRenderer)
 const bridge: BuddyBridge = {
   onPackLoaded: on(CH.packLoaded),
   onBuddyState: on(CH.buddyState),
+  onOverlayStage: on(CH.overlayStage),
   overlayReady: () => ipcRenderer.send(CH.overlayReady),
   hover: (over) => ipcRenderer.send(CH.overlayHover, { over }),
   click: () => ipcRenderer.send(CH.overlayClick),

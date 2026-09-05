@@ -15,6 +15,14 @@ describe('mechanicus pack', () => {
     expect(r.pack.persona.lines.greeting.length).toBeGreaterThan(0)
     expect(r.pack.persona.prompt).toContain('Magos Vex')
   })
+  it('carries a looping hover over the four hover frames the atlas already had', () => {
+    const r = loadPack(join(__dirname, '../../packs/mechanicus'))
+    if (!r.ok) throw new Error(r.errors.join('\n'))
+    const hover = r.pack.animations.hover
+    expect(hover.right).toEqual(['hover_0', 'hover_1', 'hover_2', 'hover_3'])
+    expect(hover.loop).toBe(true)
+    for (const frame of hover.right) expect(r.pack.atlas.frames[frame], frame).toBeTruthy()
+  })
   it('maps all nine expressions to real face frames', () => {
     const r = loadPack(join(__dirname, '../../packs/mechanicus'))
     if (!r.ok) throw new Error(r.errors.join('\n'))

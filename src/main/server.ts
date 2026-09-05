@@ -69,11 +69,20 @@ function buildMcpServer(deps: ServerDeps): McpServer {
   const mcp = new McpServer({ name: 'buddy', version: '1.0.0' })
 
   mcp.registerTool('go_to', {
-    description: 'Move the body to a percentage across the screen.',
-    inputSchema: { x: z.number().min(0).max(100), run: z.boolean().optional() },
-  }, async ({ x, run }) => {
-    await deps.actions.goTo(x / 100, { run: run ?? false })
-    return textResult(`arrived at ${x}%`)
+    description: 'Move the body to a percentage across the current screen, or onto another ' +
+      'monitor with display (see get_state for the attached ones).',
+    inputSchema: {
+      x: z.number().min(0).max(100),
+      display: z.number().int().min(1).optional(),
+      run: z.boolean().optional(),
+    },
+  }, async ({ x, display, run }) => {
+    if (display !== undefined) {
+      const err = deps.actions.checkDisplay(display)
+      if (err) return textResult(err)
+    }
+    await deps.actions.goToDisplay(display, x / 100, { run: run ?? false })
+    return textResult(display === undefined ? `arrived at ${x}%` : `arrived at ${x}% on display ${display}`)
   })
 
   mcp.registerTool('set_mood', {
@@ -103,8 +112,8 @@ function buildMcpServer(deps: ServerDeps): McpServer {
     return textResult('awake')
   })
 
-  mcp.registerTool('get_state', { description: 'Read the current state.' }, () => {
-    return textResult(JSON.stringify(deps.actions.getState()))
+  mcp.registerTool('get_state', { description: 'Read the current state and the attached displays.' }, () => {
+    return textResult(JSON.stringify({ ...deps.actions.getState(), displays: deps.actions.displays() }))
   })
 
   mcp.registerTool('set_expression', {

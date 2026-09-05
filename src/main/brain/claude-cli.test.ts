@@ -223,9 +223,12 @@ describe('ClaudeCliBrain', () => {
     const moodCalls: string[] = []
     const expressionCalls: string[] = []
     const actions: BuddyActions = {
-      goTo: async () => {}, setMood: (m) => moodCalls.push(m), emote: async () => {}, say: () => {},
+      goTo: async () => {}, travel: async () => {}, goToDisplay: async () => {},
+      displays: () => [{ ord: 1, width: 1920, height: 1032, primary: true, current: true }],
+      checkDisplay: () => null,
+      setMood: (m) => moodCalls.push(m), emote: async () => {}, say: () => {},
       openPanel: () => {}, closePanel: () => {}, sleep: () => {}, wake: () => {},
-      getState: () => ({ x: 0.5, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false }),
+      getState: () => ({ x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false }),
     }
     const server = await startLocalServer({
       actions,

@@ -3,11 +3,32 @@
 // window must be at least that tall plus a small margin or the top of the sprite clips
 // against the window's own top edge.
 export const OVERLAY_HEIGHT = 260
-export interface Rect { x: number; y: number; width: number; height: number }
+// Rect lives in shared/types so the renderer can name it too; re-exported here because
+// every caller of this module already imports its geometry from it.
+export type { Rect } from '../shared/types'
+import type { Rect } from '../shared/types'
 
 export function overlayBounds(wa: Rect, charH: number): Rect {
   const height = Math.max(OVERLAY_HEIGHT, charH + 24)
   return { x: wa.x, y: wa.y + wa.height - height, width: wa.width, height }
+}
+
+export function unionRect(a: Rect, b: Rect): Rect {
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y)
+  return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y }
+}
+
+// Margin around the travel rect, so a sprite drawn a few pixels outside the strict union
+// (the baseline inset, a rounding step) is not clipped by the window edge.
+export const TRAVEL_MARGIN = 8
+
+// Bounds the overlay window takes for the duration of a flight. A straight line between
+// two points inside a bounding box stays inside it, so the union of the two work areas
+// contains the whole path; each display's own work area already provides the headroom
+// above its floor that the character occupies while standing there.
+export function travelBounds(from: Rect, to: Rect): Rect {
+  const u = unionRect(from, to)
+  return { x: u.x - TRAVEL_MARGIN, y: u.y - TRAVEL_MARGIN, width: u.width + 2 * TRAVEL_MARGIN, height: u.height + 2 * TRAVEL_MARGIN }
 }
 
 export const PANEL_SIZE = { width: 480, height: 360 }

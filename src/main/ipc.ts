@@ -19,6 +19,9 @@ export interface IpcDeps {
   /** The x fraction the hologram was last placed at, kept in sync by placeHologram. */
   lastPlacedX: { current: number }
   status(): ChatStatusPayload; showContextMenu(x: number, y: number): void
+  /** Sends the overlay its window origin and resting display, which it needs before it can
+   * place a character whose position is in absolute virtual coordinates. */
+  sendStage(): void
 }
 
 // Windows can be gone by the time a late IPC message wants them (app quitting, e2e teardown):
@@ -30,6 +33,9 @@ function send(win: BrowserWindow, channel: string, payload: unknown): void {
 export function wireIpc(d: IpcDeps): void {
   ipcMain.on(CH.overlayReady, () => {
     send(d.overlay, CH.packLoaded, d.packPayload)
+    // Stage before state: the state message carries virtual-pixel targets that only mean
+    // something once the renderer knows where its window sits.
+    d.sendStage()
     send(d.overlay, CH.buddyState, d.buddy.view())
   })
   ipcMain.on(CH.overlayHover, (_e, p: { over: boolean }) => setOverlayInteractive(d.overlay, p.over))

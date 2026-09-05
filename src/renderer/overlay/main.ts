@@ -3,11 +3,11 @@ import { Motion } from './motion'
 import { HitTester } from './hittest'
 import { originScreenPosition } from './origin'
 import type { Atlas, AtlasFrame } from '../../shared/types'
-import type { BuddyStatePayload, PackLoadedPayload } from '../../shared/ipc'
+import type { BuddyStatePayload, PackLoadedPayload, StagePayload } from '../../shared/ipc'
 
 const canvas = document.getElementById('buddy') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
-const motion = new Motion(0.5)
+const motion = new Motion(0, 0)
 const hit = new HitTester()
 let atlas: Atlas | null = null
 let image: HTMLImageElement | null = null
@@ -31,8 +31,39 @@ async function loadImage(url: string): Promise<HTMLImageElement> {
     setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
   }
 }
-const walkable = () => Math.max(1, window.innerWidth - canvas.width)
-const place = () => { canvas.style.transform = `translateX(${Math.round(motion.x * walkable())}px)` }
+// Where this window sits on the virtual desktop and which display's floor he rests on.
+// Until the first stage arrives, fall back to treating the window as its own display so a
+// state message that beats it still draws something sane.
+let stage: StagePayload | null = null
+const stageOrigin = () => stage?.origin ?? { x: window.screenX, y: window.screenY }
+const restWa = () => stage?.wa ?? { x: window.screenX, y: window.screenY, width: window.innerWidth, height: window.innerHeight }
+const charW = () => stage?.charW ?? canvas.width
+
+// The floor-center point for a 0..1 fraction of the resting display, matching the walk
+// band in src/main/displays.ts: half a character in from each edge.
+function restingPoint(fraction: number): { x: number; y: number } {
+  const wa = restWa(), half = charW() / 2
+  const min = wa.x + half, max = Math.max(min, wa.x + wa.width - half)
+  return { x: min + fraction * (max - min), y: wa.y + wa.height }
+}
+
+// His live x as a fraction of the resting display, for the hologram to track mid-walk.
+// Buddy.x only updates on arrival, so main needs this to follow him rather than waiting.
+function liveFraction(): number {
+  const wa = restWa(), half = charW() / 2
+  const min = wa.x + half, max = wa.x + wa.width - half
+  return max <= min ? 0 : Math.min(1, Math.max(0, (motion.vx - min) / (max - min)))
+}
+
+// Positions are absolute virtual pixels; CSS transforms are window-relative. The canvas
+// bottom sits on the floor point (the 4 px baseline inset lives inside the canvas, so this
+// draws identically to the old bottom-anchored strip), centred on his x.
+const place = (): void => {
+  const o = stageOrigin()
+  const left = motion.vx - o.x - canvas.width / 2
+  const top = motion.vy - o.y - canvas.height
+  canvas.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+}
 
 function layout(): void {
   if (!atlas) return
@@ -45,10 +76,24 @@ function apply(s: BuddyStatePayload): void {
   if (!animator) return
   animator.setFacing(s.state.facing)
   animator.set(s.animation)
-  if (s.state.targetX !== undefined) motion.setTarget(s.state.targetX, s.speed)
-  else { motion.setTarget(undefined, 0); motion.x = s.state.x }
+  // A journey leg carries its own endpoint in virtual pixels and may end on another
+  // display; a plain move or a wander is still a fraction of the display he is on.
+  if (s.state.leg) motion.setTarget(s.state.leg.to, s.speed)
+  else if (s.state.targetX !== undefined) motion.setTarget(restingPoint(s.state.targetX), s.speed)
+  else { const p = restingPoint(s.state.x); motion.place(p.x, p.y) }
   place()
 }
+
+window.buddy.onOverlayStage((p: StagePayload) => {
+  stage = p
+  // Re-anchor a resting character onto the new stage; one mid-flight keeps its virtual
+  // position untouched, which is the whole point of absolute coordinates.
+  if (lastState && !lastState.state.leg && lastState.state.targetX === undefined) {
+    const at = restingPoint(lastState.state.x)
+    motion.place(at.x, at.y)
+  }
+  place()
+})
 
 window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
   atlas = await (await fetch(p.atlasJsonUrl)).json() as Atlas
@@ -87,7 +132,7 @@ function draw(): void {
     const p = originScreenPosition(f, mirror, scale, canvas, canvas.getBoundingClientRect(), { x: window.screenX, y: window.screenY })
     if (p && (!lastOrigin || Math.abs(p.x - lastOrigin.x) >= 1 || Math.abs(p.y - lastOrigin.y) >= 1)) {
       lastOrigin = p
-      window.buddy.origin(p.x, p.y, motion.x)
+      window.buddy.origin(p.x, p.y, liveFraction())
     }
   } else {
     // Reset so the first frame after reopening the panel reports again.

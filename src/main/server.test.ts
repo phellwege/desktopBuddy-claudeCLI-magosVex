@@ -6,12 +6,16 @@ import type { BuddyActions } from './actions'
 import { startLocalServer, summarizeToolInput, type LocalServer, type ServerDeps } from './server'
 
 function fakeState(): BuddyState {
-  return { x: 0.5, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false }
+  return { x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false }
 }
 
 function fakeActions(): BuddyActions {
   return {
     goTo: vi.fn(async () => {}),
+    travel: vi.fn(async () => {}),
+    goToDisplay: vi.fn(async () => {}),
+    displays: vi.fn(() => [{ ord: 1, width: 1920, height: 1032, primary: true, current: true }]),
+    checkDisplay: vi.fn((d: number) => d === 1 ? null : `no display ${d} (only 1 attached)`),
     setMood: vi.fn(),
     emote: vi.fn(async () => {}),
     say: vi.fn(),
@@ -77,12 +81,32 @@ describe('startLocalServer', () => {
     await close()
   })
 
-  it('go_to calls actions.goTo with a 0..1 fraction and the run flag', async () => {
+  it('go_to calls actions with a 0..1 fraction, no display, and the run flag', async () => {
     const deps = fakeDeps()
     server = await startLocalServer(deps)
     const { client, close } = await connectedClient(server)
     await client.callTool({ name: 'go_to', arguments: { x: 20 } })
-    expect(deps.actions.goTo).toHaveBeenCalledExactlyOnceWith(0.2, { run: false })
+    expect(deps.actions.goToDisplay).toHaveBeenCalledExactlyOnceWith(undefined, 0.2, { run: false })
+    await close()
+  })
+
+  it('go_to passes a display through when one is given', async () => {
+    const deps = fakeDeps()
+    server = await startLocalServer(deps)
+    const { client, close } = await connectedClient(server)
+    const result = await client.callTool({ name: 'go_to', arguments: { x: 20, display: 1 } })
+    expect(deps.actions.goToDisplay).toHaveBeenCalledExactlyOnceWith(1, 0.2, { run: false })
+    expect((result.content as { text: string }[])[0]!.text).toBe('arrived at 20% on display 1')
+    await close()
+  })
+
+  it('go_to reports an unknown display instead of moving', async () => {
+    const deps = fakeDeps()
+    server = await startLocalServer(deps)
+    const { client, close } = await connectedClient(server)
+    const result = await client.callTool({ name: 'go_to', arguments: { x: 20, display: 4 } })
+    expect(deps.actions.goToDisplay).not.toHaveBeenCalled()
+    expect((result.content as { text: string }[])[0]!.text).toBe('no display 4 (only 1 attached)')
     await close()
   })
 
@@ -127,13 +151,16 @@ describe('startLocalServer', () => {
     await close()
   })
 
-  it('get_state returns the JSON-stringified state', async () => {
+  it('get_state returns the JSON-stringified state alongside the display roster', async () => {
     const deps = fakeDeps()
     server = await startLocalServer(deps)
     const { client, close } = await connectedClient(server)
     const result = await client.callTool({ name: 'get_state', arguments: {} })
     const content = result.content as { type: string; text: string }[]
-    expect(JSON.parse(content[0]!.text)).toEqual(fakeState())
+    expect(JSON.parse(content[0]!.text)).toEqual({
+      ...fakeState(),
+      displays: [{ ord: 1, width: 1920, height: 1032, primary: true, current: true }],
+    })
     await close()
   })
 

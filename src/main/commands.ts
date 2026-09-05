@@ -1,7 +1,8 @@
 import type { EmoteKind, Mood } from '../shared/types'
 
 export type Command =
-  | { kind: 'goto'; x: number; run: boolean }
+  | { kind: 'goto'; x: number; run: boolean; display?: number }
+  | { kind: 'displays' }
   | { kind: 'mood'; mood: Mood }
   | { kind: 'emote'; emote: EmoteKind }
   | { kind: 'sleep' } | { kind: 'wake' } | { kind: 'stop' } | { kind: 'new' } | { kind: 'clear' } | { kind: 'help' }
@@ -18,8 +19,9 @@ const MOODS: Mood[] = ['calm', 'happy', 'thinking', 'confused', 'alarmed']
 const EMOTES: EmoteKind[] = ['happy', 'thinking', 'confused', 'alarmed', 'look', 'hop']
 
 export const HELP_TEXT = [
-  '/goto <0-100|left|center|right>  walk there',
-  '/run <target>                     run there',
+  '/goto [display:]<0-100|left|center|right>  walk there',
+  '/run [display:]<target>            run there',
+  '/displays                          list the attached monitors',
   '/mood <calm|happy|thinking|confused|alarmed>',
   '/emote <happy|thinking|confused|alarmed|look|hop>',
   '/sleep  /wake  /stop  /new  /clear',
@@ -48,10 +50,25 @@ export function parseCommand(input: string): ParseResult {
   switch (word) {
     case 'goto':
     case 'run': {
-      const x = parseTarget(rest[0])
-      if (x === null) return { ok: false, error: `usage: /${word} <0-100|left|center|right>` }
-      return { ok: true, command: { kind: 'goto', x, run: word === 'run' } }
+      // "<target>" stays on the current display; "<display>:<target>" travels to another.
+      const usage = `usage: /${word} [display:]<0-100|left|center|right>`
+      const raw = rest[0]
+      if (raw === undefined) return { ok: false, error: usage }
+      const colon = raw.indexOf(':')
+      let display: number | undefined
+      let target = raw
+      if (colon >= 0) {
+        const d = raw.slice(0, colon)
+        if (!/^\d+$/.test(d) || Number(d) < 1) return { ok: false, error: usage }
+        display = Number(d)
+        target = raw.slice(colon + 1)
+      }
+      const x = parseTarget(target)
+      if (x === null) return { ok: false, error: usage }
+      return { ok: true, command: { kind: 'goto', x, run: word === 'run', display } }
     }
+    case 'displays':
+      return { ok: true, command: { kind: 'displays' } }
     case 'mood': {
       const mood = rest[0] as Mood | undefined
       if (!mood || !MOODS.includes(mood)) return { ok: false, error: `unknown mood: ${rest[0] ?? ''}` }

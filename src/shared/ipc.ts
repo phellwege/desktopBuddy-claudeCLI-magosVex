@@ -1,8 +1,9 @@
-import type { AnimationKey, Animations, BuddyState, Expression, PackTheme } from './types'
+import type { AnimationKey, Animations, BuddyState, Expression, PackTheme, Point, Rect } from './types'
 
 export const CH = {
   packLoaded: 'pack:loaded',
   buddyState: 'buddy:state',
+  overlayStage: 'overlay:stage',
   overlayReady: 'overlay:ready',
   overlayHover: 'overlay:hover',
   overlayClick: 'overlay:click',
@@ -30,6 +31,12 @@ export const CH = {
 
 export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; animations: Animations; scale: number; name: string; faces: Record<Expression, string> | null }
 export interface BuddyStatePayload { state: BuddyState; animation: AnimationKey; speed: number }
+// Where the overlay window sits on the virtual desktop, and which display's floor the
+// character rests on while it is there. Sent whenever the window is re-bound: on startup,
+// on a display change, and at both ends of a flight (expanded to span two displays, then
+// collapsed back to a strip). The renderer needs it because character positions are
+// absolute virtual coordinates while CSS transforms are window-relative.
+export interface StagePayload { origin: Point; wa: Rect; charW: number }
 export interface ChatDeltaPayload { text: string }
 export interface ChatActivityPayload { id: string; label: string; done: boolean }
 // readback: true when main will follow this reply with a chat:readback for the same id.
@@ -48,6 +55,7 @@ export interface OriginPayload { x: number; y: number; xFraction: number }
 export interface BuddyBridge {
   onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
   onBuddyState(cb: (p: BuddyStatePayload) => void): () => void
+  onOverlayStage(cb: (p: StagePayload) => void): () => void
   overlayReady(): void
   hover(over: boolean): void
   click(): void

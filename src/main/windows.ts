@@ -1,6 +1,6 @@
 import { app, BrowserWindow, screen } from 'electron'
 import { join } from 'node:path'
-import { PANEL_SIZE, overlayBounds } from './geometry'
+import { PANEL_SIZE, overlayBounds, travelBounds, type Rect } from './geometry'
 
 export function rendererUrl(page: 'overlay' | 'hologram'): { url?: string; file?: string } {
   const dev = process.env.ELECTRON_RENDERER_URL
@@ -15,8 +15,8 @@ export function loadPage(win: BrowserWindow, page: 'overlay' | 'hologram'): void
 const preload = join(__dirname, '../preload/index.js')
 const webPreferences = { preload, contextIsolation: true, nodeIntegration: false, sandbox: true }
 
-export function createOverlayWindow(charH: number): BrowserWindow {
-  const b = overlayBounds(screen.getPrimaryDisplay().workArea, charH)
+export function createOverlayWindow(wa: Rect, charH: number): BrowserWindow {
+  const b = overlayBounds(wa, charH)
   const win = new BrowserWindow({
     ...b, transparent: true, frame: false, alwaysOnTop: true, skipTaskbar: true, focusable: false,
     resizable: false, movable: false, hasShadow: false, show: false, webPreferences,
@@ -79,8 +79,25 @@ export function setOverlayInteractive(win: BrowserWindow, interactive: boolean):
   }
 }
 
-export function rebound(overlay: BrowserWindow, charH: number): void {
-  overlay.setBounds(overlayBounds(screen.getPrimaryDisplay().workArea, charH))
+// Both of these return the rect they set, because the renderer needs the window's virtual
+// origin to place a character whose position is in absolute virtual coordinates.
+
+// Collapse the overlay back to a bottom strip on one display. This is the steady state, and
+// its footprint is exactly what it was before travel existed.
+export function rebound(overlay: BrowserWindow, wa: Rect, charH: number): Rect {
+  const b = overlayBounds(wa, charH)
+  overlay.setBounds(b)
+  return b
+}
+
+// Grow the overlay to span both displays for the duration of a flight, so the sprite can
+// be drawn across the seam without a second window. No handshake is needed before the
+// flight starts: the character is positioned in absolute virtual coordinates, so a resize
+// that lands a frame late moves nothing on screen.
+export function expandForFlight(overlay: BrowserWindow, from: Rect, to: Rect): Rect {
+  const b = travelBounds(from, to)
+  overlay.setBounds(b)
+  return b
 }
 
 // The hologram window has no cursor watchdog: unlike the overlay (which must stay

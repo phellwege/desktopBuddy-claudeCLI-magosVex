@@ -68,10 +68,24 @@ export class ChatController implements ChatPort {
   private run(cmd: Command): void {
     const a = this.deps.actions
     switch (cmd.kind) {
-      case 'goto':
-        void a.goTo(cmd.x, { run: cmd.run })
-        this.deps.out.system(`${cmd.run ? 'running' : 'moving'} to ${Math.round(cmd.x * 100)}%`)
+      case 'goto': {
+        // Validate the display before announcing the move, so an unknown ordinal reports
+        // the error instead of claiming he set off.
+        if (cmd.display !== undefined) {
+          const err = a.checkDisplay(cmd.display)
+          if (err) { this.deps.out.system(err); break }
+        }
+        void a.goToDisplay(cmd.display, cmd.x, { run: cmd.run })
+        const where = cmd.display === undefined ? '' : ` on display ${cmd.display}`
+        this.deps.out.system(`${cmd.run ? 'running' : 'moving'} to ${Math.round(cmd.x * 100)}%${where}`)
         break
+      }
+      case 'displays': {
+        const lines = a.displays().map(d =>
+          `${d.ord}: ${d.width}x${d.height}${d.primary ? ' primary' : ''}${d.current ? ' (here)' : ''}`)
+        this.deps.out.system(lines.join('\n'))
+        break
+      }
       case 'mood':
         a.setMood(cmd.mood)
         this.deps.out.system(`mood: ${cmd.mood}`)

@@ -10,11 +10,12 @@ import type { Expression, Mood } from '../shared/types'
 import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
-import { createHologramWindow, createOverlayWindow, loadPage, rebound, setHologramInteractive } from './windows'
+import { createHologramWindow, createOverlayWindow, expandForFlight, loadPage, rebound, setHologramInteractive } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
+import { byOrd, floorY, fromFraction, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
 import { wireIpc } from './ipc'
 import { SessionAllows } from './permissions'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type StagePayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
 import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import { Readback } from './brain/readback'
@@ -67,14 +68,21 @@ async function main(): Promise<void> {
   const scale = pack.scale * config.scale
   const charW = pack.atlas.maxFrameSize[0] * scale
   const charH = pack.atlas.maxFrameSize[1] * scale
+  // The display roster, re-derived whenever the arrangement changes. He starts on the
+  // primary and only leaves it on a command; wandering never crosses displays.
+  let displays = roster(screen.getAllDisplays().map(d => ({ id: d.id, workArea: d.workArea, primary: d.id === screen.getPrimaryDisplay().id })))
+  let current: DisplayInfo = primaryOf(displays)
+  const RUN_THRESHOLD = 0.25
+
   const buddy = new Buddy({
     wanderIntervalMs: [config.wanderIntervalSec[0] * 1000, config.wanderIntervalSec[1] * 1000],
     sleepAfterMs: config.sleepAfterMin * 60000,
     initialMood: pack.persona.defaultMood,
+    initialDisplay: current.ord,
   })
   if (process.env.BUDDY_TEST === '1') (globalThis as { __buddy?: Buddy }).__buddy = buddy
 
-  const overlay = createOverlayWindow(charH)
+  const overlay = createOverlayWindow(current.wa, charH)
   appendLog(logDir, 'main', `pack ${packDir}: ${Object.keys(pack.atlas.frames).length} frames, scale ${scale}, character ${Math.round(charW)}x${Math.round(charH)}, overlay ${JSON.stringify(overlay.getBounds())}`)
   const hologram = createHologramWindow(() => { if (buddy.getState().panelOpen) actions.closePanel() })
 
@@ -97,8 +105,15 @@ async function main(): Promise<void> {
   const placeHologram = (xFraction?: number) => {
     const x = xFraction ?? buddy.getState().x
     lastPlacedX.current = x
-    hologram.setBounds(hologramBounds(screen.getPrimaryDisplay().workArea, x, charW, charH))
+    hologram.setBounds(hologramBounds(current.wa, x, charW, charH))
     if (originRef.current) hologram.webContents.send(CH.hologramOrigin, originToWindow(originRef.current, hologram.getBounds()))
+  }
+  // Tells the overlay where its window sits and which display's floor he rests on. Sent on
+  // startup, at both ends of a flight, and whenever the display arrangement changes.
+  const sendStage = (): void => {
+    if (overlay.isDestroyed()) return
+    const b = overlay.getBounds()
+    overlay.webContents.send(CH.overlayStage, { origin: { x: b.x, y: b.y }, wa: current.wa, charW } satisfies StagePayload)
   }
   // A turn can end after the window is gone (quit mid-reply); sending to a destroyed
   // webContents throws, which surfaced as an unhandled rejection in the log.
@@ -131,6 +146,31 @@ async function main(): Promise<void> {
     hidePanel: () => { setHologramInteractive(hologram, false); hologram.hide() },
     pushSystem: (text) => out.system(text),
     log: (line) => appendLog(logDir, 'main', line),
+    bandWidth: () => { const b = walkBand(current.wa, charW); return Math.max(1, b.max - b.min) },
+    displays: () => displays.map(d => ({
+      ord: d.ord, width: d.wa.width, height: d.wa.height, primary: d.primary, current: d.ord === current.ord,
+    })),
+    planTravel: (display, xFraction, run) => {
+      const to = byOrd(displays, display) ?? current
+      const legs = planTravel({
+        from: current, to, charW, runThreshold: RUN_THRESHOLD, run,
+        startVX: fromFraction(buddy.getState().x, current.wa, charW),
+        landFraction: xFraction,
+      })
+      const start = { x: fromFraction(buddy.getState().x, current.wa, charW), y: floorY(current.wa) }
+      return { legs, estimatedMs: routeDurationMs(legs, start) }
+    },
+    // Grow the overlay to span source and target before the first leg moves, and step the
+    // panel aside for the trip. The panel is hidden rather than closed: the brain calls
+    // go_to mid-reply, and closing would discard a turn that is still streaming.
+    beginFlight: (legs) => {
+      const targetOrd = legs[legs.length - 1]?.display ?? current.ord
+      const to = byOrd(displays, targetOrd) ?? current
+      expandForFlight(overlay, current.wa, to.wa)
+      sendStage()
+      if (buddy.getState().panelOpen) hologram.hide()
+      appendLog(logDir, 'main', `travel: display ${current.ord} -> ${targetOrd}, ${legs.length} legs`)
+    },
   }
   const actions = new Actions(buddy, host)
 
@@ -268,6 +308,7 @@ async function main(): Promise<void> {
     theme: { ...pack.theme, name: pack.name },
     origin: originRef,
     placeHologram, lastPlacedX,
+    sendStage,
     chat, status: () => chat.status(),
     showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
   })
@@ -276,15 +317,45 @@ async function main(): Promise<void> {
   void tray
   app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
 
+  // True from the first leg of a journey until the last one lands.
+  let journeying = false
   buddy.onChange((v) => {
     if (overlay.isDestroyed()) return
+    const inJourney = v.state.leg !== undefined
+    if (journeying && !inJourney) {
+      // Landed: settle onto the new display and shrink the window back to a strip. Both
+      // happen before the state message so the renderer never sees a stale window origin.
+      journeying = false
+      current = byOrd(displays, v.state.display) ?? current
+      rebound(overlay, current.wa, charH)
+      sendStage()
+      if (v.state.panelOpen) { placeHologram(); hologram.show() }
+    } else if (inJourney) {
+      journeying = true
+    }
     overlay.webContents.send(CH.buddyState, v)
     if (v.state.panelOpen && hologram.isVisible()) placeHologram()
   })
   setInterval(() => buddy.tick(Date.now()), 250)
   buddy.tick(Date.now())
 
-  screen.on('display-metrics-changed', () => { rebound(overlay, charH); if (hologram.isVisible()) placeHologram() })
+  // Any change to the arrangement re-derives the roster, since ordinals are positional. If
+  // the display he was standing on is gone (unplugged mid-flight or not), fall back to the
+  // primary rather than leaving the overlay bound to a rectangle that no longer exists.
+  const onDisplaysChanged = (): void => {
+    displays = roster(screen.getAllDisplays().map(d => ({ id: d.id, workArea: d.workArea, primary: d.id === screen.getPrimaryDisplay().id })))
+    const stillThere = displays.find(d => d.id === current.id)
+    if (!stillThere) appendLog(logDir, 'main', `display ${current.id} is gone, falling back to the primary`)
+    current = stillThere ?? primaryOf(displays)
+    journeying = false
+    rebound(overlay, current.wa, charH)
+    sendStage()
+    if (hologram.isVisible()) placeHologram()
+  }
+  // Listed one by one: Electron types screen.on per event name, so a union does not fit.
+  screen.on('display-metrics-changed', onDisplaysChanged)
+  screen.on('display-added', onDisplaysChanged)
+  screen.on('display-removed', onDisplaysChanged)
   app.on('window-all-closed', () => app.quit())
 }
 
