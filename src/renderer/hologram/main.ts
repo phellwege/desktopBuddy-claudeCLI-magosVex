@@ -1,7 +1,7 @@
 import { renderMarkdown } from './markdown'
 import { ProjectionCone } from './cone'
 import { HoloFace } from './face'
-import type { ChatDonePayload, ChatPermissionPayload, ChatSystemPayload, PackLoadedPayload, ThemePayload } from '../../shared/ipc'
+import type { ChatDonePayload, ChatPermissionPayload, ChatReadbackPayload, ChatSystemPayload, PackLoadedPayload, ThemePayload } from '../../shared/ipc'
 import type { Atlas, Expression } from '../../shared/types'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
@@ -37,6 +37,12 @@ let renderQueued = false
 let lastInput = ''
 let pending: ChatPermissionPayload | null = null
 const activities = new Map<string, HTMLDivElement>()
+// Whether main will follow replies with a readback (from chat:status). Decides whether a
+// new reply bubble starts in the waiting state.
+let readbackOn = false
+// Bubbles waiting for their readback, by message id. Cleared when it lands, fails, or after
+// 30 s (the fallback settles the bubble to plain text).
+const awaitingReadback = new Map<number, { bubble: HTMLDivElement; timer: number }>()
 
 let atlas: Atlas | null = null
 let atlasImage: HTMLImageElement | null = null
@@ -82,13 +88,65 @@ function add(cls: string, html: string): HTMLDivElement {
   el.appendChild(text)
   log.appendChild(el); log.scrollTop = log.scrollHeight; return el
 }
+// A reply bubble, started in the waiting state (dots, hidden .plain) when main told us
+// (chat:status) that this reply will be followed by a readback.
+function newReply(): HTMLDivElement {
+  const bubble = add('buddy', '')
+  if (readbackOn) {
+    const textEl = bubble.querySelector('.text') as HTMLElement
+    const dots = document.createElement('div'); dots.className = 'dots'
+    for (let i = 0; i < 3; i++) dots.appendChild(document.createElement('span'))
+    const plain = document.createElement('div'); plain.className = 'plain'; plain.hidden = true
+    textEl.append(dots, plain)
+    bubble.classList.add('waiting')
+  }
+  return bubble
+}
+// Where the streamed reply text renders: a waiting bubble's hidden .plain, or .text directly.
+function replyTarget(bubble: HTMLDivElement): HTMLElement | null {
+  return (bubble.querySelector('.plain') as HTMLElement | null) ?? (bubble.querySelector('.text') as HTMLElement | null)
+}
 function flush(): void {
   renderQueued = false
   if (current) {
-    const text = current.querySelector('.text') as HTMLElement | null
-    if (text) text.innerHTML = renderMarkdown(buffer)
+    const target = replyTarget(current)
+    if (target) target.innerHTML = renderMarkdown(buffer)
     log.scrollTop = log.scrollHeight
   }
+}
+function settlePlain(bubble: HTMLDivElement): void {
+  // Readback failed, timed out, or the turn errored: show the plain text, no arrow.
+  bubble.querySelector('.dots')?.remove()
+  const plain = bubble.querySelector('.plain') as HTMLElement | null
+  if (plain) plain.hidden = false
+  bubble.classList.remove('waiting')
+}
+function settleReadback(bubble: HTMLDivElement, text: string): void {
+  const textEl = bubble.querySelector('.text') as HTMLElement | null
+  if (!textEl) return
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 4
+  bubble.querySelector('.dots')?.remove()
+  let plain = bubble.querySelector('.plain') as HTMLElement | null
+  if (!plain) {
+    // Not created in the waiting state (readback was switched on mid-session): fold the
+    // rendered reply as-is so highlighted code and links-as-text stay intact.
+    plain = document.createElement('div'); plain.className = 'plain'
+    while (textEl.firstChild) plain.appendChild(textEl.firstChild)
+    textEl.appendChild(plain)
+  }
+  plain.hidden = true
+  const headline = document.createElement('div'); headline.className = 'readback'
+  headline.innerHTML = renderMarkdown(text)
+  // A bare arrow (Peter's call): no label, a tooltip carries the meaning.
+  const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'plain-toggle'
+  toggle.title = 'plain text'; toggle.setAttribute('aria-label', 'show plain text')
+  const label = (): void => { toggle.textContent = plain!.hidden ? '▾' : '▴' }
+  label()
+  toggle.addEventListener('click', () => { plain!.hidden = !plain!.hidden; label() })
+  textEl.insertBefore(toggle, plain)
+  textEl.insertBefore(headline, toggle)
+  bubble.classList.remove('waiting')
+  if (atBottom) log.scrollTop = log.scrollHeight
 }
 function renderFaceInto(bubble: HTMLDivElement, expression: Expression): void {
   if (!holoFace) { pendingFaces.push({ bubble, expression }); return }
@@ -121,9 +179,10 @@ window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
 window.buddy.onOrigin((p) => cone.setSource(p.x, p.y))
 window.buddy.onChatStatus((s) => {
   status.textContent = `${s.model ?? 'default'} · ${s.workspace} · ${s.session}${s.error ? ' · ' + s.error : ''}`
+  readbackOn = s.readback === true
 })
 window.buddy.onChatDelta(({ text }) => {
-  if (!current) { current = add('buddy', ''); buffer = '' }
+  if (!current) { current = newReply(); buffer = '' }
   buffer += text
   if (!renderQueued) { renderQueued = true; requestAnimationFrame(flush) }
 })
@@ -133,7 +192,7 @@ window.buddy.onChatActivity((a) => {
     // An activity row can be the very first thing a turn produces, before any text delta -
     // it must create (and keep) the reply bubble itself, or the text that follows would
     // create a second, separate bubble and leave this one permanently empty.
-    if (!current) { current = add('buddy', ''); buffer = '' }
+    if (!current) { current = newReply(); buffer = '' }
     el = document.createElement('div'); el.className = 'activity'; activities.set(a.id, el)
     current.insertAdjacentElement('afterend', el)
   }
@@ -146,7 +205,22 @@ window.buddy.onChatActivity((a) => {
 window.buddy.onChatDone((p: ChatDonePayload) => {
   flush()
   if (current) renderFaceInto(current, p.expression ?? 'neutral')
+  if (current) {
+    if (p.error || !p.readback) settlePlain(current)
+    else {
+      const bubble = current
+      const timer = window.setTimeout(() => { awaitingReadback.delete(p.id); settlePlain(bubble) }, 30000)
+      awaitingReadback.set(p.id, { bubble, timer })
+    }
+  }
   current = null; buffer = ''; activities.clear()
+})
+window.buddy.onChatReadback(({ id, text, failed }: ChatReadbackPayload) => {
+  const entry = awaitingReadback.get(id)
+  if (!entry) return
+  awaitingReadback.delete(id); clearTimeout(entry.timer)
+  if (failed || !text) settlePlain(entry.bubble)
+  else settleReadback(entry.bubble, text)
 })
 window.buddy.onChatSystem(({ text, expression }: ChatSystemPayload) => {
   current = null

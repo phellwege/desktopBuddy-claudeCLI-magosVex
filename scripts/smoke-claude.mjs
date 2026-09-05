@@ -8,6 +8,9 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
@@ -93,6 +96,79 @@ function buildSmokeArgs({ sessionId, mcpConfig }) {
   ]
 }
 
+// Mirrors src/main/brain/readback.ts's READBACK_INSTRUCTION and buildReadbackArgs, flag for
+// flag. Kept in sync by hand, same reasoning as buildSmokeArgs above: this plain script has
+// no built main process to import the real functions from, and both are covered by
+// readback.test.ts's own unit assertions.
+const SMOKE_READBACK_INSTRUCTION =
+  'You are the voice layer of a desktop assistant. The user\'s message below is a reply the ' +
+  'assistant just gave, written in plain language. Restate its substance in your own character ' +
+  'in at most three short sentences. Add no facts and answer nothing new. Keep file names, ' +
+  'commands, and numbers exactly as written. Use no code blocks, lists, or headings. If the reply ' +
+  'is only code, say what the code does. Output the restatement and nothing else.'
+function buildSmokeReadbackArgs(persona) {
+  return [
+    '-p', '--output-format', 'json', '--model', 'haiku',
+    '--setting-sources', 'project', '--no-session-persistence',
+    '--system-prompt', `${persona}\n\n${SMOKE_READBACK_INSTRUCTION}`,
+    '--tools', '', '--strict-mcp-config',
+  ]
+}
+
+// Spawns the readback call the same way src/main/brain/readback.ts's Readback.run does: a
+// second, tool-less CLI call restating the main turn's reply, on its own process, with the
+// reply text on stdin and a scratch cwd. Never touches the main turn's session or workspace.
+async function runReadbackSmoke(replyText) {
+  const persona = 'You are a terse narrator.'
+  const args = buildSmokeReadbackArgs(persona)
+  const scratchDir = join(tmpdir(), 'buddy-smoke-readback')
+  try { mkdirSync(scratchDir, { recursive: true }) } catch { /* spawn below reports a missing cwd */ }
+  console.log(`smoke-claude: spawning readback ${cliPath} ${args.join(' ')}`)
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(cliPath, args, { cwd: scratchDir, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+    } catch (e) {
+      console.log(`smoke-claude: readback: failed to spawn: ${e.message}`)
+      resolve()
+      return
+    }
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => { stdout += d.toString('utf8') })
+    child.stderr.on('data', (d) => { stderr += d.toString('utf8') })
+    child.on('error', (e) => {
+      console.log(`smoke-claude: readback: ${e.code ?? 'spawn error'}: ${e.message}`)
+      resolve()
+    })
+    child.on('close', (code) => {
+      if (code !== 0 && !stdout.trim()) {
+        const tail = stderr.trim().split('\n').slice(-3).join(' | ')
+        console.log(`smoke-claude: readback: exit code ${code ?? 'null'}${tail ? ': ' + tail : ''}`)
+        resolve()
+        return
+      }
+      let parsed
+      try { parsed = JSON.parse(stdout.trim()) } catch {
+        console.log('smoke-claude: readback: malformed JSON')
+        resolve()
+        return
+      }
+      if (parsed.is_error === true) {
+        console.log(`smoke-claude: readback: is_error: ${String(parsed.result).slice(0, 120)}`)
+      } else if (parsed.subtype !== 'success') {
+        console.log(`smoke-claude: readback: subtype ${parsed.subtype ?? 'missing'}`)
+      } else {
+        const readbackText = typeof parsed.result === 'string' ? parsed.result.trim() : ''
+        console.log(readbackText ? `smoke-claude: readback: ${readbackText}` : 'smoke-claude: readback: empty result')
+      }
+      resolve()
+    })
+    child.stdin.write(replyText)
+    child.stdin.end()
+  })
+}
+
 const mcpServer = await startThrowawayMcpServer()
 const mcpConfig = JSON.stringify({
   mcpServers: { buddy: { type: 'http', url: mcpServer.url, headers: { Authorization: `Bearer ${mcpServer.token}` } } },
@@ -148,4 +224,5 @@ child.on('close', async (code) => {
   console.log(`smoke-claude: result arrived, ok=${ok}`)
   console.log(`smoke-claude: text: ${text}`)
   process.exitCode = ok ? 0 : 1
+  if (ok) await runReadbackSmoke(text)
 })

@@ -15,7 +15,7 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
 
 let app: ElectronApplication | undefined
 
-async function launch(scenario: string): Promise<{ app: ElectronApplication; hologram: Page }> {
+async function launch(scenario: string, extraEnv: Record<string, string> = {}): Promise<{ app: ElectronApplication; hologram: Page }> {
   app = await electron.launch({
     args: ['.'],
     env: {
@@ -24,6 +24,7 @@ async function launch(scenario: string): Promise<{ app: ElectronApplication; hol
       BUDDY_CLI_PATH: process.execPath,
       BUDDY_CLI_ARGS: JSON.stringify([fakeCliScript]),
       FAKE_CLAUDE_SCENARIO: scenario,
+      ...extraEnv,
     },
   })
   const hologram = await windowByUrl(app, 'hologram')
@@ -95,4 +96,51 @@ test('a buddy MCP tool call from the CLI reaches the real body state', async () 
     () => electronApp.evaluate(() => (globalThis as { __buddy?: { getState(): { mood: string } } }).__buddy!.getState().mood),
     { timeout: 15000 },
   ).toBe('happy')
+})
+
+test('a reply settles to an in-character headline with the plain text folded under the arrow', async () => {
+  const { hologram } = await launch('text')
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.readback')).toContainText('Readback: Hello', { timeout: 15000 })
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
+  await expect(lastReply.locator('.plain')).toBeHidden()
+  await expect(lastReply.locator('.face')).toHaveCount(1)
+  await lastReply.locator('.plain-toggle').click()
+  await expect(lastReply.locator('.plain')).toBeVisible()
+  await expect(lastReply.locator('.plain')).toContainText('Hello')
+})
+
+test('while the readback is pending the bubble shows dots and hides the text', async () => {
+  const { hologram } = await launch('text', { FAKE_CLAUDE_READBACK: 'hang' })
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.face')).toHaveCount(1, { timeout: 15000 })
+  await expect(lastReply.locator('.dots')).toBeVisible()
+  await expect(lastReply.locator('.plain')).toBeHidden()
+  await expect(lastReply.locator('.readback')).toHaveCount(0)
+})
+
+test('a failed readback settles the bubble to plain text with no arrow', async () => {
+  const { hologram } = await launch('text', { FAKE_CLAUDE_READBACK: 'fail' })
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.plain')).toBeVisible({ timeout: 15000 })
+  await expect(lastReply.locator('.plain')).toContainText('Hello')
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
+  await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
+})
+
+test('with readback off the bubble streams plain and has no dots or toggle', async () => {
+  const { hologram } = await launch('text', { BUDDY_READBACK: '0' })
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect.poll(() => lastReply.textContent(), { timeout: 15000 }).toContain('Hello')
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
+  await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
+  await expect(lastReply.locator('.readback')).toHaveCount(0)
 })
