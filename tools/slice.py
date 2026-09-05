@@ -78,6 +78,10 @@ class Box:
     # to its original whole-crop behavior. Excluded from repr/eq so Box still prints and
     # compares the way every existing test expects.
     owner_mask: np.ndarray | None = field(default=None, repr=False, compare=False)
+    # Annotated-mode extra: the owner mask is authoritative for opacity. Every pixel it
+    # covers ships fully opaque even where the keying had discarded it (a dark visor on a
+    # dark background, an area the user painted back in with a rectangle).
+    mask_is_alpha: bool = field(default=False, repr=False, compare=False)
     core_last_row: int | None = field(default=None, repr=False, compare=False)
     # SAM-mode extra: a precomputed (ax, ay) anchor, crop-local, that overrides both the
     # core_last_row-based ay and the body_cx-based ax below - SAM's anchor is the feet
@@ -293,6 +297,7 @@ def upscale_frames_nearest(frames: list[tuple[Box, float]], factor: int) -> list
         sb = Box(box.x0 * factor, box.y0 * factor, box.x1 * factor, box.y1 * factor)
         if box.owner_mask is not None:
             sb.owner_mask = np.kron(box.owner_mask, np.ones((factor, factor), dtype=bool))
+        sb.mask_is_alpha = box.mask_is_alpha
         if box.anchor is not None:
             sb.anchor = (box.anchor[0] * factor, box.anchor[1] * factor)
         if box.core_last_row is not None:
@@ -635,9 +640,11 @@ def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_dat
         if fname not in frames_meta:
             raise ValueError(f"band {name}: frame {fname!r} missing from annotations")
         label = frames_meta[fname]["label"]
-        # Close one-pixel seams a saved mask may carry from an earlier keying, then
-        # intersect with the current keyed alpha.
-        mask = ndimage.binary_closing(ann_labels == label, structure=STRUCT8) & (alpha > 0)
+        # Close one-pixel seams a saved mask may carry from an earlier keying. The mask is
+        # NOT intersected with the keyed alpha: what the user approved is what ships, and
+        # the annotator already keeps SAM's own output inside the keyed pixels, so the only
+        # keyed-out pixels a mask can hold are the ones the user painted back in on purpose.
+        mask = ndimage.binary_closing(ann_labels == label, structure=STRUCT8)
         if not mask.any():
             raise ValueError(
                 f"band {name}: frame {fname!r} (label {label}) has an empty mask - "
@@ -677,6 +684,8 @@ def _group_frames_annotated(alpha: np.ndarray, band: dict, scale: float, ann_dat
     order = list(range(n))
     frames, _dropped, _attached, _owner_masks = _fragments_anchor_crop(
         alpha, band, obj_masks, cells, crop_box, order, cx_values=cx_values, attach_fragments=False)
+    for box, _cx in frames:
+        box.mask_is_alpha = True
     return frames
 
 
@@ -692,7 +701,8 @@ def normalize(rgba: np.ndarray, box: Box, body_cx: float) -> tuple[np.ndarray, i
     row of the whole crop)."""
     crop = rgba[box.y0:box.y1, box.x0:box.x1].copy()
     if box.owner_mask is not None:
-        crop[..., 3] = np.where(box.owner_mask, crop[..., 3], 0)
+        kept = 255 if box.mask_is_alpha else crop[..., 3]
+        crop[..., 3] = np.where(box.owner_mask, kept, 0)
     if box.anchor is not None:
         ax, ay = box.anchor
         return crop, ax, ay

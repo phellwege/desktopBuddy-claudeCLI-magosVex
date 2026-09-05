@@ -126,7 +126,9 @@ class App:
 
     def apply_rect(self, name: str, rect: list[float], add: bool) -> None:
         """Paint (add) or clear (remove) an axis-aligned sheet-space rectangle in this
-        frame's mask. Adds only cover opaque pixels, so the background never joins."""
+        frame's mask. An add covers every pixel in the box, including ones the keying
+        discarded (that is the point: a dark visor the key mistook for background), so
+        draw adds tight; the slicer ships whatever the mask covers fully opaque."""
         h, w = self.alpha.shape
         x0, y0 = max(0, int(rect[0])), max(0, int(rect[1]))
         x1, y1 = min(w, int(rect[2])), min(h, int(rect[3]))
@@ -134,7 +136,7 @@ class App:
             return
         mask = self.frame_mask(name).copy()
         if add:
-            mask[y0:y1, x0:x1] |= self.alpha[y0:y1, x0:x1] > 0
+            mask[y0:y1, x0:x1] = True
         else:
             mask[y0:y1, x0:x1] = False
         self.set_frame_mask(name, mask)
