@@ -23,6 +23,13 @@ const bridge: BuddyBridge = {
   onChatPermission: on(CH.chatPermission),
   onChatStatus: on(CH.chatStatus),
   onChatSystem: on(CH.chatSystem),
+  // No payload on this one, unlike the others above: wrap makeOn's callback shape by hand
+  // rather than force a fake payload type through it.
+  onChatClear: (cb) => {
+    const wrapped = () => cb()
+    ipcRenderer.on(CH.chatClear, wrapped)
+    return () => ipcRenderer.removeListener(CH.chatClear, wrapped)
+  },
   hologramReady: () => ipcRenderer.send(CH.hologramReady),
   hologramHover: (over) => ipcRenderer.send(CH.hologramHover, { over }),
   prompt: (text) => ipcRenderer.send(CH.chatPrompt, { text }),

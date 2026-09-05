@@ -20,6 +20,7 @@ export const CH = {
   chatPermission: 'chat:permission',
   chatStatus: 'chat:status',
   chatSystem: 'chat:system',
+  chatClear: 'chat:clear',
   hologramReady: 'hologram:ready',
   chatPrompt: 'chat:prompt',
   chatPermissionAnswer: 'chat:permissionAnswer',
@@ -70,6 +71,7 @@ export interface BuddyBridge {
   onChatPermission(cb: (p: ChatPermissionPayload) => void): () => void
   onChatStatus(cb: (p: ChatStatusPayload) => void): () => void
   onChatSystem(cb: (p: ChatSystemPayload) => void): () => void
+  onChatClear(cb: () => void): () => void
   hologramReady(): void
   hologramHover(over: boolean): void
   prompt(text: string): void

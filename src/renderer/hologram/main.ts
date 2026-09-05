@@ -238,6 +238,19 @@ window.buddy.onChatSystem(({ text, expression }: ChatSystemPayload) => {
   const el = add('system', renderMarkdown(text))
   renderFaceInto(el, expression ?? 'neutral')
 })
+window.buddy.onChatClear(() => {
+  log.replaceChildren()
+  current = null
+  buffer = ''
+  turnReplies = []
+  for (const { timer } of awaitingReadback.values()) clearTimeout(timer)
+  awaitingReadback.clear()
+  activities.clear()
+  pendingFaces.length = 0
+  // Dismiss any pending permission card without answering it: the server's own timeout will
+  // deny the request on the wire in due course, same as if the user had just ignored it.
+  if (pending) { pending = null; perm.hidden = true }
+})
 window.buddy.onChatPermission((p) => {
   // A dismiss means the server's own timeout already answered this request on the wire: hide
   // the card if it is still showing that same (now stale) request. Ignore it otherwise - the
