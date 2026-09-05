@@ -1,5 +1,11 @@
 # Plan B: Claude Code Brain Implementation Plan
 
+> **Amendment (2026-09-04):** permissions go through the CLI's own `--permission-prompt-tool`
+> MCP tool now, not the `PermissionRequest` hook described in Task 5/6 below. See spec section
+> 6.4 (amended) for the current design. Task 5 and Task 6 below are historical: they describe
+> the hook-based design as it was implemented and later withdrawn, and are left unedited as a
+> record of that history rather than rewritten to match the current code.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Claude Code, running on the user's subscription through the installed CLI, answers in the hologram, sees files through its own tools, drives the character through a small MCP tool set, asks before running anything beyond reading, and stamps each reply with an expression face.
