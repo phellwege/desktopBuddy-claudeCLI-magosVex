@@ -16,7 +16,7 @@ import { EchoBrain } from './brain/echo'
 import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import type { Brain } from './brain/types'
 import { ChatController } from './chat'
-import { hookScriptPath, startLocalServer, type PermissionRequest } from './server'
+import { startLocalServer, type PermissionRequest } from './server'
 import { createTray } from './tray'
 import { showContextMenu } from './menu'
 import { appendLog } from './log'
@@ -168,7 +168,7 @@ async function main(): Promise<void> {
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
-    allowedTools: config.allowedTools, server, hookPath: hookScriptPath(),
+    allowedTools: config.allowedTools, server,
     lines: { authError: pack.persona.lines.authError, cliMissing: pack.persona.lines.cliMissing, error: pack.persona.lines.error },
     onMood,
   })

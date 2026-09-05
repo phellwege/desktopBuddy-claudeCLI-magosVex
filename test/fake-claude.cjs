@@ -3,12 +3,11 @@
 
 // Fake Claude Code CLI for tests. It parses the flags ClaudeCliBrain.buildArgs produces,
 // drains stdin (the prompt), and prints scripted stream-json lines picked by the
-// FAKE_CLAUDE_SCENARIO env var, each 20 ms apart. Two scenarios go further: "mcp" performs
-// real JSON-RPC tools/call requests against the live buddy MCP server named in --mcp-config,
-// and "permission" spawns the real permission-hook script named in --settings with a fake
-// Bash request on stdin. No quota is spent; nothing here talks to the real Claude API.
-
-const { spawn } = require('node:child_process')
+// FAKE_CLAUDE_SCENARIO env var, each 20 ms apart. Two scenarios go further and perform real
+// JSON-RPC tools/call requests against the live buddy MCP server named in --mcp-config: "mcp"
+// calls set_mood and set_expression, and "permission" calls permission_prompt (the CLI's own
+// permission-prompt tool, named on argv by --permission-prompt-tool) with a fake Bash request.
+// No quota is spent; nothing here talks to the real Claude API.
 
 function argValue(name) {
   const i = process.argv.indexOf(name)
@@ -84,38 +83,35 @@ async function runMcp() {
   await emit([{ type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: 'ok' }])
 }
 
-function parseHookCommand(raw) {
-  const settings = JSON.parse(raw)
-  const hooks = settings && settings.hooks && settings.hooks.PermissionRequest
-  const command = hooks && hooks[0] && hooks[0].hooks && hooks[0].hooks[0] && hooks[0].hooks[0].command
-  if (!command) return null
-  const m = /^node "(.+)" --port (\S+) --token (\S+) --timeout (\S+)$/.exec(command)
-  return m ? { hookPath: m[1], port: m[2], token: m[3], timeoutMs: m[4] } : null
-}
-
-function runHook(hook, body) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [hook.hookPath, '--port', hook.port, '--token', hook.token, '--timeout', hook.timeoutMs])
-    let out = ''
-    child.stdout.on('data', (c) => { out += c.toString('utf8') })
-    child.on('error', reject)
-    child.on('close', () => resolve(out))
-    child.stdin.write(body)
-    child.stdin.end()
-  })
-}
-
 async function runPermission() {
   await emit([{ type: 'system', subtype: 'init', session_id: 's1', model: 'm' }])
-  const raw = argValue('--settings')
-  const hook = raw ? parseHookCommand(raw) : null
+  // Regression guard: buildArgs must always name the permission-prompt tool, or a real CLI
+  // would auto-deny every tool call before any prompt is even shown (spec 6.4).
+  if (!process.argv.includes('--permission-prompt-tool')) {
+    process.stderr.write('fake-claude: missing --permission-prompt-tool on argv\n')
+    process.exitCode = 2
+    return
+  }
+  const raw = argValue('--mcp-config')
+  const config = raw ? JSON.parse(raw) : null
+  const buddy = config && config.mcpServers && config.mcpServers.buddy
   let decision = 'deny'
-  if (hook) {
-    const body = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo hi' }, tool_use_id: 'pt1' })
+  if (buddy) {
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js')
+    const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js')
+    const transport = new StreamableHTTPClientTransport(new URL(buddy.url), { requestInit: { headers: buddy.headers } })
+    const client = new Client({ name: 'fake-claude', version: '1.0.0' })
+    await client.connect(transport)
+    const result = await client.callTool({
+      name: 'permission_prompt',
+      arguments: { tool_name: 'Bash', input: { command: 'echo hi' }, tool_use_id: 'pt1' },
+    })
     try {
-      const hookOut = await runHook(hook, body)
-      decision = JSON.parse(hookOut).hookSpecificOutput.decision
+      const text = result.content && result.content[0] && result.content[0].text
+      const parsed = text ? JSON.parse(text) : null
+      decision = parsed && parsed.behavior === 'allow' ? 'allow' : 'deny'
     } catch { /* keep the default deny */ }
+    await client.close()
   }
   await emit([
     { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'pt1', name: 'Bash', input: { command: 'echo hi' } }] } },

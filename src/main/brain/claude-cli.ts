@@ -17,7 +17,6 @@ export interface ClaudeCliDeps {
   model: string | null
   allowedTools: string[]
   server: LocalServer
-  hookPath: string
   lines: { authError?: string[]; cliMissing?: string[]; error?: string[] }
   onMood(mood: Mood | 'restore'): void
   spawn?: typeof nodeSpawn // injectable for tests
@@ -31,6 +30,9 @@ type SpawnFn = typeof nodeSpawn
 
 export function buildArgs(d: ClaudeCliDeps, sessionId: string | null, newSessionId: string): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose']
+  // Keeps the user's own hooks and plugins out of the buddy's turns; --bare is not an option,
+  // it drops the subscription login the CLI relies on.
+  args.push('--setting-sources', 'project')
   if (sessionId) args.push('--resume', sessionId)
   else args.push('--session-id', newSessionId)
   args.push('--append-system-prompt', toolsNote())
@@ -38,7 +40,9 @@ export function buildArgs(d: ClaudeCliDeps, sessionId: string | null, newSession
   args.push('--strict-mcp-config')
   args.push('--allowedTools', d.allowedTools.join(' '))
   args.push('--permission-mode', 'manual')
-  args.push('--settings', d.server.hookSettings(d.hookPath))
+  // The CLI calls this MCP tool (registered on the same buddy server as mcp-config above) for
+  // any tool not already covered by --allowedTools, instead of the withdrawn hook design.
+  args.push('--permission-prompt-tool', 'mcp__buddy__permission_prompt')
   if (d.model) args.push('--model', d.model)
   for (const dir of d.extraDirs) args.push('--add-dir', dir)
   return args

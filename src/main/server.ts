@@ -1,12 +1,12 @@
-// Local MCP tool server and permission endpoint. Bound to 127.0.0.1, port chosen at launch,
-// with a bearer token generated at launch and required on every request. The brain spawns
-// a fresh CLI process per turn, so each turn is a new MCP session: one McpServer and one
-// Streamable HTTP transport per session, created on initialize and dropped when the client
-// closes it or the next turn's client replaces it.
+// Local MCP tool server. Bound to 127.0.0.1, port chosen at launch, with a bearer token
+// generated at launch and required on every request. The brain spawns a fresh CLI process per
+// turn, so each turn is a new MCP session: one McpServer and one Streamable HTTP transport per
+// session, created on initialize and dropped when the client closes it or the next turn's
+// client replaces it. Permission prompts are just another tool on this server
+// (permission_prompt, named by --permission-prompt-tool on the CLI's argv); there is no
+// separate HTTP route or hook script for them.
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import { join } from 'node:path'
-import { app } from 'electron'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -33,7 +33,6 @@ export interface LocalServer {
   port: number
   token: string
   mcpConfig(): string
-  hookSettings(hookPath: string): string
   close(): Promise<void>
 }
 
@@ -60,14 +59,6 @@ export function summarizeToolInput(toolName: string, input: unknown): string {
     case 'Write': return `writing ${asString(rec.file_path)}`
     default: return toolName
   }
-}
-
-// The permission-hook script's on-disk location: copied to out/hook/ by the build in a
-// packaged app, run straight from src/hook/ in dev (electron-vite serves main from source).
-export function hookScriptPath(): string {
-  return app.isPackaged
-    ? join(app.getAppPath(), 'out', 'hook', 'permission-hook.cjs')
-    : join(app.getAppPath(), 'src', 'hook', 'permission-hook.cjs')
 }
 
 function textResult(text: string): { content: [{ type: 'text'; text: string }] } {
@@ -124,6 +115,41 @@ function buildMcpServer(deps: ServerDeps): McpServer {
     return textResult(`expression: ${expression}`)
   })
 
+  // The CLI's own permission prompt, named on its argv by --permission-prompt-tool. Called
+  // with { tool_name, input, tool_use_id } for any tool not already covered by --allowedTools;
+  // the reply is a single text block carrying the CLI's expected decision JSON, not a normal
+  // status string like the other tools above.
+  mcp.registerTool('permission_prompt', {
+    description: "The CLI's permission prompt for a tool call that needs the user's say-so.",
+    inputSchema: {
+      tool_name: z.string(),
+      input: z.record(z.string(), z.unknown()).optional(),
+      tool_use_id: z.string().optional(),
+    },
+  }, async ({ tool_name, input, tool_use_id }) => {
+    const request: PermissionRequest = {
+      id: tool_use_id ?? randomUUID(),
+      toolName: tool_name,
+      input,
+      summary: summarizeToolInput(tool_name, input),
+    }
+
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout>
+    const timeoutSeconds = deps.permissionTimeoutMs / 1000
+    const timeout = new Promise<{ allow: boolean; reason: string }>((resolve) => {
+      timer = setTimeout(() => { timedOut = true; resolve({ allow: false, reason: `no answer within ${timeoutSeconds} s` }) }, deps.permissionTimeoutMs)
+    })
+    const decision = await Promise.race([deps.onPermission(request), timeout])
+    clearTimeout(timer!)
+    if (timedOut) deps.onPermissionTimeout(request.id)
+
+    const payload = decision.allow
+      ? { behavior: 'allow', updatedInput: input ?? {} }
+      : { behavior: 'deny', message: decision.reason }
+    return textResult(JSON.stringify(payload))
+  })
+
   return mcp
 }
 
@@ -134,33 +160,6 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
-}
-
-async function handlePermission(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): Promise<void> {
-  let body: Record<string, unknown>
-  try { body = asRecord(JSON.parse(await readBody(req))) }
-  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'invalid JSON' })); return }
-
-  const toolName = asString(body.tool_name) || 'unknown'
-  const input = body.tool_input
-  const request: PermissionRequest = {
-    id: typeof body.tool_use_id === 'string' ? body.tool_use_id : randomUUID(),
-    toolName,
-    input,
-    summary: summarizeToolInput(toolName, input),
-  }
-
-  let timedOut = false
-  let timer: ReturnType<typeof setTimeout>
-  const timeout = new Promise<{ allow: boolean; reason: string }>((resolve) => {
-    timer = setTimeout(() => { timedOut = true; resolve({ allow: false, reason: 'timed out waiting for a decision' }) }, deps.permissionTimeoutMs)
-  })
-  const decision = await Promise.race([deps.onPermission(request), timeout])
-  clearTimeout(timer!)
-  if (timedOut) deps.onPermissionTimeout(request.id)
-
-  res.writeHead(200, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify({ decision: decision.allow ? 'allow' : 'deny', reason: decision.reason }))
 }
 
 export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
@@ -229,7 +228,6 @@ export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
     }
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/mcp') { await handleMcp(req, res); return }
-    if (url.pathname === '/permission' && req.method === 'POST') { await handlePermission(req, res, deps); return }
     res.writeHead(404, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ error: 'not found' }))
   }
@@ -247,22 +245,6 @@ export async function startLocalServer(deps: ServerDeps): Promise<LocalServer> {
     mcpConfig(): string {
       return JSON.stringify({
         mcpServers: { buddy: { type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: { Authorization: `Bearer ${token}` } } },
-      })
-    },
-    hookSettings(hookPath: string): string {
-      const sec = deps.permissionTimeoutMs / 1000 + 10
-      // The hook's own HTTP request timeout, in ms: 5s under the CLI's kill timeout above
-      // (permissionTimeoutMs + 10000ms) so the hook can still print its own deny in time,
-      // rather than being force-killed with no output at all. Passed on the command line so
-      // the hook's request timeout always tracks the configured permissionTimeoutSec instead
-      // of a hardcoded constant; --settings is regenerated fresh from config every launch.
-      const requestTimeoutMs = deps.permissionTimeoutMs + 5000
-      return JSON.stringify({
-        hooks: {
-          PermissionRequest: [{
-            hooks: [{ type: 'command', command: `node "${hookPath}" --port ${port} --token ${token} --timeout ${requestTimeoutMs}`, timeout: sec }],
-          }],
-        },
       })
     },
     async close(): Promise<void> {

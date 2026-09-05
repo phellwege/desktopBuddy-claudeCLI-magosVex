@@ -67,22 +67,12 @@ describe('startLocalServer', () => {
     expect(res.status).toBe(401)
   })
 
-  it('rejects a permission request without the bearer token with 401', async () => {
-    server = await startLocalServer(fakeDeps())
-    const res = await fetch(`http://127.0.0.1:${server.port}/permission`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'x' }),
-    })
-    expect(res.status).toBe(401)
-  })
-
-  it('lists the seven buddy tools', async () => {
+  it('lists the eight buddy tools', async () => {
     server = await startLocalServer(fakeDeps())
     const { client, close } = await connectedClient(server)
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual(
-      ['emote', 'get_state', 'go_to', 'set_expression', 'set_mood', 'sleep', 'wake'].sort(),
+      ['emote', 'get_state', 'go_to', 'permission_prompt', 'set_expression', 'set_mood', 'sleep', 'wake'].sort(),
     )
     await close()
   })
@@ -157,69 +147,73 @@ describe('startLocalServer', () => {
     })
   })
 
-  it('hookSettings returns a PermissionRequest hook command with port, token and a --timeout tracking permissionTimeoutMs', async () => {
-    server = await startLocalServer(fakeDeps({ permissionTimeoutMs: 60000 }))
-    const parsed = JSON.parse(server.hookSettings('C:\\hook.cjs'))
-    const hook = parsed.hooks.PermissionRequest[0].hooks[0]
-    expect(hook.command).toBe(`node "C:\\hook.cjs" --port ${server.port} --token ${server.token} --timeout 65000`)
-    expect(hook.timeout).toBe(70)
-  })
-
-  describe('POST /permission', () => {
-    it('resolves allow when onPermission resolves allow', async () => {
+  describe('permission_prompt tool', () => {
+    it('resolves allow when onPermission resolves allow, returning behavior/updatedInput text', async () => {
       const deps = fakeDeps({ onPermission: vi.fn(async () => ({ allow: true, reason: 'user allowed' })) })
       server = await startLocalServer(deps)
-      const res = await fetch(`http://127.0.0.1:${server.port}/permission`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
-        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls -la' }, tool_use_id: 'abc' }),
+      const { client, close } = await connectedClient(server)
+      const result = await client.callTool({
+        name: 'permission_prompt',
+        arguments: { tool_name: 'Bash', input: { command: 'ls -la' }, tool_use_id: 'abc' },
       })
-      expect(res.status).toBe(200)
-      const body = await res.json() as { decision: string; reason: string }
-      expect(body.decision).toBe('allow')
-      expect(body.reason).toBe('user allowed')
+      const content = result.content as { type: string; text: string }[]
+      expect(JSON.parse(content[0]!.text)).toEqual({ behavior: 'allow', updatedInput: { command: 'ls -la' } })
       const req = (deps.onPermission as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { id: string; toolName: string; summary: string }
       expect(req.id).toBe('abc')
       expect(req.toolName).toBe('Bash')
       expect(req.summary).toBe('running: ls -la')
+      await close()
+    })
+
+    it('resolves deny when onPermission resolves deny, returning behavior/message text', async () => {
+      const deps = fakeDeps({ onPermission: vi.fn(async () => ({ allow: false, reason: 'user denied' })) })
+      server = await startLocalServer(deps)
+      const { client, close } = await connectedClient(server)
+      const result = await client.callTool({
+        name: 'permission_prompt',
+        arguments: { tool_name: 'Bash', input: { command: 'rm -rf /' }, tool_use_id: 'xyz' },
+      })
+      const content = result.content as { type: string; text: string }[]
+      expect(JSON.parse(content[0]!.text)).toEqual({ behavior: 'deny', message: 'user denied' })
+      await close()
+    })
+
+    it('generates an id when tool_use_id is missing', async () => {
+      const deps = fakeDeps()
+      server = await startLocalServer(deps)
+      const { client, close } = await connectedClient(server)
+      await client.callTool({ name: 'permission_prompt', arguments: { tool_name: 'Bash', input: { command: 'ls' } } })
+      const req = (deps.onPermission as ReturnType<typeof vi.fn>).mock.calls[0]![0] as { id: string }
+      expect(req.id.length).toBeGreaterThan(0)
+      await close()
     })
 
     it('denies after the server timeout when onPermission never resolves, and reports the timeout so the pending entry can be cleared', async () => {
       const deps = fakeDeps({ onPermission: () => new Promise(() => {}), permissionTimeoutMs: 200 })
       server = await startLocalServer(deps)
-      const res = await fetch(`http://127.0.0.1:${server.port}/permission`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
-        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'rm -rf /' }, tool_use_id: 'xyz' }),
+      const { client, close } = await connectedClient(server)
+      const result = await client.callTool({
+        name: 'permission_prompt',
+        arguments: { tool_name: 'Bash', input: { command: 'rm -rf /' }, tool_use_id: 'xyz' },
       })
-      expect(res.status).toBe(200)
-      const body = await res.json() as { decision: string; reason: string }
-      expect(body.decision).toBe('deny')
+      const content = result.content as { type: string; text: string }[]
+      const parsed = JSON.parse(content[0]!.text) as { behavior: string; message: string }
+      expect(parsed.behavior).toBe('deny')
+      expect(parsed.message).toContain('0.2 s')
       expect(deps.onPermissionTimeout).toHaveBeenCalledExactlyOnceWith('xyz')
+      await close()
     })
 
     it('does not call onPermissionTimeout when onPermission answers before the timeout', async () => {
       const deps = fakeDeps({ permissionTimeoutMs: 5000 })
       server = await startLocalServer(deps)
-      await fetch(`http://127.0.0.1:${server.port}/permission`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
-        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'abc2' }),
+      const { client, close } = await connectedClient(server)
+      await client.callTool({
+        name: 'permission_prompt',
+        arguments: { tool_name: 'Bash', input: { command: 'ls' }, tool_use_id: 'abc2' },
       })
       expect(deps.onPermissionTimeout).not.toHaveBeenCalled()
-    })
-
-    it('answers 500 instead of hanging when onPermission throws synchronously', async () => {
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const deps = fakeDeps({ onPermission: () => { throw new Error('boom') } })
-      server = await startLocalServer(deps)
-      const res = await fetch(`http://127.0.0.1:${server.port}/permission`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${server.token}` },
-        body: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'z' }),
-      })
-      expect(res.status).toBe(500)
-      spy.mockRestore()
+      await close()
     })
   })
 })

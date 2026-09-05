@@ -15,7 +15,6 @@ function fakeServer(): LocalServer {
     port: 4321,
     token: 'tok',
     mcpConfig: () => '{"mcpServers":{"buddy":{"type":"http","url":"http://127.0.0.1:4321/mcp"}}}',
-    hookSettings: (hookPath: string) => `{"hookPath":"${hookPath}"}`,
     close: async () => {},
   }
 }
@@ -28,7 +27,6 @@ function baseDeps(overrides: Partial<ClaudeCliDeps> = {}): ClaudeCliDeps {
     model: null,
     allowedTools: ['Read', 'Glob'],
     server: fakeServer(),
-    hookPath: 'C:\\hook.cjs',
     lines: {},
     onMood: () => {},
     ...overrides,
@@ -40,13 +38,14 @@ describe('buildArgs', () => {
     const deps = baseDeps()
     expect(buildArgs(deps, null, 'new-id')).toEqual([
       '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+      '--setting-sources', 'project',
       '--session-id', 'new-id',
       '--append-system-prompt', toolsNote(),
       '--mcp-config', deps.server.mcpConfig(),
       '--strict-mcp-config',
       '--allowedTools', 'Read Glob',
       '--permission-mode', 'manual',
-      '--settings', deps.server.hookSettings(deps.hookPath),
+      '--permission-prompt-tool', 'mcp__buddy__permission_prompt',
     ])
   })
 
@@ -54,13 +53,14 @@ describe('buildArgs', () => {
     const deps = baseDeps({ model: 'sonnet', extraDirs: ['C:\\other', 'C:\\more'] })
     expect(buildArgs(deps, 'sess-1', 'new-id')).toEqual([
       '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+      '--setting-sources', 'project',
       '--resume', 'sess-1',
       '--append-system-prompt', toolsNote(),
       '--mcp-config', deps.server.mcpConfig(),
       '--strict-mcp-config',
       '--allowedTools', 'Read Glob',
       '--permission-mode', 'manual',
-      '--settings', deps.server.hookSettings(deps.hookPath),
+      '--permission-prompt-tool', 'mcp__buddy__permission_prompt',
       '--model', 'sonnet',
       '--add-dir', 'C:\\other',
       '--add-dir', 'C:\\more',
