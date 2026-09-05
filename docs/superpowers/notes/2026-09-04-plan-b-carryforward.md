@@ -49,3 +49,12 @@ window in place. Once that left main believing the panel was open while nothing 
 so clicks on the body seemed dead and he sat frozen until a restart. Until the
 hologram-ready handshake resyncs panel state (open or closed, hover flags, pending card),
 make renderer edits in a worktree or restart the app right after.
+
+## Landed later
+
+Idle mutter thought bubbles (2026-09-05): after two minutes with no interaction, and every
+two minutes after that until he falls asleep, a small thought bubble near his head shows a
+random line from the pack's `idleMutter` set and fades out on its own. It never appears
+while the panel is open, while asleep, mid-drag, or mid-journey, and it never counts as an
+interaction itself (it does not delay sleep). The interval is `mutterIntervalMin` in
+config.json (minutes, default 2; 0 disables mutters entirely).

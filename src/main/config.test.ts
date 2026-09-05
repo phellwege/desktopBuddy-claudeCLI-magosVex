@@ -93,6 +93,28 @@ describe('config', () => {
     expect(spy).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('permissionMode'))
     spy.mockRestore()
   })
+  it('falls back to the mutterIntervalMin default of 2 when the field is absent', () => {
+    const p = tmp()
+    expect(loadConfig(p).mutterIntervalMin).toBe(2)
+  })
+  it('accepts an explicit mutterIntervalMin, including 0 to disable mutters', () => {
+    const p = tmp()
+    writeFileSync(p, JSON.stringify({ mutterIntervalMin: 5 }))
+    expect(loadConfig(p).mutterIntervalMin).toBe(5)
+    const p2 = tmp()
+    writeFileSync(p2, JSON.stringify({ mutterIntervalMin: 0 }))
+    expect(loadConfig(p2).mutterIntervalMin).toBe(0)
+  })
+  it('falls back to the mutterIntervalMin default for a value outside 0 or 0.1..60, with a logged line, keeping the rest', () => {
+    const p = tmp()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    writeFileSync(p, JSON.stringify({ mutterIntervalMin: 61, model: 'sonnet' }))
+    const cfg = loadConfig(p)
+    expect(cfg.mutterIntervalMin).toBe(DEFAULT_CONFIG.mutterIntervalMin)
+    expect(cfg.model).toBe('sonnet')
+    expect(spy).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('mutterIntervalMin'))
+    spy.mockRestore()
+  })
   it('round-trips through saveConfig', () => {
     const p = tmp()
     saveConfig(p, { ...DEFAULT_CONFIG, workspace: 'D:\\w' })

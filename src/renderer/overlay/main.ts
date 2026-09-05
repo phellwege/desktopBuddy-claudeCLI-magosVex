@@ -3,10 +3,11 @@ import { Motion } from './motion'
 import { HitTester } from './hittest'
 import { originScreenPosition } from './origin'
 import type { Atlas, AtlasFrame } from '../../shared/types'
-import type { BuddyStatePayload, PackLoadedPayload, StagePayload } from '../../shared/ipc'
+import type { BuddyStatePayload, OverlayMutterPayload, PackLoadedPayload, StagePayload } from '../../shared/ipc'
 
 const canvas = document.getElementById('buddy') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
+const mutterEl = document.getElementById('mutter') as HTMLDivElement
 const motion = new Motion(0, 0)
 const hit = new HitTester()
 let atlas: Atlas | null = null
@@ -63,6 +64,72 @@ const place = (): void => {
   const left = motion.vx - o.x - canvas.width / 2
   const top = motion.vy - o.y - canvas.height
   canvas.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+  placeMutter(left, top)
+}
+
+let mutterVisible = false
+let mutterTtlTimer: ReturnType<typeof setTimeout> | undefined
+let mutterFadeTimer: ReturnType<typeof setTimeout> | undefined
+
+// Beside his head: above the canvas if the window (the bottom strip, usually) has room for
+// the bubble there, otherwise to whichever side of the canvas has more room. Re-run from
+// place() on every frame he might be walking through, so the bubble tracks him.
+function placeMutter(canvasLeft: number, canvasTop: number): void {
+  if (!mutterVisible) return
+  const bw = mutterEl.offsetWidth
+  const bh = mutterEl.offsetHeight
+  const winW = window.innerWidth
+  const winH = window.innerHeight
+  mutterEl.classList.remove('side-above', 'side-left', 'side-right')
+  const aboveTop = canvasTop - bh - 8
+  if (aboveTop >= 0) {
+    const left = Math.min(Math.max(0, canvasLeft + canvas.width / 2 - bw / 2), Math.max(0, winW - bw))
+    mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(aboveTop)}px)`
+    mutterEl.classList.add('side-above')
+    return
+  }
+  const top = Math.min(Math.max(0, canvasTop + 12), Math.max(0, winH - bh))
+  const roomLeft = canvasLeft
+  const roomRight = winW - (canvasLeft + canvas.width)
+  if (roomRight >= roomLeft) {
+    const left = Math.min(canvasLeft + canvas.width + 8, Math.max(0, winW - bw))
+    mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+    mutterEl.classList.add('side-right')
+  } else {
+    const left = Math.max(0, canvasLeft - bw - 8)
+    mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
+    mutterEl.classList.add('side-left')
+  }
+}
+
+// Hidden immediately, no fade: used when a buddy state says he is no longer somewhere a
+// thought bubble makes sense (asleep, panel open, dragging, mid-journey), and on click.
+function hideMutterAtOnce(): void {
+  if (mutterTtlTimer !== undefined) { clearTimeout(mutterTtlTimer); mutterTtlTimer = undefined }
+  if (mutterFadeTimer !== undefined) { clearTimeout(mutterFadeTimer); mutterFadeTimer = undefined }
+  mutterVisible = false
+  mutterEl.classList.remove('visible')
+  mutterEl.hidden = true
+}
+
+// Its ttl ran out on its own: fade out over the same 300ms as the entrance, then hide for
+// real (display: none, via the hidden attribute) once the transition has had time to run.
+function fadeOutMutter(): void {
+  mutterVisible = false
+  mutterEl.classList.remove('visible')
+  mutterFadeTimer = setTimeout(() => { mutterEl.hidden = true; mutterFadeTimer = undefined }, 300)
+}
+
+function showMutter(text: string, ttlMs: number): void {
+  if (mutterTtlTimer !== undefined) clearTimeout(mutterTtlTimer)
+  if (mutterFadeTimer !== undefined) { clearTimeout(mutterFadeTimer); mutterFadeTimer = undefined }
+  mutterEl.textContent = text
+  mutterEl.hidden = false
+  mutterVisible = true
+  place()
+  void mutterEl.offsetWidth // force a reflow so the opacity transition below actually runs
+  mutterEl.classList.add('visible')
+  mutterTtlTimer = setTimeout(fadeOutMutter, ttlMs)
 }
 
 function layout(): void {
@@ -74,6 +141,9 @@ function layout(): void {
 
 function apply(s: BuddyStatePayload): void {
   if (!animator) return
+  // A thought bubble makes no sense once he is asleep, mid-journey, held, or behind the
+  // panel: drop it at once rather than let it linger over whatever he does next.
+  if (mutterVisible && (s.state.panelOpen || s.state.asleep || s.state.dragging || s.state.leg)) hideMutterAtOnce()
   animator.setFacing(s.state.facing)
   animator.set(s.animation)
   // Held: the pointer owns his position, so drop any target and leave motion where the
@@ -112,6 +182,7 @@ window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
   if (lastState) apply(lastState)
 })
 window.buddy.onBuddyState((s) => { lastState = s; apply(s) })
+window.buddy.onOverlayMutter((p: OverlayMutterPayload) => { showMutter(p.text, p.ttlMs) })
 window.addEventListener('resize', layout)
 
 const missingFrames = new Set<string>()
@@ -230,7 +301,7 @@ canvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button !== 0) return
   if (dragging) { endDrag(); return }
-  if (press) { press = null; window.buddy.click() }
+  if (press) { press = null; if (mutterVisible) hideMutterAtOnce(); window.buddy.click() }
 })
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault()

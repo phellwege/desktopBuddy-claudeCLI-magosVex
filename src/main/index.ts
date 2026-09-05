@@ -15,7 +15,7 @@ import { hologramBounds, originToWindow } from './geometry'
 import { byOrd, desktopBounds, floorY, fromFraction, planDrop, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
 import { wireIpc } from './ipc'
 import { SessionAllows } from './permissions'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type StagePayload } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type StagePayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
 import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import { Readback } from './brain/readback'
@@ -74,9 +74,19 @@ async function main(): Promise<void> {
   let current: DisplayInfo = primaryOf(displays)
   const RUN_THRESHOLD = 0.25
 
+  // Test hook: overrides the mutter interval in milliseconds directly, like BUDDY_READBACK
+  // overrides readback - a config override is not available to the e2e harness. The same
+  // hook shortens the bubble's time-to-live too, or an e2e spec waiting on a real 7s ttl
+  // between mutters (the interval is set well under that for the test) would never see it
+  // actually hide before the next one replaces it.
+  const mutterTestMode = process.env.BUDDY_MUTTER_MS !== undefined
+  const mutterIntervalMs = mutterTestMode ? Number(process.env.BUDDY_MUTTER_MS) : config.mutterIntervalMin * 60000
+  const mutterTtlMs = mutterTestMode ? 1000 : 7000
+
   const buddy = new Buddy({
     wanderIntervalMs: [config.wanderIntervalSec[0] * 1000, config.wanderIntervalSec[1] * 1000],
     sleepAfterMs: config.sleepAfterMin * 60000,
+    mutterIntervalMs,
     initialMood: pack.persona.defaultMood,
     initialDisplay: current.ord,
   })
@@ -126,6 +136,10 @@ async function main(): Promise<void> {
   // webContents throws, which surfaced as an unhandled rejection in the log.
   const toHologram = (channel: string, payload?: unknown): void => {
     if (!hologram.isDestroyed()) hologram.webContents.send(channel, payload)
+  }
+  // Same guard for the overlay: a mutter can fire after it is gone (quit while idle).
+  const toOverlay = (channel: string, payload?: unknown): void => {
+    if (!overlay.isDestroyed()) overlay.webContents.send(channel, payload)
   }
   const out = {
     delta: (text: string) => toHologram(CH.chatDelta, { text }),
@@ -373,6 +387,13 @@ async function main(): Promise<void> {
     }
     overlay.webContents.send(CH.buddyState, v)
     if (v.state.panelOpen && hologram.isVisible()) placeHologram()
+  })
+  buddy.onMutter(() => {
+    const line = pickLine(pack, 'idleMutter')
+    if (line) {
+      toOverlay(CH.overlayMutter, { text: line, ttlMs: mutterTtlMs } satisfies OverlayMutterPayload)
+      appendLog(logDir, 'main', `mutter: ${line.slice(0, 40)}`)
+    }
   })
   setInterval(() => buddy.tick(Date.now()), 250)
   buddy.tick(Date.now())

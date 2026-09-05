@@ -10,6 +10,9 @@ export interface BuddyOptions {
   initialX?: number
   initialDisplay?: number
   initialMood?: Mood
+  // How often an idle thought bubble may appear: the first one this long after the last
+  // interaction, another every interval after that, until sleep wins. 0 disables mutters.
+  mutterIntervalMs?: number
 }
 export interface BuddyView { state: BuddyState; animation: AnimationKey; speed: number }
 
@@ -26,6 +29,7 @@ export class Buddy {
   private readonly rest: [number, number]
   private readonly sleepAfter: number
   private readonly runThreshold: number
+  private readonly mutterInterval: number
 
   private x: number
   private display: number
@@ -51,6 +55,7 @@ export class Buddy {
   private now = 0
   private started = false
   private lastInteractionAt = 0
+  private lastMutterAt = 0
   private nextWanderAt = Infinity
   private restUntil: number | undefined
   private queuedEmote: EmoteKind | undefined
@@ -59,6 +64,7 @@ export class Buddy {
   private currentEmote: AnimationKey = 'idle'
   private changeListeners: Array<(v: BuddyView) => void> = []
   private arriveListeners: Array<() => void> = []
+  private mutterListeners: Array<() => void> = []
   private lastViewKey = ''
 
   constructor(opts: BuddyOptions = {}) {
@@ -67,6 +73,7 @@ export class Buddy {
     this.rest = opts.restMs ?? [5000, 20000]
     this.sleepAfter = opts.sleepAfterMs ?? 600000
     this.runThreshold = opts.runThreshold ?? 0.25
+    this.mutterInterval = opts.mutterIntervalMs ?? 120000
     this.x = clamp01(opts.initialX ?? 0.5)
     this.display = opts.initialDisplay ?? 1
     this.mood = opts.initialMood ?? 'calm'
@@ -80,6 +87,10 @@ export class Buddy {
   onArrive(l: () => void): () => void {
     this.arriveListeners.push(l)
     return () => { this.arriveListeners = this.arriveListeners.filter(x => x !== l) }
+  }
+  onMutter(l: () => void): () => void {
+    this.mutterListeners.push(l)
+    return () => { this.mutterListeners = this.mutterListeners.filter(x => x !== l) }
   }
 
   getState(): BuddyState {
@@ -207,6 +218,16 @@ export class Buddy {
       this.restUntil = undefined
       this.emit()
       return
+    }
+    // A thought bubble: never during a journey or a drag (covered above and by the leg
+    // check), never once he is restful only in the sense of mid-landing (RESTFUL already
+    // excludes those). Fires at most once per tick and never counts as interaction, so it
+    // does not delay sleep or push its own next occurrence out on its own account.
+    if (this.mutterInterval > 0 && !this.currentLeg && RESTFUL.includes(this.activity)
+      && now - this.lastInteractionAt >= this.mutterInterval
+      && now - this.lastMutterAt >= this.mutterInterval) {
+      this.lastMutterAt = now
+      for (const l of this.mutterListeners) l()
     }
     if ((this.activity === 'sitting' || this.activity === 'looking') && this.restUntil !== undefined && now >= this.restUntil) {
       this.activity = 'idle'
@@ -420,6 +441,9 @@ export class Buddy {
   }
   interact(): void {
     this.lastInteractionAt = this.now
+    // So the first mutter after any interaction comes one full interval later, rather than
+    // reusing whatever fraction of the interval had already elapsed toward the last one.
+    this.lastMutterAt = this.lastInteractionAt
     this.pendingSleep = false
     if (this.asleep) this.wake()
   }
