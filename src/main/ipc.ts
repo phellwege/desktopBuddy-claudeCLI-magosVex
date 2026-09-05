@@ -21,10 +21,16 @@ export interface IpcDeps {
   status(): ChatStatusPayload; showContextMenu(x: number, y: number): void
 }
 
+// Windows can be gone by the time a late IPC message wants them (app quitting, e2e teardown):
+// sending to a destroyed webContents throws, which only ever showed up as log noise.
+function send(win: BrowserWindow, channel: string, payload: unknown): void {
+  if (!win.isDestroyed()) win.webContents.send(channel, payload)
+}
+
 export function wireIpc(d: IpcDeps): void {
   ipcMain.on(CH.overlayReady, () => {
-    d.overlay.webContents.send(CH.packLoaded, d.packPayload)
-    d.overlay.webContents.send(CH.buddyState, d.buddy.view())
+    send(d.overlay, CH.packLoaded, d.packPayload)
+    send(d.overlay, CH.buddyState, d.buddy.view())
   })
   ipcMain.on(CH.overlayHover, (_e, p: { over: boolean }) => setOverlayInteractive(d.overlay, p.over))
   ipcMain.on(CH.overlayClick, () => {
@@ -42,14 +48,14 @@ export function wireIpc(d: IpcDeps): void {
       // the overlay reports instead, before translating the origin into the (possibly
       // just-moved) hologram window's coordinates.
       if (shouldReplaceHologramX(d.lastPlacedX.current, p.xFraction)) d.placeHologram(p.xFraction)
-      d.hologram.webContents.send(CH.hologramOrigin, originToWindow(p, d.hologram.getBounds()))
+      send(d.hologram, CH.hologramOrigin, originToWindow(p, d.hologram.getBounds()))
     }
   })
   ipcMain.on(CH.hologramHover, (_e, p: { over: boolean }) => setHologramInteractive(d.hologram, p.over))
   ipcMain.on(CH.hologramReady, () => {
-    d.hologram.webContents.send(CH.packLoaded, d.packPayload)
-    d.hologram.webContents.send(CH.theme, d.theme)
-    d.hologram.webContents.send(CH.chatStatus, d.status())
+    send(d.hologram, CH.packLoaded, d.packPayload)
+    send(d.hologram, CH.theme, d.theme)
+    send(d.hologram, CH.chatStatus, d.status())
   })
   ipcMain.on(CH.chatPrompt, (_e, p: { text: string }) => d.chat.prompt(p.text))
   ipcMain.on(CH.chatPermissionAnswer, (_e, p: { id: string; allow: boolean }) => d.chat.permissionAnswer(p.id, p.allow))
