@@ -122,14 +122,16 @@ Routes, all ending with a walk along the target floor to the requested spot (dro
 `run` on a walk leg is `true` when the leg's distance is at least `runThreshold` of the source display's walk band, matching today's rule.
 
 **Tests:** the three-screen fixture verbatim from the table above.
-- [ ] `roster` orders `DISPLAY3, DISPLAY2, DISPLAY1` as ordinals 1, 2, 3 and survives the negative y.
-- [ ] `relate` returns `beside` for 2→3, `above` for 2→1 and 3→1, `below` for 1→2, `same` for 2→2.
-- [ ] `relate` returns `apart` for a synthetic diagonal pair and for two rects with a gap between them.
-- [ ] `planRoute` 2→3 emits walk-to-x1920-minus-inset, fly with `hop: true`, then the trailing walk.
-- [ ] `planRoute` 2→1 with `landFraction` 0.5 emits a walk to the clamped launch x, a `hop: false` fly, and **no** trailing walk (the launch x already lands on target).
-- [ ] `planRoute` 2→1 with `landFraction` 0 (the ultrawide overhangs left of the primary, so the landing x is outside the primary's band) emits a launch at the primary's left edge, a fly, then a non-zero trailing walk left.
-- [ ] `planRoute` same-display reduces to one walk, identical to today's `goTo`.
-- [ ] Single-display roster: every ordinal resolves to 1 and `planRoute` to itself is one walk.
+- [x] `roster` orders `DISPLAY3, DISPLAY2, DISPLAY1` as ordinals 1, 2, 3 and survives the negative y.
+- [x] `relate` returns `beside` for 2→3, `above` for 2→1 and 3→1, `below` for 1→2, `same` for 2→2.
+- [x] `relate` returns `apart` for a synthetic diagonal pair and for two rects with a gap between them.
+- [x] `planRoute` 2→3 emits walk-to-x1920-minus-inset, fly with `hop: true`, then the trailing walk.
+- [x] `planRoute` 2→1 with `landFraction` 0.5 emits a walk to the clamped launch x, a `hop: false` fly, and a **short** trailing walk. (Corrected during Task 1: the plan first claimed no trailing walk. The ultrawide's centre is x=1985, past the primary's band max of 1820, so the launch column cannot reach it and a 165 px walk remains. A no-trailing-walk case exists but needs a landing fraction whose column lies inside the primary; that is covered by its own test.)
+- [x] `planRoute` 2→1 with `landFraction` 0 (the ultrawide overhangs left of the primary, so the landing x is outside the primary's band) emits a launch at the primary's left edge, a fly, then a non-zero trailing walk left.
+- [x] `planRoute` same-display reduces to one walk, identical to today's `goTo`.
+- [x] Single-display roster: every ordinal resolves to 1 and `planRoute` to itself is one walk.
+- [x] `apart` runs to the halfway point, then one straight diagonal fly, then the trailing walk.
+- [x] An explicit `run` override applies to every walk leg; sub-pixel legs are never emitted.
 
 ### Task 2: Position in virtual pixels
 
