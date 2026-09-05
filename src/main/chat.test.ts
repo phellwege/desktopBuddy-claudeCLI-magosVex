@@ -183,16 +183,14 @@ describe('ChatController', () => {
     expect(() => c.permissionAnswer('nope', true)).not.toThrow()
     expect(out.systems).toEqual([])
   })
-  it('expirePermission removes the pending entry so it never resolves and a later permissionAnswer for it is a no-op', async () => {
+  it('expirePermission settles the pending request as denied, posts nothing, and a later permissionAnswer for it is a no-op', async () => {
     const out = fakeOut()
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
     const pending = c.awaitPermissionAnswer('p3')
-    let settled = false
-    void pending.then(() => { settled = true })
     c.expirePermission('p3')
+    await expect(pending).resolves.toEqual({ allow: false, reason: 'timed out' })
     c.permissionAnswer('p3', true)
     await new Promise(r => setTimeout(r, 10))
-    expect(settled).toBe(false)
     expect(out.systems).toEqual([])
   })
   it('expirePermission on an unknown id is a no-op', () => {

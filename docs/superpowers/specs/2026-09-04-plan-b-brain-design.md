@@ -168,8 +168,11 @@ are in `allowedTools`. There is no hook script, no `--settings` argument, and no
 `/permission` HTTP endpoint. Verified 2026-09-04 against CLI 2.1.220: allow with
 `updatedInput` writes the file, deny leaves it unwritten, `mcp__buddy__*` in
 `--allowedTools` lets buddy tools run without a prompt, and `--setting-sources project`
-keeps the user's plugin hooks out of the stream while the login still works. The former hook design (a `PermissionRequest` hook posting
-to `POST /permission`) is withdrawn.
+keeps the user's plugin hooks out of the stream while the login still works.
+
+The former hook design (a `PermissionRequest` hook posting to `POST /permission`) is
+withdrawn. Cards show one at a time: a request arriving while a card is up waits its turn;
+if the server's timeout expires it first, it is denied without ever showing a card.
 
 ### 6.5 Sessions, workspace, config
 

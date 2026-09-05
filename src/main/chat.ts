@@ -122,14 +122,15 @@ export class ChatController implements ChatPort {
   awaitPermissionAnswer(id: string): Promise<{ allow: boolean; reason: string }> {
     return new Promise((resolve) => { this.pendingPermissions.set(id, resolve) })
   }
-  // Called by main/index.ts's onPermissionTimeout, wired from the local server, once the
-  // server's own race against the hook has already answered "deny" on the wire: the pending
-  // resolver would otherwise sit in the map forever, since permissionAnswer() (the only other
-  // thing that clears it) is never going to be called by a user who never saw the card in
-  // time. Deliberately does not resolve or post anything - the caller owns telling the
-  // renderer to dismiss the card and posting the status line.
+  // Called by main/index.ts's onPermissionTimeout once the server's own timeout has already
+  // answered "deny" on the wire. Settles the pending promise with a deny so anything waiting
+  // on it (the one-at-a-time card queue in main) moves on, and posts nothing: the caller
+  // owns dismissing the card and the status line.
   expirePermission(id: string): void {
+    const resolve = this.pendingPermissions.get(id)
+    if (!resolve) return
     this.pendingPermissions.delete(id)
+    resolve({ allow: false, reason: 'timed out' })
   }
   permissionAnswer(id: string, allow: boolean): void {
     const resolve = this.pendingPermissions.get(id)

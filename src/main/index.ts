@@ -123,7 +123,9 @@ async function main(): Promise<void> {
   // their real logic exists yet (the brain needs the server, and the controller needs the
   // brain): they close over this ref instead, filled in once the controller is built.
   let chatRef: ChatController | undefined
-  const onPermission = async (req: PermissionRequest): Promise<{ allow: boolean; reason: string }> => {
+  const showPermission = async (req: PermissionRequest): Promise<{ allow: boolean; reason: string }> => {
+    // Expired while waiting its turn: the server already answered deny on the wire.
+    if (expiredPermissions.delete(req.id)) return { allow: false, reason: 'timed out' }
     actions.openPanel()
     const line = pickLine(pack, 'permissionAsk') ?? `Allow ${req.toolName}?`
     out.system(line, 'begging')
@@ -131,12 +133,23 @@ async function main(): Promise<void> {
     toHologram(CH.chatPermission, payload)
     return chatRef!.awaitPermissionAnswer(req.id)
   }
+  // Cards show one at a time. The renderer has a single card slot, so a second request that
+  // arrives while one is up (parallel tool calls) waits for the first answer or its expiry
+  // instead of overwriting the card; the server's own timeout still bounds each request.
+  const expiredPermissions = new Set<string>()
+  let permissionQueue: Promise<unknown> = Promise.resolve()
+  const onPermission = (req: PermissionRequest): Promise<{ allow: boolean; reason: string }> => {
+    const result = permissionQueue.then(() => showPermission(req))
+    permissionQueue = result.catch(() => undefined)
+    return result
+  }
   // The server's own permission timeout already answered "deny" on the wire by the time this
   // fires; the pending resolver in ChatController and the card still showing in the renderer
   // are both now stale and would otherwise linger forever (permissionAnswer() is the only
   // other thing that clears either, and nobody is going to click a card the user never saw
   // answer in time).
   const onPermissionTimeout = (id: string): void => {
+    expiredPermissions.add(id)
     chatRef?.expirePermission(id)
     toHologram(CH.chatPermission, { id, dismiss: true } satisfies ChatPermissionPayload)
     out.system(pickLine(pack, 'permissionDenied') ?? 'Denied: timed out waiting for a decision.')

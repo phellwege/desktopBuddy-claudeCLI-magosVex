@@ -50,9 +50,8 @@ const VALIDATORS: { [K in keyof Config]: (v: unknown) => boolean } = {
   extraDirs: isStringArray,
   model: (v) => v === null || typeof v === 'string',
   allowedTools: isStringArray,
-  // 5..600s: below 5 a slow permission card could never realistically be answered before the
-  // hook's own request gives up, and above 600 a stuck turn would block the CLI (and this
-  // hook's child process) for an unreasonably long time.
+  // 5..600 s: below 5 a permission card could never realistically be answered in time, and
+  // above 600 an unanswered card would block the CLI's turn for an unreasonably long time.
   permissionTimeoutSec: (v) => isFiniteNumber(v) && v >= 5 && v <= 600,
   wanderIntervalSec: (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number'),
   sleepAfterMin: isFiniteNumber,
