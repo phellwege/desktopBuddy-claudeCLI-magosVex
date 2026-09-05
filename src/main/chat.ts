@@ -33,7 +33,7 @@ export class ChatController implements ChatPort {
   }
   get busy(): boolean { return this.running }
   status(): ChatStatusPayload {
-    return { model: this.settings.model, workspace: this.settings.workspace, session: this.settings.sessionId ?? 'new' }
+    return { model: this.settings.model, workspace: this.settings.workspace, session: this.settings.sessionId ?? 'new', readback: Boolean(this.deps.readback) }
   }
   private settingsChanged(): void {
     this.deps.onSettingsChange?.({ ...this.settings })
@@ -111,13 +111,14 @@ export class ChatController implements ChatPort {
           // an error ("stopped (exit code ...)"), but it must not also post the pack's error
           // line, or a stop would show two lines instead of one.
           if (ev.error && !ev.stopped) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
-          this.deps.out.done({ id, error: ev.error, expression: this.currentExpression })
-          if (!ev.error && reply.trim() && this.deps.readback) void this.readback(id, reply)
+          const willReadback = !ev.error && reply.trim().length > 0 && Boolean(this.deps.readback)
+          this.deps.out.done({ id, error: ev.error, expression: this.currentExpression, readback: willReadback })
+          if (willReadback) void this.readback(id, reply)
         }
       }
     } catch (e) {
       this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${(e as Error).message}`, 'sadness')
-      this.deps.out.done({ id, error: (e as Error).message, expression: this.currentExpression })
+      this.deps.out.done({ id, error: (e as Error).message, expression: this.currentExpression, readback: false })
     } finally {
       this.running = false
     }
@@ -127,8 +128,10 @@ export class ChatController implements ChatPort {
   private async readback(id: number, text: string): Promise<void> {
     let result: ReadbackResult
     try { result = await this.deps.readback!.run(text) } catch (e) { result = { ok: false, reason: (e as Error).message } }
-    if (result.ok) this.deps.out.readback({ id, text: result.text })
-    else this.deps.log?.(`readback failed: ${result.reason}`)
+    if (result.ok) { this.deps.out.readback({ id, text: result.text }); return }
+    this.deps.log?.(`readback failed: ${result.reason}`)
+    // The bubble is waiting on this id; tell it to settle to the plain text now.
+    this.deps.out.readback({ id, failed: true })
   }
 
   // Called by the local server's onPermission callback (bound in main/index.ts) once it has

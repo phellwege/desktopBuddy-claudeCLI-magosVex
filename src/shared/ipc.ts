@@ -31,13 +31,15 @@ export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; ani
 export interface BuddyStatePayload { state: BuddyState; animation: AnimationKey; speed: number }
 export interface ChatDeltaPayload { text: string }
 export interface ChatActivityPayload { id: string; label: string; done: boolean }
-export interface ChatDonePayload { id: number; error?: string; expression?: Expression }
-export interface ChatReadbackPayload { id: number; text: string }
+// readback: true when main will follow this reply with a chat:readback for the same id.
+export interface ChatDonePayload { id: number; error?: string; expression?: Expression; readback?: boolean }
+// text on success; failed when the call failed, timed out, or returned nothing.
+export interface ChatReadbackPayload { id: number; text?: string; failed?: true }
 // A normal card carries toolName/summary/line; a dismiss carries only the id, telling the
 // renderer to hide the card if it is still showing that same request (the server's own
 // permission timeout already answered "deny" on the wire by the time this arrives).
 export interface ChatPermissionPayload { id: string; toolName?: string; summary?: string; line?: string; dismiss?: boolean }
-export interface ChatStatusPayload { model: string | null; workspace: string; session: string; error?: string }
+export interface ChatStatusPayload { model: string | null; workspace: string; session: string; error?: string; readback?: boolean }
 export interface ChatSystemPayload { text: string; expression?: Expression }
 export interface ThemePayload extends PackTheme { name: string }
 export interface OriginPayload { x: number; y: number; xFraction: number }

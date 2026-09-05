@@ -60,7 +60,7 @@ describe('ChatController', () => {
     const out = fakeOut(); const changes: unknown[] = []
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ ...s }) })
     c.prompt('/cd D:\\w'); c.prompt('/model sonnet'); c.prompt('/new')
-    expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\\w', session: 'new' })
+    expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\\w', session: 'new', readback: false })
     expect(changes.length).toBe(3)
     expect(out.statuses.length).toBe(3)
   })
@@ -122,7 +122,7 @@ describe('ChatController', () => {
       actions: fakeActions(), pack, out, settings: settings() })
     c.prompt('hello')
     await new Promise(r => setTimeout(r, 10))
-    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'happy' })
+    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'happy', readback: false })
   })
   it('defaults the done payload expression to neutral when the brain yields none', async () => {
     const out = fakeOut()
@@ -130,7 +130,7 @@ describe('ChatController', () => {
       actions: fakeActions(), pack, out, settings: settings() })
     c.prompt('hello')
     await new Promise(r => setTimeout(r, 10))
-    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'neutral' })
+    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'neutral', readback: false })
   })
   it('reports a brain error with the pack error line', async () => {
     const out = fakeOut()
@@ -210,7 +210,7 @@ describe('ChatController', () => {
     c.prompt('hello')
     c.setExpression('love')
     await new Promise(r => setTimeout(r, 10))
-    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'love' })
+    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'love', readback: false })
   })
   it('every slash command confirms with one system line', async () => {
     const out = fakeOut()
@@ -235,7 +235,8 @@ describe('ChatController readback', () => {
       actions: fakeActions(), pack, out, settings: settings(), readback: rb })
     c.prompt('hi')
     await new Promise(r => setTimeout(r, 20))
-    expect(out.doneArgs.at(-1)).toMatchObject({ id: 1 })
+    expect(out.doneArgs.at(-1)).toMatchObject({ id: 1, readback: true })
+    expect(c.status().readback).toBe(true)
     expect(rb.calls).toEqual(['Hello'])
     expect(out.readbacks).toEqual([{ id: 1, text: 'So it is.' }])
   })
@@ -265,12 +266,12 @@ describe('ChatController readback', () => {
     c.prompt('hi'); await new Promise(r => setTimeout(r, 20))
     expect(out.readbacks).toEqual([])
   })
-  it('logs a failed readback and sends nothing', async () => {
+  it('logs a failed readback and tells the renderer to settle the bubble', async () => {
     const out = fakeOut(); const lines: string[] = []
     const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'done' }]),
       actions: fakeActions(), pack, out, settings: settings(), readback: fakeReadback({ ok: false, reason: 'timeout after 20000 ms' }), log: (l) => lines.push(l) })
     c.prompt('hi'); await new Promise(r => setTimeout(r, 20))
-    expect(out.readbacks).toEqual([])
+    expect(out.readbacks).toEqual([{ id: 1, failed: true }])
     expect(lines).toEqual(['readback failed: timeout after 20000 ms'])
   })
 })
