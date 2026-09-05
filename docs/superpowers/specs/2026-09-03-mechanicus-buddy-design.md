@@ -632,3 +632,12 @@ light lines from the origin to the panel edge in the pack's accent color, ported
 the user's portfolio `ProjectionOverlay.js` (flicker, distance fade, scan pulse,
 interior mask, source-oriented border glow, source glow). Plan:
 `docs/superpowers/plans/2026-09-04-projection-cone.md`.
+
+## 21. Amendment 2026-09-04: the readback is displayed
+
+Decision (Peter): the in-character readback from section 19 becomes the bubble's
+headline, and Claude Code's plain reply folds under an arrow row inside the same bubble.
+The persona still never reaches the main turn. Design:
+`docs/superpowers/specs/2026-09-04-readback-layer-design.md`. A faction picker above the
+panel was designed at the same time and parked:
+`docs/superpowers/notes/2026-09-04-future-faction-strip.md`.
