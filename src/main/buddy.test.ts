@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Buddy } from './buddy'
+import { RUN_SPEED, WALK_SPEED } from '../shared/types'
 
 function seq(values: number[]) {
   let i = 0
@@ -19,13 +20,13 @@ describe('Buddy wander', () => {
     expect(v.state.targetX).toBeCloseTo(0.9)
     expect(v.state.facing).toBe('right')
     expect(v.animation).toBe('run')
-    expect(v.speed).toBe(0.25)
+    expect(v.speed).toBe(RUN_SPEED)
   })
   it('walks when the target is near', () => {
     const b = new Buddy({ rng: seq([0, 0.1]), initialX: 0 })
     b.tick(0); b.tick(8000)
     expect(b.view().state.activity).toBe('walking')
-    expect(b.view().speed).toBe(0.08)
+    expect(b.view().speed).toBe(WALK_SPEED)
   })
   it('rests on arrival then wanders again', () => {
     const b = new Buddy({ rng: seq([0, 0.9, 0.5, 0, 0, 0.2]), initialX: 0 })

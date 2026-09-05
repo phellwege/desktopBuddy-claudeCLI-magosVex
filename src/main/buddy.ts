@@ -1,5 +1,5 @@
-import type { Activity, AnimationKey, BuddyState, EmoteKind, Facing, Mood } from '../shared/types'
-import { RUN_SPEED, WALK_SPEED } from '../shared/types'
+import type { Activity, AnimationKey, BuddyState, EmoteKind, Facing, Mood, PlannedLeg } from '../shared/types'
+import { FLY_SPEED, RUN_SPEED, WALK_SPEED } from '../shared/types'
 
 export interface BuddyOptions {
   rng?: () => number
@@ -8,6 +8,7 @@ export interface BuddyOptions {
   sleepAfterMs?: number
   runThreshold?: number
   initialX?: number
+  initialDisplay?: number
   initialMood?: Mood
 }
 export interface BuddyView { state: BuddyState; animation: AnimationKey; speed: number }
@@ -27,6 +28,13 @@ export class Buddy {
   private readonly runThreshold: number
 
   private x: number
+  private display: number
+  // The remaining legs of a commanded cross-display journey, and the one being played.
+  // Empty for wandering and for same-display moves, which keep using targetX alone.
+  private legs: PlannedLeg[] = []
+  private currentLeg: PlannedLeg | undefined
+  // A seam crossing opens with the one-shot hop before settling into the hover loop.
+  private hopPhase = false
   private facing: Facing = 'right'
   private activity: Activity = 'idle'
   private mood: Mood
@@ -54,6 +62,7 @@ export class Buddy {
     this.sleepAfter = opts.sleepAfterMs ?? 600000
     this.runThreshold = opts.runThreshold ?? 0.25
     this.x = clamp01(opts.initialX ?? 0.5)
+    this.display = opts.initialDisplay ?? 1
     this.mood = opts.initialMood ?? 'calm'
     this.lastViewKey = JSON.stringify(this.view())
   }
@@ -68,8 +77,9 @@ export class Buddy {
   }
 
   getState(): BuddyState {
-    return { x: this.x, facing: this.facing, activity: this.activity, mood: this.mood,
-      panelOpen: this.panelOpen, asleep: this.asleep, targetX: this.targetX }
+    return { x: this.x, display: this.display, facing: this.facing, activity: this.activity,
+      mood: this.mood, panelOpen: this.panelOpen, asleep: this.asleep, targetX: this.targetX,
+      leg: this.currentLeg }
   }
   view(): BuddyView {
     return { state: this.getState(), animation: this.animation(), speed: this.speed() }
@@ -81,6 +91,7 @@ export class Buddy {
       case 'projecting': return this.mood === 'thinking' ? 'emote_thinking' : 'project'
       case 'walking': return 'walk'
       case 'running': return 'run'
+      case 'hovering': return this.hopPhase ? 'hop' : 'hover'
       case 'sitting': return 'sit'
       case 'looking': return 'look'
       case 'hopping': return this.currentEmote
@@ -89,7 +100,12 @@ export class Buddy {
     }
   }
   private speed(): number {
+    if (this.activity === 'hovering') return FLY_SPEED
     return this.activity === 'walking' ? WALK_SPEED : this.activity === 'running' ? RUN_SPEED : 0
+  }
+  // Movement that a queued emote waits behind and that sleep lands out of first.
+  private moving(): boolean {
+    return this.activity === 'walking' || this.activity === 'running' || this.activity === 'hovering'
   }
   private rand(range: [number, number]): number {
     return range[0] + this.rng() * (range[1] - range[0])
@@ -110,12 +126,39 @@ export class Buddy {
     }
   }
   private startMove(target: number, run: boolean, commanded: boolean): void {
+    this.legs = []
+    this.currentLeg = undefined
+    this.hopPhase = false
     this.targetX = clamp01(target)
     this.commanded = commanded
     this.restUntil = undefined
     if (Math.abs(this.targetX - this.x) < 0.001) { this.arrived(); return }
     this.facing = this.targetX > this.x ? 'right' : 'left'
     this.activity = run ? 'running' : 'walking'
+  }
+
+  // Play a planned cross-display journey. The legs carry their own endpoints in virtual
+  // pixels for the renderer, plus the display and fraction he stands at once each one
+  // completes, so this stays free of any display geometry.
+  travel(legs: PlannedLeg[]): void {
+    this.interact()
+    this.queuedEmote = undefined
+    this.restUntil = undefined
+    this.commanded = true
+    this.legs = legs.slice()
+    if (this.legs.length === 0) { this.currentLeg = undefined; this.arrived(); return }
+    this.startLeg()
+    this.emit()
+  }
+  private startLeg(): void {
+    const leg = this.legs[0]!
+    this.currentLeg = leg
+    this.facing = leg.facing
+    // A leg's endpoint is a fraction of the display it ends on, which during a flight is
+    // not the one he is standing on; the renderer follows leg.to instead.
+    this.targetX = undefined
+    if (leg.kind === 'fly') { this.activity = 'hovering'; this.hopPhase = leg.hop }
+    else { this.activity = leg.run ? 'running' : 'walking'; this.hopPhase = false }
   }
 
   tick(now: number): void {
@@ -150,7 +193,18 @@ export class Buddy {
   }
 
   arrived(): void {
-    if (this.targetX !== undefined) this.x = this.targetX
+    // Mid-journey: bank the completed leg and start the next one. Arrival listeners fire
+    // only when the whole journey is done, so a waiting caller is not settled early.
+    if (this.legs.length > 0) {
+      const done = this.legs.shift()!
+      this.display = done.display
+      this.x = done.fraction
+      if (this.legs.length > 0) { this.startLeg(); this.emit(); return }
+      this.currentLeg = undefined
+      this.hopPhase = false
+    } else if (this.targetX !== undefined) {
+      this.x = this.targetX
+    }
     this.targetX = undefined
     const wasCommanded = this.commanded
     this.commanded = false
@@ -189,6 +243,13 @@ export class Buddy {
   }
 
   oneShotDone(): void {
+    // The hop that opens a seam crossing has played; settle into the hover loop for the
+    // rest of the leg.
+    if (this.activity === 'hovering' && this.hopPhase) {
+      this.hopPhase = false
+      this.emit()
+      return
+    }
     if (this.activity === 'hopping' && this.currentEmote === 'hop') {
       this.currentEmote = 'fall'
       this.emit()
@@ -226,7 +287,7 @@ export class Buddy {
       this.setMood('thinking')
       return this.animation() !== before ? 'started' : 'dropped'
     }
-    if (this.activity === 'walking' || this.activity === 'running') { this.queuedEmote = kind; return 'queued' }
+    if (this.moving()) { this.queuedEmote = kind; return 'queued' }
     this.beginEmote(kind)
     this.emit()
     return 'started'
@@ -266,7 +327,7 @@ export class Buddy {
     this.interact()
     this.panelOpen = true
     this.queuedEmote = undefined
-    if (this.activity !== 'walking' && this.activity !== 'running') this.activity = 'projecting'
+    if (!this.moving()) this.activity = 'projecting'
     this.emit()
   }
   closePanel(): void {
@@ -281,7 +342,8 @@ export class Buddy {
   }
   sleep(): void {
     if (this.panelOpen) this.closePanel()
-    if (this.activity === 'walking' || this.activity === 'running') {
+    // Never fall asleep in mid-air or mid-stride: land or arrive first.
+    if (this.moving()) {
       this.pendingSleep = true
       return
     }

@@ -1,17 +1,26 @@
-import type { BuddyState, EmoteKind, Mood } from '../shared/types'
+import type { BuddyState, EmoteKind, Mood, PlannedLeg } from '../shared/types'
 import type { Buddy } from './buddy'
 
-export interface ActionHost { showPanel(): void; hidePanel(): void; pushSystem(text: string): void; log(line: string): void }
+export interface ActionHost {
+  showPanel(): void; hidePanel(): void; pushSystem(text: string): void; log(line: string): void
+  // Width of the current display's walk band, in pixels: speeds are px/s, so converting an
+  // x fraction into a distance needs it. Defaults to a 1920 px display when absent, which
+  // reproduces the timeouts this had before speeds became pixel-based.
+  bandWidth?(): number
+}
+export const DEFAULT_BAND_WIDTH = 1720
 
 // How long a commanded move is given to report arrival before Actions gives up on it and
 // resolves anyway: the time the move should take at its speed, plus a 2 s cushion for
-// the overlay to actually render and report the arrival event.
+// the overlay to actually render and report the arrival event. Distance and speed must
+// share a unit; both are pixels and pixels per second.
 export function arrivalTimeoutMs(distance: number, speed: number): number {
   return Math.ceil((distance / speed) * 1000) + 2000
 }
 
 export interface BuddyActions {
   goTo(xFraction: number, opts?: { run?: boolean }): Promise<void>
+  travel(legs: PlannedLeg[], estimatedMs: number): Promise<void>
   setMood(mood: Mood): void
   emote(kind: EmoteKind): Promise<void>
   say(text: string): void
@@ -35,10 +44,13 @@ export class Actions implements BuddyActions {
   // Resolves on the overlay's arrival event, or after arrivalTimeoutMs if it never comes
   // (the overlay hidden, or a report lost): the wander scheduler must not stay stuck in
   // walking forever, so on timeout this settles the move itself and logs one line.
-  goTo(xFraction: number, opts?: { run?: boolean }): Promise<void> {
+  // Shared journey machinery for goTo and travel: begin() starts the movement and returns
+  // the timeout to allow, or undefined if there was nothing to do. On timeout the journey
+  // is force-completed, draining any remaining legs, so a lost renderer report cannot wedge
+  // him mid-stride or mid-air forever.
+  private journey(begin: () => number | undefined, describe: (ms: number) => string): Promise<void> {
     return new Promise((resolve) => {
       this.pendingMove?.()
-      const startX = this.buddy.getState().x
       let timer: ReturnType<typeof setTimeout> | undefined
       let settled = false
       const settle = (): void => {
@@ -51,17 +63,42 @@ export class Actions implements BuddyActions {
       }
       const off = this.buddy.onArrive(settle)
       this.pendingMove = settle
-      this.buddy.goTo(xFraction, opts?.run)
-      const targetX = this.buddy.getState().targetX
-      if (targetX === undefined) { settle(); return }
-      const distance = Math.abs(targetX - startX)
-      const speed = this.buddy.view().speed
+      const ms = begin()
+      if (ms === undefined) { settle(); return }
       timer = setTimeout(() => {
-        this.host.log(`arrival timeout: goTo(${xFraction}) never reported arrival (distance ${distance.toFixed(3)}, speed ${speed})`)
+        this.host.log(describe(ms))
         settle()
-        this.buddy.arrived()
-      }, arrivalTimeoutMs(distance, speed))
+        if (this.buddy.getState().leg === undefined) { this.buddy.arrived(); return }
+        // Drain the rest of the queue; the guard is paranoia against a leg list that never
+        // empties, which would otherwise spin here forever.
+        for (let i = 0; i < 16 && this.buddy.getState().leg !== undefined; i++) this.buddy.arrived()
+      }, ms)
     })
+  }
+
+  private bandWidth(): number { return this.host.bandWidth?.() ?? DEFAULT_BAND_WIDTH }
+
+  goTo(xFraction: number, opts?: { run?: boolean }): Promise<void> {
+    const startX = this.buddy.getState().x
+    return this.journey(
+      () => {
+        this.buddy.goTo(xFraction, opts?.run)
+        const targetX = this.buddy.getState().targetX
+        if (targetX === undefined) return undefined
+        return arrivalTimeoutMs(Math.abs(targetX - startX) * this.bandWidth(), this.buddy.view().speed)
+      },
+      (ms) => `arrival timeout: goTo(${xFraction}) never reported arrival after ${ms} ms`,
+    )
+  }
+
+  travel(legs: PlannedLeg[], estimatedMs: number): Promise<void> {
+    return this.journey(
+      () => {
+        this.buddy.travel(legs)
+        return legs.length === 0 ? undefined : estimatedMs + 2000
+      },
+      (ms) => `arrival timeout: travel of ${legs.length} legs never reported arrival after ${ms} ms`,
+    )
   }
   setMood(mood: Mood): void { this.buddy.setMood(mood) }
   emote(kind: EmoteKind): Promise<void> {

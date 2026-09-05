@@ -4,6 +4,9 @@
 // on the bottom edge of a display's work area). Virtual coordinates are routinely
 // negative: a monitor placed above or left of the primary has a negative origin.
 import type { Rect } from './geometry'
+import { FLY_SPEED, RUN_SPEED, WALK_SPEED, type Facing, type Leg, type PlannedLeg, type Point } from '../shared/types'
+
+export type { Leg, PlannedLeg, Point }
 
 export interface ScreenLike { id: number; workArea: Rect; primary: boolean }
 export interface DisplayInfo { ord: number; id: number; wa: Rect; primary: boolean }
@@ -72,10 +75,6 @@ export function toFraction(vx: number, wa: Rect, charW: number): number {
   return b.max === b.min ? 0 : clamp01((vx - b.min) / (b.max - b.min))
 }
 
-export type Leg =
-  | { kind: 'walk'; to: { x: number; y: number }; run: boolean }
-  | { kind: 'fly'; to: { x: number; y: number }; hop: boolean }
-
 export interface RouteArgs {
   from: DisplayInfo
   to: DisplayInfo
@@ -135,4 +134,37 @@ export function planRoute(a: RouteArgs): Leg[] {
   legs.push({ kind: 'fly', to: { x: touchVX, y: toFloor }, hop })
   pushWalk(touchVX, clamp(landVX, toBand.min, toBand.max), toFloor, toBand)
   return legs
+}
+
+export function legSpeed(leg: Leg): number {
+  if (leg.kind === 'fly') return FLY_SPEED
+  return leg.run ? RUN_SPEED : WALK_SPEED
+}
+
+// Annotates each leg with where he stands once it completes, so the state machine can play
+// the queue without knowing any display geometry. Everything from the fly leg onward is on
+// the target display; the walk before it is still on the source.
+export function planTravel(a: RouteArgs): PlannedLeg[] {
+  const legs = planRoute(a)
+  const flyIndex = legs.findIndex(l => l.kind === 'fly')
+  let prevX = a.startVX
+  return legs.map((leg, i) => {
+    const onTarget = flyIndex >= 0 && i >= flyIndex
+    const d = onTarget ? a.to : a.from
+    const facing: Facing = leg.to.x === prevX ? (a.to.wa.x >= a.from.wa.x ? 'right' : 'left')
+      : leg.to.x > prevX ? 'right' : 'left'
+    prevX = leg.to.x
+    return { ...leg, display: d.ord, fraction: toFraction(leg.to.x, d.wa, a.charW), facing }
+  })
+}
+
+// Rough wall-clock cost of a journey, used only to size the arrival timeout that stops a
+// lost renderer report from wedging him mid-flight forever.
+export function routeDurationMs(legs: PlannedLeg[], start: Point): number {
+  let at = start, total = 0
+  for (const leg of legs) {
+    total += Math.hypot(leg.to.x - at.x, leg.to.y - at.y) / legSpeed(leg) * 1000
+    at = leg.to
+  }
+  return Math.ceil(total)
 }
