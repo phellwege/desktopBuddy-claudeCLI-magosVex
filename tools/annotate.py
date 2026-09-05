@@ -122,6 +122,30 @@ class App:
         self.labels[self.labels == label] = 0
         self.labels[mask] = label
 
+    # -- manual rectangles ---------------------------------------------------------
+
+    def apply_rect(self, name: str, rect: list[float], add: bool) -> None:
+        """Paint (add) or clear (remove) an axis-aligned sheet-space rectangle in this
+        frame's mask. Adds only cover opaque pixels, so the background never joins."""
+        h, w = self.alpha.shape
+        x0, y0 = max(0, int(rect[0])), max(0, int(rect[1]))
+        x1, y1 = min(w, int(rect[2])), min(h, int(rect[3]))
+        if x1 <= x0 or y1 <= y0:
+            return
+        mask = self.frame_mask(name).copy()
+        if add:
+            mask[y0:y1, x0:x1] |= self.alpha[y0:y1, x0:x1] > 0
+        else:
+            mask[y0:y1, x0:x1] = False
+        self.set_frame_mask(name, mask)
+        self.data["frames"][name]["approved"] = False
+
+    def reapply_rects(self, name: str) -> None:
+        """SAM overwrites the mask on every re-segment; the user's rectangles are
+        replayed on top so they survive."""
+        for r in self.data["frames"][name].get("rects", []):
+            self.apply_rect(name, r["rect"], r["op"] == "add")
+
     def approved_count(self) -> int:
         return sum(1 for f in self.data["frames"].values() if f.get("approved"))
 
@@ -206,6 +230,7 @@ class App:
         full_mask = np.zeros(self.alpha.shape, dtype=bool)
         full_mask[cy0:cy1, cx0:cx1] = crop_mask & (self.alpha[cy0:cy1, cx0:cx1] > 0)
         self.set_frame_mask(name, full_mask)
+        self.reapply_rects(name)
         meta["approved"] = False
 
     def reset_to_auto(self, name: str) -> None:
@@ -224,10 +249,14 @@ class App:
         meta = self.data["frames"][name]
         meta["box"] = [float(v) for v in result["boxes"][i]]
         meta["points"] = [[float(px), float(py), 1]]
+        meta["rects"] = []
         meta["approved"] = False
 
 
 APP: App | None = None
+# First corner of a rectangle in progress, per frame name (sheet coordinates).
+PENDING_CORNER: dict[str, tuple[float, float]] = {}
+RECT_COLOR = (255, 200, 0)
 
 
 # -- rendering -----------------------------------------------------------------------
@@ -270,6 +299,13 @@ def render_band_crop(app: App, name: str) -> np.ndarray:
         x0, x1 = max(0, dx - 1), min(out.shape[1], dx + 2)
         y0, y1 = max(0, dy - 1), min(out.shape[0], dy + 2)
         out[y0:y1, x0:x1] = ORIGIN_COLOR
+    corner = PENDING_CORNER.get(name)
+    if corner is not None:
+        dx = int(round((corner[0] - cx0) * UPSCALE))
+        dy = int(round((corner[1] - cy0) * UPSCALE))
+        x0, x1 = max(0, dx - r - 1), min(out.shape[1], dx + r + 2)
+        y0, y1 = max(0, dy - r - 1), min(out.shape[0], dy + r + 2)
+        out[y0:y1, x0:x1] = RECT_COLOR
     return out
 
 
@@ -322,7 +358,18 @@ def on_image_click(name: str, click_type: str, evt: gr.SelectData):
     dx, dy = evt.index
     sx = cx0 + dx / UPSCALE
     sy = cy0 + dy / UPSCALE
-    if click_type == "origin":
+    if click_type in ("add rect", "remove rect"):
+        first = PENDING_CORNER.get(name)
+        if first is None:
+            PENDING_CORNER[name] = (float(sx), float(sy))
+        else:
+            PENDING_CORNER.pop(name, None)
+            rect = [round(min(first[0], sx)), round(min(first[1], sy)),
+                    round(max(first[0], sx)) + 1, round(max(first[1], sy)) + 1]
+            op = "add" if click_type == "add rect" else "remove"
+            app.data["frames"][name].setdefault("rects", []).append({"op": op, "rect": [float(v) for v in rect]})
+            app.apply_rect(name, rect, op == "add")
+    elif click_type == "origin":
         app.data["frames"][name]["origin"] = [round(float(sx), 1), round(float(sy), 1)]
     else:
         label = 1 if click_type == "positive" else 0
@@ -333,6 +380,19 @@ def on_image_click(name: str, click_type: str, evt: gr.SelectData):
 def on_resegment(name: str, use_box: bool = True):
     app = APP
     app.resegment(name, use_box=bool(use_box))
+    return (render_band_crop(app, name), points_table(app, name), approved_text(app, name),
+            status_text(app), render_full_sheet(app))
+
+
+def on_undo_rect(name: str):
+    app = APP
+    PENDING_CORNER.pop(name, None)
+    rects = app.data["frames"][name].get("rects", [])
+    if rects:
+        rects.pop()
+        # The mask has no memory of the state before that rectangle: rebuild it from
+        # SAM with the remaining rectangles replayed on top.
+        app.resegment(name, use_box=True)
     return (render_band_crop(app, name), points_table(app, name), approved_text(app, name),
             status_text(app), render_full_sheet(app))
 
@@ -380,13 +440,14 @@ def build_ui(app: App) -> gr.Blocks:
                 band_image = gr.Image(type="numpy", interactive=False,
                                        label="Band crop - click to add a point")
             with gr.Column(scale=1):
-                click_type = gr.Radio(["positive", "negative", "origin"], value="positive", label="Click type")
+                click_type = gr.Radio(["positive", "negative", "origin", "add rect", "remove rect"], value="positive", label="Click type (rect: click two opposite corners)")
                 use_box = gr.Checkbox(value=True, label="Use box prompt (box grows to your positive points; uncheck to segment from points only)")
                 points_df = gr.Dataframe(headers=["x", "y", "type"], interactive=False, label="Points")
                 approved_md = gr.Markdown()
                 status_md = gr.Markdown()
                 resegment_btn = gr.Button("Re-segment")
                 clear_btn = gr.Button("Clear points")
+                undo_rect_btn = gr.Button("Undo last rect")
                 reset_btn = gr.Button("Reset to auto")
                 accept_btn = gr.Button("Accept")
                 save_btn = gr.Button("Save", variant="primary")
@@ -402,6 +463,7 @@ def build_ui(app: App) -> gr.Blocks:
         resegment_btn.click(on_resegment, inputs=[frame_dd, use_box],
                              outputs=[band_image, points_df, approved_md, status_md, sheet_image])
         clear_btn.click(on_clear_points, inputs=frame_dd, outputs=[band_image, points_df])
+        undo_rect_btn.click(on_undo_rect, inputs=frame_dd, outputs=[band_image, points_df, approved_md, status_md, sheet_image])
         reset_btn.click(on_reset_auto, inputs=frame_dd,
                          outputs=[band_image, points_df, approved_md, status_md, sheet_image])
         accept_btn.click(on_accept, inputs=frame_dd, outputs=[approved_md, status_md, sheet_image])
