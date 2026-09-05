@@ -80,7 +80,9 @@ export class ChatController implements ChatPort {
         this.deps.out.system('new session')
         break
       case 'cd':
-        this.settings.workspace = cmd.path; this.settingsChanged()
+        // A session belongs to the directory it started in, so a new workspace means a new
+        // session; that also clears the session allow-list in main.
+        this.settings.sessionId = null; this.settings.workspace = cmd.path; this.settingsChanged()
         this.deps.out.system(`workspace: ${cmd.path}`)
         break
       case 'model':

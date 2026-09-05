@@ -236,6 +236,17 @@ describe('ChatController', () => {
   })
 })
 
+describe('ChatController /cd', () => {
+  it('starts a new session when the workspace changes, so session allows are dropped', async () => {
+    const out = fakeOut(); const changes: { workspace: string; sessionId: string | null }[] = []
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out,
+      settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ workspace: s.workspace, sessionId: s.sessionId }) })
+    await c.prompt('/cd D:\other')
+    expect(changes.at(-1)).toEqual({ workspace: 'D:\other', sessionId: null })
+    expect(out.systems.at(-1)).toBe('workspace: D:\other')
+  })
+})
+
 describe('ChatController readback', () => {
   it('numbers replies and fires one readback with the joined reply text after a clean done', async () => {
     const out = fakeOut(); const rb = fakeReadback({ ok: true, text: 'So it is.' })
