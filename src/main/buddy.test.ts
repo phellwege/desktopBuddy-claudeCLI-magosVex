@@ -469,6 +469,9 @@ describe('Buddy travel', () => {
     expect(b.getState().leg).toMatchObject({ kind: 'fly', hop: false })
     b.arrived()
     expect(b.getState().display).toBe(3)
+    expect(b.view().state.activity).toBe('hopping')   // the landing frames first
+    expect(b.view().animation).toBe('fall')
+    b.oneShotDone()
     expect(b.getState().activity).toBe('idle')
   })
 
@@ -499,5 +502,25 @@ describe('Buddy travel', () => {
     expect(b.getState().leg).toBeUndefined()
     b.arrived()
     expect(b.getState().display).toBe(3)
+  })
+})
+
+describe('landing', () => {
+  it('a flight ends with the fall frames, then idle', () => {
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    b.travel([{ kind: 'fly', to: { x: 500, y: 1000 }, hop: false, display: 2, fraction: 0.5, facing: 'right' }])
+    expect(b.view().state.activity).toBe('hovering')
+    b.arrived()
+    expect(b.view().state.activity).toBe('hopping')
+    expect(b.view().animation).toBe('fall')
+    b.oneShotDone()
+    expect(b.view().state.activity).toBe('idle')
+    expect(b.getState().display).toBe(2)
+  })
+  it('a walk leg still ends in idle without a landing', () => {
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    b.travel([{ kind: 'walk', to: { x: 500, y: 1000 }, run: false, display: 1, fraction: 0.5, facing: 'right' }])
+    b.arrived()
+    expect(b.view().state.activity).toBe('idle')
   })
 })

@@ -223,6 +223,7 @@ export class Buddy {
   arrived(): void {
     // Mid-journey: bank the completed leg and start the next one. Arrival listeners fire
     // only when the whole journey is done, so a waiting caller is not settled early.
+    let landed = false
     if (this.legs.length > 0) {
       const done = this.legs.shift()!
       this.display = done.display
@@ -230,6 +231,9 @@ export class Buddy {
       if (this.legs.length > 0) { this.startLeg(); this.emit(); return }
       this.currentLeg = undefined
       this.hopPhase = false
+      // Touching down from a flight (a journey's last leg, or a drop) gets the landing
+      // frames before he stands, instead of snapping from the hover loop to idle.
+      landed = done.kind === 'fly'
     } else if (this.targetX !== undefined) {
       this.x = this.targetX
     }
@@ -254,6 +258,10 @@ export class Buddy {
       this.activity = 'idle'
       this.resumeActivity = 'idle'
       this.beginEmote(kind)
+    } else if (landed) {
+      this.activity = 'hopping'
+      this.currentEmote = 'fall'
+      this.resumeActivity = 'idle'
     } else if (wasCommanded) {
       this.activity = 'idle'
       this.applyThinkingIfRestful()
