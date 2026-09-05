@@ -92,7 +92,9 @@ window.buddy.onOverlayStage((p: StagePayload) => {
   stage = p
   // Re-anchor a resting character onto the new stage; one mid-flight keeps its virtual
   // position untouched, which is the whole point of absolute coordinates.
-  if (lastState && !lastState.state.leg && lastState.state.targetX === undefined) {
+  // A body being carried is not resting either: re-anchoring it would snap him to the
+  // floor the instant the stage grows for the drag.
+  if (lastState && !lastState.state.leg && lastState.state.targetX === undefined && !lastState.state.dragging) {
     const at = restingPoint(lastState.state.x)
     motion.place(at.x, at.y)
   }
