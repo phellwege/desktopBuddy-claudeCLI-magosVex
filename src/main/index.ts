@@ -84,7 +84,14 @@ async function main(): Promise<void> {
 
   const overlay = createOverlayWindow(current.wa, charH)
   appendLog(logDir, 'main', `pack ${packDir}: ${Object.keys(pack.atlas.frames).length} frames, scale ${scale}, character ${Math.round(charW)}x${Math.round(charH)}, overlay ${JSON.stringify(overlay.getBounds())}`)
-  const hologram = createHologramWindow(() => { if (buddy.getState().panelOpen) actions.closePanel() })
+  // True from the first leg of a journey until the last one lands. Load-bearing for the
+  // blur handler below: the panel is hidden for the trip, and hiding a focused window
+  // blurs it, which would otherwise close the very panel we mean to restore on the far
+  // display (and discard a turn that is still streaming into it).
+  let journeying = false
+  const hologram = createHologramWindow(() => {
+    if (!journeying && buddy.getState().panelOpen) actions.closePanel()
+  })
 
   for (const [name, win] of [['overlay', overlay], ['hologram', hologram]] as const) {
     win.webContents.on('console-message', (_e, level, message, line, source) => {
@@ -166,6 +173,7 @@ async function main(): Promise<void> {
     beginFlight: (legs) => {
       const targetOrd = legs[legs.length - 1]?.display ?? current.ord
       const to = byOrd(displays, targetOrd) ?? current
+      journeying = true
       expandForFlight(overlay, current.wa, to.wa)
       sendStage()
       if (buddy.getState().panelOpen) hologram.hide()
@@ -317,8 +325,6 @@ async function main(): Promise<void> {
   void tray
   app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
 
-  // True from the first leg of a journey until the last one lands.
-  let journeying = false
   buddy.onChange((v) => {
     if (overlay.isDestroyed()) return
     const inJourney = v.state.leg !== undefined
@@ -329,7 +335,13 @@ async function main(): Promise<void> {
       current = byOrd(displays, v.state.display) ?? current
       rebound(overlay, current.wa, charH)
       sendStage()
-      if (v.state.panelOpen) { placeHologram(); hologram.show() }
+      if (v.state.panelOpen) {
+        // Same reset as a fresh open: a window that was hidden with the pointer over it
+        // would otherwise come back still fully interactive and swallow clicks.
+        setHologramInteractive(hologram, false)
+        placeHologram()
+        hologram.show()
+      }
     } else if (inJourney) {
       journeying = true
     }

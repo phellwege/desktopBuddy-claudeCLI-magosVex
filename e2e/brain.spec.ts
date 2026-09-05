@@ -1,5 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { join } from 'node:path'
+import { cleanEnv } from './env'
 
 // ClaudeCliBrain spawns config.cliPath directly (no shell), and on Windows that can only be
 // a real executable: the app under test runs node.exe with the fake CLI script placed in
@@ -18,14 +19,13 @@ let app: ElectronApplication | undefined
 async function launch(scenario: string, extraEnv: Record<string, string> = {}): Promise<{ app: ElectronApplication; hologram: Page }> {
   app = await electron.launch({
     args: ['.'],
-    env: {
-      ...process.env,
+    env: cleanEnv({
       BUDDY_TEST: '1',
       BUDDY_CLI_PATH: process.execPath,
       BUDDY_CLI_ARGS: JSON.stringify([fakeCliScript]),
       FAKE_CLAUDE_SCENARIO: scenario,
       ...extraEnv,
-    },
+    }),
   })
   const hologram = await windowByUrl(app, 'hologram')
   // The atlas image (used for faces) loads asynchronously over the pack:// protocol after

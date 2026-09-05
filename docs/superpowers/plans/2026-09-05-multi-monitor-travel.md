@@ -155,9 +155,9 @@ export class Motion {
 }
 ```
 
-- [ ] Port `motion.test.ts` to the 2D form: existing horizontal cases with `vy` held constant must keep passing unchanged in behavior.
-- [ ] Add a diagonal case: arrival happens once, at the endpoint, with no overshoot.
-- [ ] Add a case where `dtMs` overshoots the remaining distance: it clamps to the target rather than passing it.
+- [x] Port `motion.test.ts` to the 2D form: existing horizontal cases with `vy` held constant must keep passing unchanged in behavior.
+- [x] Add a diagonal case: arrival happens once, at the endpoint, with no overshoot.
+- [x] Add a case where `dtMs` overshoots the remaining distance: it clamps to the target rather than passing it.
 
 ### Task 3: Buddy gains a display and a leg queue
 
@@ -181,14 +181,14 @@ export interface BuddyState {
 
 `Buddy` keeps `private legs: Leg[]` and a `travelTo(displayOrd, x, run?)` that stores the planned route and starts leg 0. `arrived()` pops the next leg if one remains, and only runs its existing tail logic (rest pick, queued emote, pending sleep, panel reprojection) when the queue empties. The display ordinal flips to the target at the moment the `fly` leg's arrival is reported, which is exactly when he touches the target floor.
 
-- [ ] `travelTo` to the current display is behaviorally identical to `goTo` (same emissions, same tail logic).
-- [ ] A three-leg route reports `walking` → `hovering` → `walking` → `idle` and emits `display` changing exactly once, on the fly leg's arrival.
-- [ ] `animation()` returns `hover` while `hovering`, and `hop` for a `hop: true` leg's opening frames before switching to `hover`.
-- [ ] `openPanel()` does not force `projecting` while `hovering` (today it excludes only walking and running).
-- [ ] `sleep()` mid-flight sets `pendingSleep` and lands first, same as it does mid-walk.
-- [ ] `emote()` mid-flight queues rather than interrupting, same as mid-walk.
-- [ ] Wander never sets a `display` different from the current one.
-- [ ] A new `travelTo` mid-flight supersedes the old route and drops its remaining legs.
+- [x] `travelTo` to the current display is behaviorally identical to `goTo` (same emissions, same tail logic).
+- [x] A three-leg route reports `walking` → `hovering` → `walking` → `idle` and emits `display` changing exactly once, on the fly leg's arrival.
+- [x] `animation()` returns `hover` while `hovering`, and `hop` for a `hop: true` leg's opening frames before switching to `hover`.
+- [x] `openPanel()` does not force `projecting` while `hovering` (today it excludes only walking and running).
+- [x] `sleep()` mid-flight sets `pendingSleep` and lands first, same as it does mid-walk.
+- [x] `emote()` mid-flight queues rather than interrupting, same as mid-walk.
+- [x] Wander never sets a `display` different from the current one.
+- [x] A new `travelTo` mid-flight supersedes the old route and drops its remaining legs.
 
 ### Task 4: The overlay window follows and expands
 
@@ -205,9 +205,9 @@ export function travelBounds(from: Rect, to: Rect): Rect
 
 `rebound(overlay, wa, charH)` takes the work area instead of reading the primary. Two new helpers set the window to the travel rect and back to the target display's strip. No ack handshake is needed: the character is positioned in absolute virtual coordinates, so a window resize landing a frame late shifts nothing on screen.
 
-- [ ] `unionRect` is correct with negative origins (the `DISPLAY3` + `DISPLAY1` union is `(-575, -1440) 4415x2520`).
-- [ ] `travelBounds` of a display with itself is that display's own rect plus margin.
-- [ ] `overlayBounds` and `hologramBounds` are unchanged in behavior when handed the primary's work area (regression guard: the existing tests must pass untouched).
+- [x] `unionRect` is correct with negative origins (the `DISPLAY3` + `DISPLAY1` union is `(-575, -1440) 4415x2520`).
+- [x] `travelBounds` of a display with itself is that display's own rect plus margin.
+- [x] `overlayBounds` and `hologramBounds` are unchanged in behavior when handed the primary's work area (regression guard: the existing tests must pass untouched).
 
 ### Task 5: The renderer draws at an absolute virtual position
 
@@ -225,8 +225,8 @@ const place = () => {
 
 The 4px baseline inset inside the canvas is unchanged, so at rest on the primary the drawn result is pixel-identical to today. `apply()` sets the motion target from `state.leg` when present, otherwise from the resting fraction as it does now. Facing during a fly leg follows the sign of the leg's dx.
 
-- [ ] With a single display and no leg, the rendered position matches the pre-change behavior for fractions 0, 0.5, and 1 (assert against the computed transform, not a screenshot).
-- [ ] The `origin` report for the hologram cone keeps working: it already converts to screen coordinates via `window.screenX/screenY`, which stays correct in the expanded window.
+- [x] With a single display and no leg, the rendered position matches the pre-change behavior for fractions 0, 0.5, and 1 (assert against the computed transform, not a screenshot).
+- [x] The `origin` report for the hologram cone keeps working: it already converts to screen coordinates via `window.screenX/screenY`, which stays correct in the expanded window.
 
 ### Task 6: Command, tool, and prompt surfaces
 
@@ -238,12 +238,12 @@ The 4px baseline inset inside the canvas is unchanged, so at rest on the primary
 - `get_state` returns the roster so the model can choose sensibly: each entry with ordinal, pixel size, whether it is primary, and whether he is currently on it.
 - `prompt.ts` tools note: `go_to` moves the body to a percentage across the current screen, or to another display with `display`.
 
-- [ ] `/goto 1:50` parses to `{ kind: 'goto', display: 1, x: 0.5, run: false }`.
-- [ ] `/goto 50` parses with `display: undefined` (current display), byte-identical to today's result shape otherwise.
-- [ ] `/goto 0:50` and `/goto abc:50` are usage errors.
-- [ ] `/goto 9:50` on a three-screen roster reports `no display 9 (1-3 attached)` and moves nothing.
-- [ ] The `go_to` tool with `display` calls through to `actions.goTo` with the ordinal; without it, the existing single-argument test still passes.
-- [ ] `get_state` includes the roster and marks the current display.
+- [x] `/goto 1:50` parses to `{ kind: 'goto', display: 1, x: 0.5, run: false }`.
+- [x] `/goto 50` parses with `display: undefined` (current display), byte-identical to today's result shape otherwise.
+- [x] `/goto 0:50` and `/goto abc:50` are usage errors.
+- [x] `/goto 9:50` on a three-screen roster reports `no display 9 (1-3 attached)` and moves nothing.
+- [x] The `go_to` tool with `display` calls through to `actions.goTo` with the ordinal; without it, the existing single-argument test still passes.
+- [x] `get_state` includes the roster and marks the current display.
 
 ### Task 7: Wiring, the hologram, and display changes
 
@@ -254,8 +254,8 @@ The 4px baseline inset inside the canvas is unchanged, so at rest on the primary
 - `display-metrics-changed`: re-derive the roster. If the current display is gone, abort any flight, snap him to the primary's floor, re-bound both windows. If it still exists, re-bound in place as today.
 - `animations.json` gains `hover` over the existing `hover_0..3` frames (loop, `mirrorLeft`, fps 8). No new art: the atlas already carries them, unused.
 
-- [ ] `pack.mechanicus.test.ts` asserts the `hover` entry resolves to four real atlas frames.
-- [ ] Unplugging the current display is covered by a unit test over the recovery helper, not by an Electron test.
+- [x] `pack.mechanicus.test.ts` asserts the `hover` entry resolves to four real atlas frames.
+- [x] Unplugging the current display is covered by a unit test over the recovery helper, not by an Electron test.
 
 ### Task 8: Verification
 
@@ -263,12 +263,31 @@ The 4px baseline inset inside the canvas is unchanged, so at rest on the primary
 
 Playwright cannot fake a second display, so automated e2e covers only what a single screen can prove; the real verification is manual on the three-screen rig and must be done before the branch is called done.
 
-- [ ] e2e: `/goto 1:50` on a single-display machine behaves exactly like `/goto 50`.
-- [ ] e2e: `/goto 2:50` on a single-display machine shows the `no display 2` error and he does not move.
-- [ ] e2e: the existing overlay and hologram specs pass unchanged.
+- [x] e2e: `/goto 1:50` on a single-display machine behaves exactly like `/goto 50`.
+- [x] e2e: `/goto 2:50` on a single-display machine shows the `no display 2` error and he does not move.
+- [x] e2e: the existing overlay and hologram specs pass unchanged.
 - [ ] **Manual, on the three-screen rig, with Peter present:** `/goto 3:50` from the primary (beside, hop across the x=1920 seam); `/goto 1:50` from the primary (above, straight rise onto the ultrawide); `/goto 1:0` from display 3 (above and a long trailing walk into the ultrawide's left overhang); `/goto 2:50` from display 1 (below, descent); a `go_to` issued by the brain mid-reply with the panel open, confirming the panel hides, follows, and re-shows with its text intact.
 
 ---
+
+## Findings during implementation
+
+Three things the plan did not anticipate, all fixed:
+
+1. **Hiding the panel closed it.** `hologram.hide()` blurs the window, and the blur handler's
+   job is to close the panel on a click-away. So the panel hidden for the trip closed itself
+   and never came back, which is exactly the streaming-turn loss the deviation above exists to
+   prevent. Main now tracks `journeying` and the blur handler stands down for the duration.
+2. **The e2e suite was testing the dev server, not the build.** `ELECTRON_RENDERER_URL` is set
+   in anything spawned by a running `npm run dev`, and the buddy's brain is spawned by exactly
+   that, so a test run started from inside the app loaded renderers from whichever checkout the
+   dev server was serving. Every spec silently exercised the main tree instead of its own build.
+   `e2e/env.ts` strips the variable; `body.spec.ts` and `brain.spec.ts` were affected too and
+   now pass against a real build for the first time.
+3. **`ipcMain.emit` is dropped silently before `wireIpc` runs.** A synthetic `overlay:click`
+   sent too early does nothing, and because a hidden `BrowserWindow` still has a live, fillable
+   DOM, a test could type into a panel that was never open and notice nothing. The travel spec
+   waits for the pack handshake and asserts `panelOpen` rather than inferring it.
 
 ## Out of scope
 
