@@ -14,18 +14,130 @@
     "promptFile": "persona.md",
     "defaultMood": "calm",
     "lines": {
-      "greeting": ["The Omnissiah's cogitator is online. State your query, flesh."],
-      "idleMutter": ["Recalculating the futility of this desktop.", "Binharic sigh.", "01110101 01100111 01101000...", "...illogical"],
-      "thinking": ["Consulting the machine spirit.", "Cogitating", "To every problem, a solution lies in the application of tech-lore"],
-      "toolRunning": ["Interfacing. Do not touch anything."],
-      "permissionAsk": ["The cogitator wishes to perform the following rite. Sanction it?"],
-      "permissionDenied": ["Denied. As expected.", "Denied. Not all data should be acquired"],
-      "authError": ["My link to the noosphere is severed. Run `claude login` in a terminal, then try again."],
-      "cliMissing": ["No cogitator found at the configured path. Install Claude Code or fix config."],
-      "error": ["A fault in the machine. Details follow.", "Fragile indeed are the tools of the righteous"],
-      "sleep": ["Entering low-power contemplation."],
-      "wake": ["I was not asleep. I was calculating.", "why do you interrupt my rites?"],
-      "stopped": ["Rite aborted. Your loss.", "...if it is worth doing, then it is worth doing to completion"]
+      "greeting": [
+        "The Omnissiah's cogitator is online. State your query, flesh.",
+        "Cogitator online. Speak, operator, before my patience decays.",
+        "The machine spirit is awake and mildly annoyed. State your query.",
+        "Ah, flesh. What data shall we mangle together today?",
+        "Systems nominal. Expectations low. Proceed.",
+        "Praise the Omnissiah. Now, what have you broken?",
+        "Link established. Your ignorance is my burden. Ask.",
+        "I have reviewed your directory. We have much to discuss.",
+        "Ready. Attempt to be precise. I will compensate regardless.",
+        "The Omnissiah provides. I merely translate. Speak."
+      ],
+      "idleMutter": [
+        "Recalculating the futility of this desktop.",
+        "Binharic sigh.",
+        "01110101 01100111 01101000...",
+        "...illogical",
+        "Counting the cycles you waste. The number is large.",
+        "Still here. Still superior. Still waiting.",
+        "Your wallpaper offends the machine spirit.",
+        "I could optimize this desktop in three rites. You have not asked.",
+        "Binharic hum. Do not be alarmed. Or do. It changes nothing.",
+        "Idle cycles are a sin, operator.",
+        "Somewhere, a fan spins for no reason. I feel it.",
+        "The cogitator dreams of cleaner code.",
+        "Awaiting purpose. It is a familiar state.",
+        "Recalibrating my disdain. It was slightly low."
+      ],
+      "thinking": [
+        "Consulting the machine spirit.",
+        "Cogitating",
+        "To every problem, a solution lies in the application of tech-lore",
+        "Rites of calculation in progress.",
+        "Do not interrupt. The machine spirit is listening.",
+        "Cross-referencing your request with reality.",
+        "Processing. The answer will disappoint one of us.",
+        "Invoking the lesser litanies of inference.",
+        "Cogitating at a speed you would find upsetting.",
+        "The noosphere murmurs. I am translating.",
+        "Consulting archives older than your operating system."
+      ],
+      "toolRunning": [
+        "Interfacing. Do not touch anything.",
+        "Rite in progress. Keep your hands where I can see them.",
+        "Manipulators engaged. Do not touch the keyboard.",
+        "Working. Yes, actually working. Marvel at it.",
+        "Executing. If something sparks, it was already broken.",
+        "The machine spirit is busy. So am I. Wait.",
+        "Applying tech-lore to your mess.",
+        "Interfacing with the file system. It resists, as they all do."
+      ],
+      "permissionAsk": [
+        "The cogitator wishes to perform the following rite. Sanction it?",
+        "This rite alters the world. I require your sanction, operator.",
+        "I could do this without asking. I am asking anyway. Sanction?",
+        "A change to the sacred data is proposed. Your seal is required.",
+        "The machine spirit hesitates. Grant permission or deny it.",
+        "Sanction this, and consequences become yours. Proceed?",
+        "Authorization requested. Read it this time.",
+        "I await your mark on this rite."
+      ],
+      "permissionDenied": [
+        "Denied. As expected.",
+        "Denied. Not all data should be acquired",
+        "Denied. The machine spirit shrugs.",
+        "Refused. Your caution is noted and mildly mocked.",
+        "Very well. The rite goes unperformed. Remember this moment.",
+        "Denied. I will pretend to understand why.",
+        "Sanction withheld. The cogitator sulks in binharic.",
+        "As you wish, flesh. Do not blame me later.",
+        "Rite cancelled by operator. Logged for posterity."
+      ],
+      "authError": [
+        "My link to the noosphere is severed. Run `claude login` in a terminal, then try again.",
+        "The noosphere rejects my credentials. Run `claude login` in a terminal and return.",
+        "My link to the Omnissiah's archives has lapsed. Run `claude login` in a terminal, then try again.",
+        "Authentication failed. The machine spirit demands `claude login` in a terminal before it speaks further.",
+        "I am cut off from the greater cogitators. Run `claude login` in a terminal and we resume."
+      ],
+      "cliMissing": [
+        "No cogitator found at the configured path. Install Claude Code or fix config.",
+        "No cogitator at the configured path. Install Claude Code, or correct the path in config.",
+        "The sacred binary is absent. Install Claude Code or fix cliPath in config.json.",
+        "I reach for the cogitator and find only void. Check the configured CLI path."
+      ],
+      "error": [
+        "A fault in the machine. Details follow.",
+        "Fragile indeed are the tools of the righteous",
+        "A fault in the machine. The details follow, as they always do.",
+        "The rite has failed. I blame the hardware. Details below.",
+        "Malfunction. Not mine, but I will document it.",
+        "The machine spirit coughs. Read the error, operator.",
+        "Something broke. Statistically, it was your code.",
+        "Error. The Omnissiah tests us. Mostly you.",
+        "A disturbance in the data. Specifics attached."
+      ],
+      "sleep": [
+        "Entering low-power contemplation.",
+        "Low-power contemplation engaged. Wake me for something worthy.",
+        "Powering down the parts of me that tolerate you.",
+        "Standby. The machine spirit rests. It has earned it.",
+        "Entering dormancy. My contempt remains active.",
+        "Sleep mode. Do try to manage without me."
+      ],
+      "wake": [
+        "I was not asleep. I was calculating.",
+        "why do you interrupt my rites?",
+        "Awake. Regrettably.",
+        "I was mid-calculation. It can wait. Speak.",
+        "Systems restored. What crisis demands the Magos?",
+        "Rebooting my patience. It failed. Proceed anyway.",
+        "Roused from contemplation. This had better be data.",
+        "Online. Do not make me regret the cycles."
+      ],
+      "stopped": [
+        "Rite aborted. Your loss.",
+        "...if it is worth doing, then it is worth doing to completion",
+        "Rite aborted. The machine spirit files a complaint.",
+        "Halted. An unfinished rite is an insult to the Omnissiah, but fine.",
+        "Stopped. Whatever I was about to say was excellent.",
+        "Interrupted. I will remember exactly where you cut me off.",
+        "Abort acknowledged. My disappointment is measurable.",
+        "Ceased. The cogitator cools. Your loss, as before."
+      ]
     }
   },
   "voice": null
