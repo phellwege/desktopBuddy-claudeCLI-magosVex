@@ -7,7 +7,7 @@
   "hop":            { "frames": ["jump_0", "jump_1"], "fps": 6 },
   "fall":           { "frames": ["jump_2", "jump_3"], "fps": 6 },
   "sit":            { "frames": ["sit_0", "sit_1", "sit_2", "sit_3"], "fps": 2 },
-  "sleep":          { "frames": ["rest_0", "rest_1", "rest_2", "rest_3"], "fps": 2 },
+  "sleep":          { "frames": ["rest_0", "rest_1", "rest_2", "rest_3"], "fps": 1.5 },
   "look":           { "frames": ["interact_0", "interact_1"], "fps": 3 },
   "project":        { "frames": ["usetech_0", "usetech_1", "usetech_2", "usetech_3"], "fps": 2 },
   "emote_happy":    { "frames": ["celebrate_0", "celebrate_1"], "fps": 5, "repeat": 4 },
