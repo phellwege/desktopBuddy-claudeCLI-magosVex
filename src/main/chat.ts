@@ -123,8 +123,10 @@ export class ChatController implements ChatPort {
           else if (ev.type === 'status') this.deps.out.system(ev.text, ev.expression)
           else if (ev.type === 'expression') this.currentExpression = ev.name
           else if (ev.type === 'done') {
-            if (ev.sessionId && serial === this.turnSerial) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
-            if (!retried && sessionAtStart && ev.error && /no conversation found/i.test(ev.error)) {
+            const staleResume = !retried && sessionAtStart && Boolean(ev.error) && /no conversation found/i.test(ev.error ?? '')
+            // A rejected resume must not re-save the dead id on its way out.
+            if (ev.sessionId && serial === this.turnSerial && !staleResume) { this.settings.sessionId = ev.sessionId; this.settingsChanged() }
+            if (staleResume) {
               retried = true; retry = true
               this.settings.sessionId = null; this.settingsChanged()
               this.deps.out.system('session expired, starting fresh')
