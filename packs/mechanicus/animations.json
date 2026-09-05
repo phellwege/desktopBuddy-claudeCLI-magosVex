@@ -11,7 +11,7 @@
   "look":           { "frames": ["interact_0", "interact_1"], "fps": 3 },
   "project":        { "frames": ["usetech_0", "usetech_1", "usetech_2", "usetech_3"], "fps": 2 },
   "emote_happy":    { "frames": ["celebrate_0", "celebrate_1"], "fps": 5, "repeat": 4 },
-  "emote_thinking": { "frames": ["usetech_0", "usetech_1", "usetech_2", "usetech_3"], "fps": 3 },
+  "emote_thinking": { "frames": ["usetech_0", "usetech_1", "usetech_2", "usetech_3"], "fps": 3, "repeat": 3 },
   "emote_confused": { "frames": ["interact_2", "interact_3"], "fps": 3, "repeat": 2 },
   "emote_alarmed":  { "frames": ["alert_0", "alert_1", "alert_2"], "fps": 5, "repeat": 3 },
   "faces": { "neutral": "faces_0", "happy": "faces_1", "disbelief": "faces_2",
