@@ -8,6 +8,7 @@ import type { Mood } from '../../shared/types'
 import type { LocalServer } from '../server'
 import { isAuthError, parseStreamLine } from './stream'
 import { toolsNote } from './prompt'
+import { killTree } from './process'
 import type { Brain, BrainContext, BrainEvent } from './types'
 
 export interface ClaudeCliDeps {
@@ -200,10 +201,7 @@ export class ClaudeCliBrain implements Brain {
   stop(): void {
     this.stopped = true
     const child = this.child
-    if (!child || child.pid === undefined) return
-    if (process.platform === 'win32') {
-      const killer = nodeSpawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
-      killer.on('error', () => { /* best effort only: nothing more we can do if taskkill itself fails to spawn */ })
-    } else child.kill()
+    if (!child) return
+    killTree(child)
   }
 }

@@ -120,7 +120,29 @@ async function runPermission() {
   ])
 }
 
+async function runReadback() {
+  const chunks = []
+  for await (const c of process.stdin) chunks.push(c)
+  const input = Buffer.concat(chunks).toString('utf8')
+  if (!process.argv.includes('--system-prompt') || !process.argv.includes('--no-session-persistence')) {
+    process.stderr.write('fake-claude: readback call is missing --system-prompt or --no-session-persistence\n')
+    process.exit(2)
+  }
+  if (process.env.FAKE_CLAUDE_READBACK === 'fail') {
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'fake failure' }) + '\n')
+    return
+  }
+  if (process.env.FAKE_CLAUDE_READBACK === 'hang') {
+    await new Promise((r) => setTimeout(r, 60000))
+    return
+  }
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'Readback: ' + input.slice(0, 40) }) + '\n')
+}
+
 async function main() {
+  // The readback call (src/main/brain/readback.ts) is the only caller that asks for plain
+  // json output; it inherits FAKE_CLAUDE_SCENARIO from the app, so it is keyed on argv.
+  if (argValue('--output-format') === 'json') return runReadback()
   await readStdin()
   switch (process.env.FAKE_CLAUDE_SCENARIO) {
     case 'tool': return runTool()
