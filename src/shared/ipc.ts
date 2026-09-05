@@ -16,6 +16,7 @@ export const CH = {
   chatDelta: 'chat:delta',
   chatActivity: 'chat:activity',
   chatDone: 'chat:done',
+  chatReadback: 'chat:readback',
   chatPermission: 'chat:permission',
   chatStatus: 'chat:status',
   chatSystem: 'chat:system',
@@ -30,7 +31,8 @@ export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; ani
 export interface BuddyStatePayload { state: BuddyState; animation: AnimationKey; speed: number }
 export interface ChatDeltaPayload { text: string }
 export interface ChatActivityPayload { id: string; label: string; done: boolean }
-export interface ChatDonePayload { error?: string; expression?: Expression }
+export interface ChatDonePayload { id: number; error?: string; expression?: Expression }
+export interface ChatReadbackPayload { id: number; text: string }
 // A normal card carries toolName/summary/line; a dismiss carries only the id, telling the
 // renderer to hide the card if it is still showing that same request (the server's own
 // permission timeout already answered "deny" on the wire by the time this arrives).
@@ -62,6 +64,7 @@ export interface BuddyBridge {
   onChatDelta(cb: (p: ChatDeltaPayload) => void): () => void
   onChatActivity(cb: (p: ChatActivityPayload) => void): () => void
   onChatDone(cb: (p: ChatDonePayload) => void): () => void
+  onChatReadback(cb: (p: ChatReadbackPayload) => void): () => void
   onChatPermission(cb: (p: ChatPermissionPayload) => void): () => void
   onChatStatus(cb: (p: ChatStatusPayload) => void): () => void
   onChatSystem(cb: (p: ChatSystemPayload) => void): () => void

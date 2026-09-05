@@ -11,9 +11,10 @@ import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, loadPage, rebound, setHologramInteractive } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
 import { wireIpc } from './ipc'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
 import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
+import { Readback } from './brain/readback'
 import type { Brain } from './brain/types'
 import { ChatController } from './chat'
 import { startLocalServer, type PermissionRequest } from './server'
@@ -95,6 +96,7 @@ async function main(): Promise<void> {
     done: (d: ChatDonePayload) => toHologram(CH.chatDone, d),
     system: (text: string, expression: Expression = 'neutral') => toHologram(CH.chatSystem, { text, expression }),
     status: (s: ChatStatusPayload) => toHologram(CH.chatStatus, s),
+    readback: (p: ChatReadbackPayload) => toHologram(CH.chatReadback, p),
   }
   let greeted = false
   const host: ActionHost = {
@@ -118,6 +120,13 @@ async function main(): Promise<void> {
   const argsPrefix = parseArgsPrefix(process.env.BUDDY_CLI_ARGS)
   const cliMissing = !existsSync(cliPath)
   const useEcho = process.env.BUDDY_BRAIN === 'echo' || cliMissing
+
+  // BUDDY_READBACK=0 is a test override, like BUDDY_BRAIN=echo.
+  const readbackEnabled = config.readback && process.env.BUDDY_READBACK !== '0' && !useEcho
+  const readback = readbackEnabled ? new Readback({
+    cliPath, persona: pack.persona.prompt, scratchDir: join(app.getPath('userData'), 'readback'), argsPrefix,
+  }) : undefined
+  appendLog(logDir, 'main', `readback ${readbackEnabled ? 'on' : 'off'}`)
 
   // Both callbacks below are handed to startLocalServer before the ChatController that owns
   // their real logic exists yet (the brain needs the server, and the controller needs the
@@ -177,7 +186,7 @@ async function main(): Promise<void> {
   // Quitting mid-turn must not orphan a running claude.exe: chatRef is still undefined only
   // during the brief startup window before the ChatController below is constructed, hence
   // the guard (by the time a real quit happens, it is always set).
-  app.on('before-quit', () => { chatRef?.stop(); void server.close() })
+  app.on('before-quit', () => { chatRef?.stop(); readback?.stopAll(); void server.close() })
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
@@ -190,6 +199,7 @@ async function main(): Promise<void> {
     brain, actions, pack, out,
     settings: { workspace: config.workspace, model: config.model, sessionId: null },
     onSettingsChange: (s) => { config.workspace = s.workspace; config.model = s.model; saveConfig(configPath, config) },
+    readback, log: (line) => appendLog(logDir, 'main', line),
   })
   chatRef = chat
 

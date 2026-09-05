@@ -68,6 +68,16 @@ describe('config', () => {
     expect(loadConfig(p).permissionTimeoutSec).toBe(DEFAULT_CONFIG.permissionTimeoutSec)
     spy.mockRestore()
   })
+  it('falls back to the readback default on a wrong-typed value, and keeps an explicit false', () => {
+    const p = tmp()
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    writeFileSync(p, JSON.stringify({ readback: 'yes' }))
+    expect(loadConfig(p).readback).toBe(true)
+    spy.mockRestore()
+    const p2 = tmp()
+    writeFileSync(p2, JSON.stringify({ readback: false }))
+    expect(loadConfig(p2).readback).toBe(false)
+  })
   it('round-trips through saveConfig', () => {
     const p = tmp()
     saveConfig(p, { ...DEFAULT_CONFIG, workspace: 'D:\\w' })

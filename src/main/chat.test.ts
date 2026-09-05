@@ -9,9 +9,13 @@ import type { BuddyActions } from './actions'
 const pack = (() => { const r = loadPack(join(__dirname, '../../test/fixtures/pack-min')); if (!r.ok) throw new Error(r.errors.join()); return r.pack })()
 
 function fakeOut() {
-  const o = { deltas: [] as string[], systems: [] as string[], faces: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[],
-    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string, e?: string) { o.systems.push(t); o.faces.push(e ?? 'neutral') }, status(s: unknown) { o.statuses.push(s) } }
+  const o = { deltas: [] as string[], systems: [] as string[], faces: [] as string[], dones: 0, doneArgs: [] as unknown[], statuses: [] as unknown[], readbacks: [] as unknown[],
+    delta(t: string) { o.deltas.push(t) }, activity() {}, done(d: unknown) { o.dones++; o.doneArgs.push(d) }, system(t: string, e?: string) { o.systems.push(t); o.faces.push(e ?? 'neutral') }, status(s: unknown) { o.statuses.push(s) }, readback(p: unknown) { o.readbacks.push(p) } }
   return o as typeof o & ChatOut
+}
+function fakeReadback(result: { ok: true; text: string } | { ok: false; reason: string }) {
+  const r = { calls: [] as string[], async run(text: string) { r.calls.push(text); return result } }
+  return r
 }
 function fakeActions() {
   const a = { calls: [] as string[],
@@ -118,7 +122,7 @@ describe('ChatController', () => {
       actions: fakeActions(), pack, out, settings: settings() })
     c.prompt('hello')
     await new Promise(r => setTimeout(r, 10))
-    expect(out.doneArgs.at(-1)).toEqual({ error: undefined, expression: 'happy' })
+    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'happy' })
   })
   it('defaults the done payload expression to neutral when the brain yields none', async () => {
     const out = fakeOut()
@@ -126,7 +130,7 @@ describe('ChatController', () => {
       actions: fakeActions(), pack, out, settings: settings() })
     c.prompt('hello')
     await new Promise(r => setTimeout(r, 10))
-    expect(out.doneArgs.at(-1)).toEqual({ error: undefined, expression: 'neutral' })
+    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'neutral' })
   })
   it('reports a brain error with the pack error line', async () => {
     const out = fakeOut()
@@ -206,7 +210,7 @@ describe('ChatController', () => {
     c.prompt('hello')
     c.setExpression('love')
     await new Promise(r => setTimeout(r, 10))
-    expect(out.doneArgs.at(-1)).toEqual({ error: undefined, expression: 'love' })
+    expect(out.doneArgs.at(-1)).toEqual({ id: 1, error: undefined, expression: 'love' })
   })
   it('every slash command confirms with one system line', async () => {
     const out = fakeOut()
@@ -221,5 +225,52 @@ describe('ChatController', () => {
     await ctrl.prompt('/cd C:\\x'); expect(out.systems.at(-1)).toBe('workspace: C:\\x')
     await ctrl.prompt('/model sonnet'); expect(out.systems.at(-1)).toBe('model: sonnet')
     await ctrl.prompt('/stop'); expect(out.systems.at(-1)).toBe('stopped')
+  })
+})
+
+describe('ChatController readback', () => {
+  it('numbers replies and fires one readback with the joined reply text after a clean done', async () => {
+    const out = fakeOut(); const rb = fakeReadback({ ok: true, text: 'So it is.' })
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'Hel' }, { type: 'text', delta: 'lo' }, { type: 'done' }]),
+      actions: fakeActions(), pack, out, settings: settings(), readback: rb })
+    c.prompt('hi')
+    await new Promise(r => setTimeout(r, 20))
+    expect(out.doneArgs.at(-1)).toMatchObject({ id: 1 })
+    expect(rb.calls).toEqual(['Hello'])
+    expect(out.readbacks).toEqual([{ id: 1, text: 'So it is.' }])
+  })
+  it('gives the second reply id 2', async () => {
+    const out = fakeOut(); const rb = fakeReadback({ ok: true, text: 'x' })
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'done' }]),
+      actions: fakeActions(), pack, out, settings: settings(), readback: rb })
+    c.prompt('one'); await new Promise(r => setTimeout(r, 20))
+    c.prompt('two'); await new Promise(r => setTimeout(r, 20))
+    expect(out.doneArgs.map(d => (d as { id: number }).id)).toEqual([1, 2])
+    expect(out.readbacks).toEqual([{ id: 1, text: 'x' }, { id: 2, text: 'x' }])
+  })
+  it('skips the readback on an error turn, an empty reply, and when no readback is configured', async () => {
+    const rb = fakeReadback({ ok: true, text: 'x' })
+    for (const events of [
+      [{ type: 'text', delta: 'a' }, { type: 'done', error: 'boom' }] as BrainEvent[],
+      [{ type: 'text', delta: '   ' }, { type: 'done' }] as BrainEvent[],
+    ]) {
+      const out = fakeOut()
+      const c = new ChatController({ brain: scriptedBrain(events), actions: fakeActions(), pack, out, settings: settings(), readback: rb })
+      c.prompt('hi'); await new Promise(r => setTimeout(r, 20))
+      expect(out.readbacks).toEqual([])
+    }
+    expect(rb.calls).toEqual([])
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'done' }]), actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('hi'); await new Promise(r => setTimeout(r, 20))
+    expect(out.readbacks).toEqual([])
+  })
+  it('logs a failed readback and sends nothing', async () => {
+    const out = fakeOut(); const lines: string[] = []
+    const c = new ChatController({ brain: scriptedBrain([{ type: 'text', delta: 'a' }, { type: 'done' }]),
+      actions: fakeActions(), pack, out, settings: settings(), readback: fakeReadback({ ok: false, reason: 'timeout after 20000 ms' }), log: (l) => lines.push(l) })
+    c.prompt('hi'); await new Promise(r => setTimeout(r, 20))
+    expect(out.readbacks).toEqual([])
+    expect(lines).toEqual(['readback failed: timeout after 20000 ms'])
   })
 })

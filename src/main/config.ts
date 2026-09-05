@@ -11,6 +11,7 @@ export interface Config {
   model: string | null
   allowedTools: string[]
   permissionTimeoutSec: number
+  readback: boolean
   wanderIntervalSec: [number, number]
   sleepAfterMin: number
   scale: number
@@ -24,6 +25,7 @@ export const DEFAULT_CONFIG: Config = {
   model: null,
   allowedTools: ['Read', 'Glob', 'Grep', 'mcp__buddy__*'],
   permissionTimeoutSec: 120,
+  readback: true,
   wanderIntervalSec: [8, 30],
   sleepAfterMin: 10,
   scale: 1.0,
@@ -53,6 +55,7 @@ const VALIDATORS: { [K in keyof Config]: (v: unknown) => boolean } = {
   // 5..600 s: below 5 a permission card could never realistically be answered in time, and
   // above 600 an unanswered card would block the CLI's turn for an unreasonably long time.
   permissionTimeoutSec: (v) => isFiniteNumber(v) && v >= 5 && v <= 600,
+  readback: (v) => typeof v === 'boolean',
   wanderIntervalSec: (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number'),
   sleepAfterMin: isFiniteNumber,
   scale: isFiniteNumber,

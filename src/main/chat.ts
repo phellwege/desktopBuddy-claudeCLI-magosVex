@@ -1,6 +1,7 @@
-import type { ChatActivityPayload, ChatDonePayload, ChatStatusPayload } from '../shared/ipc'
+import type { ChatActivityPayload, ChatDonePayload, ChatReadbackPayload, ChatStatusPayload } from '../shared/ipc'
 import type { Expression, PackData } from '../shared/types'
 import type { BuddyActions } from './actions'
+import type { ReadbackResult } from './brain/readback'
 import type { Brain } from './brain/types'
 import type { ChatPort } from './ipc'
 import { HELP_TEXT, parseCommand, type Command } from './commands'
@@ -12,19 +13,22 @@ export interface ChatOut {
   done(d: ChatDonePayload): void
   system(text: string, expression?: Expression): void
   status(s: ChatStatusPayload): void
+  readback(p: ChatReadbackPayload): void
 }
 export interface ChatSettings { workspace: string; model: string | null; sessionId: string | null }
 
 export class ChatController implements ChatPort {
   private running = false
   private turnSerial = 0
+  private messageSerial = 0
   private currentExpression: Expression = 'neutral'
   // Permission requests the local server is waiting on: keyed by the hook's tool_use_id,
   // resolved by permissionAnswer() once the user answers the card in the panel.
   private readonly pendingPermissions = new Map<string, (d: { allow: boolean; reason: string }) => void>()
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
-    settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void }) {
+    settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void;
+    readback?: { run(text: string): Promise<ReadbackResult> }; log?: (line: string) => void }) {
     this.settings = { ...deps.settings }
   }
   get busy(): boolean { return this.running }
@@ -89,12 +93,14 @@ export class ChatController implements ChatPort {
   private async ask(text: string): Promise<void> {
     this.running = true
     const serial = this.turnSerial
+    const id = ++this.messageSerial
+    let reply = ''
     this.currentExpression = 'neutral'
     try {
       const ctx = { state: this.deps.actions.getState(), workspace: this.settings.workspace,
         model: this.settings.model, sessionId: this.settings.sessionId }
       for await (const ev of this.deps.brain.respond(text, ctx)) {
-        if (ev.type === 'text') this.deps.out.delta(ev.delta)
+        if (ev.type === 'text') { this.deps.out.delta(ev.delta); reply += ev.delta }
         else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
         else if (ev.type === 'status') this.deps.out.system(ev.text, ev.expression)
         else if (ev.type === 'expression') this.currentExpression = ev.name
@@ -105,15 +111,24 @@ export class ChatController implements ChatPort {
           // an error ("stopped (exit code ...)"), but it must not also post the pack's error
           // line, or a stop would show two lines instead of one.
           if (ev.error && !ev.stopped) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${ev.error}`, 'sadness')
-          this.deps.out.done({ error: ev.error, expression: this.currentExpression })
+          this.deps.out.done({ id, error: ev.error, expression: this.currentExpression })
+          if (!ev.error && reply.trim() && this.deps.readback) void this.readback(id, reply)
         }
       }
     } catch (e) {
       this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${(e as Error).message}`, 'sadness')
-      this.deps.out.done({ error: (e as Error).message, expression: this.currentExpression })
+      this.deps.out.done({ id, error: (e as Error).message, expression: this.currentExpression })
     } finally {
       this.running = false
     }
+  }
+
+  // Fire and forget: the next turn may start while this runs, and a failure only logs.
+  private async readback(id: number, text: string): Promise<void> {
+    let result: ReadbackResult
+    try { result = await this.deps.readback!.run(text) } catch (e) { result = { ok: false, reason: (e as Error).message } }
+    if (result.ok) this.deps.out.readback({ id, text: result.text })
+    else this.deps.log?.(`readback failed: ${result.reason}`)
   }
 
   // Called by the local server's onPermission callback (bound in main/index.ts) once it has

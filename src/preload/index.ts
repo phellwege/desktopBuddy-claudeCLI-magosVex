@@ -19,6 +19,7 @@ const bridge: BuddyBridge = {
   onChatDelta: on(CH.chatDelta),
   onChatActivity: on(CH.chatActivity),
   onChatDone: on(CH.chatDone),
+  onChatReadback: on(CH.chatReadback),
   onChatPermission: on(CH.chatPermission),
   onChatStatus: on(CH.chatStatus),
   onChatSystem: on(CH.chatSystem),
