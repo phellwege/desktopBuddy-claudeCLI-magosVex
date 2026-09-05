@@ -30,6 +30,8 @@ function scriptedBrain(events: BrainEvent[]): Brain & { stopped: number } {
   return { stopped: 0, async *respond() { for (const e of events) yield e }, stop() { this.stopped++ } }
 }
 const settings = () => ({ workspace: 'C:\\repo', model: null, sessionId: null })
+// /cd and /ls never touch the disk in tests.
+const permissiveFs = { isDirectory: () => true, list: () => [] as { name: string; dir: boolean }[] }
 
 describe('ChatController', () => {
   it('routes plain text to the brain and forwards events', async () => {
@@ -58,7 +60,7 @@ describe('ChatController', () => {
   })
   it('updates settings for /cd, /model, /new and reports status', () => {
     const out = fakeOut(); const changes: unknown[] = []
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ ...s }) })
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ ...s }) })
     c.prompt('/cd D:\\w'); c.prompt('/model sonnet'); c.prompt('/new')
     expect(c.status()).toEqual({ model: 'sonnet', workspace: 'D:\\w', session: 'new', readback: false })
     expect(changes.length).toBe(3)
@@ -256,7 +258,7 @@ describe('ChatController', () => {
   })
   it('every slash command confirms with one system line', async () => {
     const out = fakeOut()
-    const ctrl = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    const ctrl = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: settings() })
     await ctrl.prompt('/goto 20'); expect(out.systems.at(-1)).toBe('moving to 20%')
     await ctrl.prompt('/run 80'); expect(out.systems.at(-1)).toBe('running to 80%')
     await ctrl.prompt('/mood happy'); expect(out.systems.at(-1)).toBe('mood: happy')
@@ -273,11 +275,30 @@ describe('ChatController', () => {
 describe('ChatController /cd', () => {
   it('starts a new session when the workspace changes, so session allows are dropped', async () => {
     const out = fakeOut(); const changes: { workspace: string; sessionId: string | null }[] = []
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out,
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs,
       settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ workspace: s.workspace, sessionId: s.sessionId }) })
-    await c.prompt('/cd D:\other')
-    expect(changes.at(-1)).toEqual({ workspace: 'D:\other', sessionId: null })
-    expect(out.systems.at(-1)).toBe('workspace: D:\other')
+    await c.prompt('/cd D:\\other')
+    expect(changes.at(-1)).toEqual({ workspace: 'D:\\other', sessionId: null })
+    expect(out.systems.at(-1)).toBe('workspace: D:\\other')
+  })
+  it('/cd alone shows the workspace, a relative path resolves against it, and a missing directory is refused', async () => {
+    const out = fakeOut()
+    const fs = { isDirectory: (p: string) => p === 'C:\\repo\\sub', list: () => [] }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), fs })
+    await c.prompt('/cd')
+    expect(out.systems.at(-1)).toBe('workspace: C:\\repo')
+    await c.prompt('/cd sub')
+    expect(out.systems.at(-1)).toBe('workspace: C:\\repo\\sub')
+    await c.prompt('/cd nope')
+    expect(out.systems.at(-1)).toBe('no such directory: C:\\repo\\sub\\nope')
+    expect(c.status().workspace).toBe('C:\\repo\\sub')
+  })
+  it('/ls lists directories first with a trailing slash', async () => {
+    const out = fakeOut()
+    const fs = { isDirectory: () => true, list: () => [{ name: 'b.txt', dir: false }, { name: 'src', dir: true }, { name: 'a.txt', dir: false }] }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), fs })
+    await c.prompt('/ls')
+    expect(out.systems.at(-1)).toBe('C:\\repo\nsrc/\na.txt\nb.txt')
   })
 })
 

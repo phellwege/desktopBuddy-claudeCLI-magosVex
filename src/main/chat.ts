@@ -6,6 +6,8 @@ import type { Brain } from './brain/types'
 import type { ChatPort } from './ipc'
 import { HELP_TEXT, parseCommand, type Command } from './commands'
 import { pickLine } from './pack'
+import { existsSync, readdirSync, statSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 
 export interface ChatOut {
   delta(text: string): void
@@ -18,6 +20,17 @@ export interface ChatOut {
 }
 export interface ChatSettings { workspace: string; model: string | null; sessionId: string | null }
 
+// Directory access for /cd and /ls, injectable so tests never touch the real disk.
+export interface WorkspaceFs {
+  isDirectory(path: string): boolean
+  list(path: string): { name: string; dir: boolean }[]
+}
+export const nodeWorkspaceFs: WorkspaceFs = {
+  isDirectory: (p) => { try { return existsSync(p) && statSync(p).isDirectory() } catch { return false } },
+  list: (p) => readdirSync(p, { withFileTypes: true }).map((e) => ({ name: e.name, dir: e.isDirectory() })),
+}
+const LS_MAX = 80
+
 export class ChatController implements ChatPort {
   private running = false
   private turnSerial = 0
@@ -27,7 +40,7 @@ export class ChatController implements ChatPort {
   // resolved by permissionAnswer() once the user answers the card in the panel.
   private readonly pendingPermissions = new Map<string, (d: { allow: boolean; reason: string; remember?: boolean }) => void>()
   private readonly settings: ChatSettings
-  constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
+  constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut; fs?: WorkspaceFs;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void;
     readback?: { run(text: string): Promise<ReadbackResult> }; log?: (line: string) => void }) {
     this.settings = { ...deps.settings }
@@ -40,6 +53,10 @@ export class ChatController implements ChatPort {
     this.deps.onSettingsChange?.({ ...this.settings })
     this.deps.out.status(this.status())
   }
+  private resolvePath(p: string): string {
+    return isAbsolute(p) ? resolve(p) : resolve(this.settings.workspace, p)
+  }
+
   prompt(text: string): void {
     const parsed = parseCommand(text)
     if (parsed.ok) { this.run(parsed.command); return }
@@ -87,12 +104,28 @@ export class ChatController implements ChatPort {
         this.deps.out.clear()
         this.deps.out.system('cleared')
         break
-      case 'cd':
+      case 'cd': {
+        if (cmd.path === null) { this.deps.out.system(`workspace: ${this.settings.workspace}`); break }
+        const target = this.resolvePath(cmd.path)
+        if (!(this.deps.fs ?? nodeWorkspaceFs).isDirectory(target)) { this.deps.out.system(`no such directory: ${target}`); break }
         // A session belongs to the directory it started in, so a new workspace means a new
         // session; that also clears the session allow-list in main.
-        this.settings.sessionId = null; this.settings.workspace = cmd.path; this.settingsChanged()
-        this.deps.out.system(`workspace: ${cmd.path}`)
+        this.settings.sessionId = null; this.settings.workspace = target; this.settingsChanged()
+        this.deps.out.system(`workspace: ${target}`)
         break
+      }
+      case 'ls': {
+        const target = this.resolvePath(cmd.path ?? '.')
+        const fs = this.deps.fs ?? nodeWorkspaceFs
+        if (!fs.isDirectory(target)) { this.deps.out.system(`no such directory: ${target}`); break }
+        let entries: { name: string; dir: boolean }[]
+        try { entries = fs.list(target) } catch (e) { this.deps.out.system(`cannot list ${target}: ${(e as Error).message}`); break }
+        entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))
+        const shown = entries.slice(0, LS_MAX).map((e) => (e.dir ? `${e.name}/` : e.name))
+        const more = entries.length > LS_MAX ? `\n... and ${entries.length - LS_MAX} more` : ''
+        this.deps.out.system(`${target}\n${shown.join('\n') || '(empty)'}${more}`)
+        break
+      }
       case 'model':
         this.settings.model = cmd.model; this.settingsChanged()
         this.deps.out.system(`model: ${cmd.model ?? 'default'}`)

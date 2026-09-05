@@ -38,7 +38,9 @@ describe('parseCommand', () => {
     expect(parseCommand('/cd C:\\repo\\fitstudio')).toEqual({ ok: true, command: { kind: 'cd', path: 'C:\\repo\\fitstudio' } })
     expect(parseCommand('/model sonnet')).toEqual({ ok: true, command: { kind: 'model', model: 'sonnet' } })
     expect(parseCommand('/model')).toEqual({ ok: true, command: { kind: 'model', model: null } })
-    expect(parseCommand('/cd')).toEqual({ ok: false, error: 'usage: /cd <path>' })
+    expect(parseCommand('/cd')).toEqual({ ok: true, command: { kind: 'cd', path: null } })
+    expect(parseCommand('/ls')).toEqual({ ok: true, command: { kind: 'ls', path: null } })
+    expect(parseCommand('/ls src')).toEqual({ ok: true, command: { kind: 'ls', path: 'src' } })
   })
   it('reports unknown commands', () => {
     expect(parseCommand('/dance')).toEqual({ ok: false, error: 'unknown command: /dance (try /help)' })

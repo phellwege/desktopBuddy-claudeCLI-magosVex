@@ -5,7 +5,8 @@ export type Command =
   | { kind: 'mood'; mood: Mood }
   | { kind: 'emote'; emote: EmoteKind }
   | { kind: 'sleep' } | { kind: 'wake' } | { kind: 'stop' } | { kind: 'new' } | { kind: 'clear' } | { kind: 'help' }
-  | { kind: 'cd'; path: string }
+  | { kind: 'cd'; path: string | null }
+  | { kind: 'ls'; path: string | null }
   | { kind: 'model'; model: string | null }
 
 export type ParseResult =
@@ -22,7 +23,8 @@ export const HELP_TEXT = [
   '/mood <calm|happy|thinking|confused|alarmed>',
   '/emote <happy|thinking|confused|alarmed|look|hop>',
   '/sleep  /wake  /stop  /new  /clear',
-  '/cd <path>      change workspace (next session)',
+  '/cd [path]      change workspace (next session); no path shows where you are',
+  '/ls [path]      list a directory (relative to the workspace)',
   '/model [name]   set or clear the model (next session)',
   '/help',
 ].join('\n')
@@ -63,8 +65,9 @@ export function parseCommand(input: string): ParseResult {
     case 'sleep': case 'wake': case 'stop': case 'new': case 'clear': case 'help':
       return { ok: true, command: { kind: word } }
     case 'cd':
-      if (!arg) return { ok: false, error: 'usage: /cd <path>' }
-      return { ok: true, command: { kind: 'cd', path: arg } }
+      return { ok: true, command: { kind: 'cd', path: arg ?? null } }
+    case 'ls':
+      return { ok: true, command: { kind: 'ls', path: arg ?? null } }
     case 'model':
       return { ok: true, command: { kind: 'model', model: arg ?? null } }
     default:
