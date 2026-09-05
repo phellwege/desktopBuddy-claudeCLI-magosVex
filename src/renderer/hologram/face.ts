@@ -17,6 +17,11 @@ export class HoloFace {
     const f = this.atlas.frames[this.faces[expression] ?? this.faces.neutral]!
     const c = document.createElement('canvas')
     c.className = 'face'
+    // Faces sit side by side in the log; on one shared keyframe schedule they pulse in
+    // lockstep, which reads as one animation. A random phase and a slightly different
+    // period per face makes each one flicker on its own.
+    c.style.animationDuration = `${(2.6 + Math.random() * 1.2).toFixed(2)}s`
+    c.style.animationDelay = `-${(Math.random() * 3).toFixed(2)}s`
     const scale = size / Math.max(f.w, f.h)
     // CSS size is what the bubble lays out; the backing store follows the device pixel
     // ratio so the face stays crisp on HiDPI screens instead of being upscaled by the
