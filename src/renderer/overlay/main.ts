@@ -79,7 +79,9 @@ function apply(s: BuddyStatePayload): void {
   // Held: the pointer owns his position, so drop any target and leave motion where the
   // mousemove handler put it. Without this the state message that announces the drag would
   // snap him back to his last resting spot.
-  if (s.state.dragging) { motion.setTarget(undefined, 0); place(); return }
+  // Landing mid-journey: he is already at the flight's endpoint; re-targeting it would
+  // report a second arrival and skip the next leg.
+  if (s.state.dragging || s.state.landing) { motion.setTarget(undefined, 0); place(); return }
   // A journey leg carries its own endpoint in virtual pixels and may end on another
   // display; a plain move or a wander is still a fraction of the display he is on.
   if (s.state.leg) motion.setTarget(s.state.leg.to, s.speed)

@@ -29,7 +29,7 @@ export interface BuddyState { x: number; display: number; facing: Facing; activi
   mood: Mood; panelOpen: boolean; asleep: boolean; targetX?: number; leg?: PlannedLeg
   // Held by the pointer: the renderer drives his position from the cursor rather than from
   // a leg, and nothing else should move him until he is released.
-  dragging: boolean }
+  dragging: boolean; landing?: boolean }
 export interface AtlasFrame { x: number; y: number; w: number; h: number; ax: number; ay: number; origin?: [number, number] }
 export interface Atlas { image: string; maxFrameSize: [number, number]; frames: Record<string, AtlasFrame> }
 // repeat: how many times a one-shot animation plays before it reports finishing. Only

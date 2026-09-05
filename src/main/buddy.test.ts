@@ -321,6 +321,9 @@ describe('Buddy travel', () => {
     expect(b.view().state.activity).toBe('hovering')
     expect(b.view().animation).toBe('hover')
     b.arrived()
+    expect(b.view().state.activity).toBe('hopping')   // touched down at the seam: landing frames
+    expect(b.view().animation).toBe('fall')
+    b.oneShotDone()
     expect(b.view().state.activity).toBe('walking')
     b.arrived()
     expect(b.view().state.activity).toBe('idle')
@@ -516,6 +519,23 @@ describe('landing', () => {
     b.oneShotDone()
     expect(b.view().state.activity).toBe('idle')
     expect(b.getState().display).toBe(2)
+  })
+  it('a flight that is followed by a walk lands at the seam first, then walks on', () => {
+    const b = new Buddy({ rng: () => 0 }); b.tick(0)
+    const fly = { kind: 'fly' as const, to: { x: 2000, y: 1000 }, hop: true, display: 2, fraction: 0.05, facing: 'right' as const }
+    const walk = { kind: 'walk' as const, to: { x: 2600, y: 1000 }, run: false, display: 2, fraction: 0.5, facing: 'right' as const }
+    b.travel([fly, walk])
+    b.arrived()
+    expect(b.view().state.activity).toBe('hopping')
+    expect(b.view().animation).toBe('fall')
+    expect(b.getState().landing).toBe(true)
+    expect(b.getState().leg).toEqual(fly)          // the renderer keeps him at the seam
+    b.oneShotDone()
+    expect(b.getState().landing).toBe(false)
+    expect(b.view().state.activity).toBe('walking')
+    expect(b.getState().leg).toEqual(walk)
+    b.arrived()
+    expect(b.view().state.activity).toBe('idle')
   })
   it('a walk leg still ends in idle without a landing', () => {
     const b = new Buddy({ rng: () => 0 }); b.tick(0)

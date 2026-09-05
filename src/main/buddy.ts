@@ -38,6 +38,9 @@ export class Buddy {
   // Held by the pointer. Position comes from the cursor rather than from a leg, so there is
   // no target and no arrival until he is released and drops onto a floor.
   private dragging = false
+  // Touching down at a seam mid-journey: the fall frames play while he stays put at the
+  // flight's endpoint, then the next leg starts.
+  private landing = false
   private facing: Facing = 'right'
   private activity: Activity = 'idle'
   private mood: Mood
@@ -82,7 +85,7 @@ export class Buddy {
   getState(): BuddyState {
     return { x: this.x, display: this.display, facing: this.facing, activity: this.activity,
       mood: this.mood, panelOpen: this.panelOpen, asleep: this.asleep, targetX: this.targetX,
-      leg: this.currentLeg, dragging: this.dragging }
+      leg: this.currentLeg, dragging: this.dragging, landing: this.landing }
   }
   view(): BuddyView {
     return { state: this.getState(), animation: this.animation(), speed: this.speed() }
@@ -228,7 +231,19 @@ export class Buddy {
       const done = this.legs.shift()!
       this.display = done.display
       this.x = done.fraction
-      if (this.legs.length > 0) { this.startLeg(); this.emit(); return }
+      if (this.legs.length > 0) {
+        if (done.kind === 'fly') {
+          // Down at the seam with more legs to go: play the landing here, keeping the
+          // finished leg as the state's leg so the renderer holds him at its endpoint.
+          this.landing = true
+          this.hopPhase = false
+          this.activity = 'hopping'
+          this.currentEmote = 'fall'
+          this.emit()
+          return
+        }
+        this.startLeg(); this.emit(); return
+      }
       this.currentLeg = undefined
       this.hopPhase = false
       // Touching down from a flight (a journey's last leg, or a drop) gets the landing
@@ -279,6 +294,11 @@ export class Buddy {
   }
 
   oneShotDone(): void {
+    // Landed mid-journey: the fall frames are done, carry on with the next leg.
+    if (this.landing) {
+      this.landing = false
+      if (this.legs.length > 0) { this.startLeg(); this.emit(); return }
+    }
     // The hop that opens a seam crossing has played; settle into the hover loop for the
     // rest of the leg.
     if (this.activity === 'hovering' && this.hopPhase) {
