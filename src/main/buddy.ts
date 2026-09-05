@@ -35,6 +35,9 @@ export class Buddy {
   private currentLeg: PlannedLeg | undefined
   // A seam crossing opens with the one-shot hop before settling into the hover loop.
   private hopPhase = false
+  // Held by the pointer. Position comes from the cursor rather than from a leg, so there is
+  // no target and no arrival until he is released and drops onto a floor.
+  private dragging = false
   private facing: Facing = 'right'
   private activity: Activity = 'idle'
   private mood: Mood
@@ -79,7 +82,7 @@ export class Buddy {
   getState(): BuddyState {
     return { x: this.x, display: this.display, facing: this.facing, activity: this.activity,
       mood: this.mood, panelOpen: this.panelOpen, asleep: this.asleep, targetX: this.targetX,
-      leg: this.currentLeg }
+      leg: this.currentLeg, dragging: this.dragging }
   }
   view(): BuddyView {
     return { state: this.getState(), animation: this.animation(), speed: this.speed() }
@@ -137,6 +140,30 @@ export class Buddy {
     this.activity = run ? 'running' : 'walking'
   }
 
+  // Picked up by the pointer. He hovers for as long as he is held, going wherever the
+  // cursor takes him, so this drops any journey or wander in progress and leaves the
+  // renderer to drive his position directly.
+  beginDrag(): void {
+    this.interact()
+    this.queuedEmote = undefined
+    this.legs = []
+    this.currentLeg = undefined
+    this.targetX = undefined
+    this.restUntil = undefined
+    this.hopPhase = false
+    this.commanded = true
+    this.dragging = true
+    this.activity = 'hovering'
+    this.emit()
+  }
+  // Released. He keeps hovering while he falls, so the drop is just a one-leg journey down
+  // onto the floor of whatever display he was let go over.
+  endDrag(landing: PlannedLeg): void {
+    if (!this.dragging) return
+    this.dragging = false
+    this.travel([landing])
+  }
+
   // Play a planned cross-display journey. The legs carry their own endpoints in virtual
   // pixels for the renderer, plus the display and fraction he stands at once each one
   // completes, so this stays free of any display geometry.
@@ -169,7 +196,8 @@ export class Buddy {
       this.scheduleWander()
       return
     }
-    if (this.asleep || this.panelOpen) return
+    // Held by the pointer: no wandering, and no dozing off in mid-air.
+    if (this.asleep || this.panelOpen || this.dragging) return
     if (RESTFUL.includes(this.activity) && now - this.lastInteractionAt >= this.sleepAfter) {
       this.asleep = true
       this.activity = 'sleeping'

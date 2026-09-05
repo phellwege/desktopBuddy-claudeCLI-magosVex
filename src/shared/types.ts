@@ -26,7 +26,10 @@ export type Leg =
 export type PlannedLeg = Leg & { display: number; fraction: number; facing: Facing }
 
 export interface BuddyState { x: number; display: number; facing: Facing; activity: Activity;
-  mood: Mood; panelOpen: boolean; asleep: boolean; targetX?: number; leg?: PlannedLeg }
+  mood: Mood; panelOpen: boolean; asleep: boolean; targetX?: number; leg?: PlannedLeg
+  // Held by the pointer: the renderer drives his position from the cursor rather than from
+  // a leg, and nothing else should move him until he is released.
+  dragging: boolean }
 export interface AtlasFrame { x: number; y: number; w: number; h: number; ax: number; ay: number; origin?: [number, number] }
 export interface Atlas { image: string; maxFrameSize: [number, number]; frames: Record<string, AtlasFrame> }
 // repeat: how many times a one-shot animation plays before it reports finishing. Only

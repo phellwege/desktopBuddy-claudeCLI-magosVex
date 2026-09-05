@@ -76,6 +76,10 @@ function apply(s: BuddyStatePayload): void {
   if (!animator) return
   animator.setFacing(s.state.facing)
   animator.set(s.animation)
+  // Held: the pointer owns his position, so drop any target and leave motion where the
+  // mousemove handler put it. Without this the state message that announces the drag would
+  // snap him back to his last resting spot.
+  if (s.state.dragging) { motion.setTarget(undefined, 0); place(); return }
   // A journey leg carries its own endpoint in virtual pixels and may end on another
   // display; a plain move or a wander is still a fraction of the display he is on.
   if (s.state.leg) motion.setTarget(s.state.leg.to, s.speed)
@@ -173,12 +177,57 @@ function isOver(clientX: number, clientY: number): boolean {
 // the desktop around him.
 function setCursor(over: boolean): void { document.body.style.cursor = over ? 'pointer' : 'default' }
 
+// A press on his pixels is ambiguous until the pointer moves: hold still and release and it
+// is a click that opens the panel, move past the threshold and it becomes a drag. Held in
+// virtual pixels, with the grab offset kept so he does not jump to centre on the cursor.
+const DRAG_THRESHOLD = 4
+let press: { screenX: number; screenY: number; offsetX: number; offsetY: number } | null = null
+let dragging = false
+
+const beginDrag = (): void => {
+  dragging = true
+  document.body.style.cursor = 'grabbing'
+  window.buddy.dragStart()
+}
+const endDrag = (): void => {
+  dragging = false
+  press = null
+  document.body.style.cursor = 'default'
+  hovering = false
+  window.buddy.dragEnd(motion.vx, motion.vy)
+}
+
 window.addEventListener('mousemove', (e) => {
+  if (press) {
+    const moved = Math.hypot(e.screenX - press.screenX, e.screenY - press.screenY)
+    if (!dragging && moved > DRAG_THRESHOLD) beginDrag()
+    if (dragging) {
+      // He follows the pointer directly. Main is not in this loop: it hears about the drag
+      // once at the start and once at the drop.
+      motion.place(e.screenX + press.offsetX, e.screenY + press.offsetY)
+      place()
+      return
+    }
+  }
+  if (dragging) return
   const over = isOver(e.clientX, e.clientY)
   if (over !== hovering) { hovering = over; window.buddy.hover(over); setCursor(over) }
 })
-document.addEventListener('mouseleave', () => { if (hovering) { hovering = false; window.buddy.hover(false); setCursor(false) } })
-canvas.addEventListener('mousedown', (e) => { if (e.button === 0 && isOver(e.clientX, e.clientY)) window.buddy.click() })
+document.addEventListener('mouseleave', () => {
+  if (dragging || press) return
+  if (hovering) { hovering = false; window.buddy.hover(false); setCursor(false) }
+})
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || !isOver(e.clientX, e.clientY)) return
+  press = { screenX: e.screenX, screenY: e.screenY, offsetX: motion.vx - e.screenX, offsetY: motion.vy - e.screenY }
+})
+// On window, not the canvas: once he is being carried the pointer is nowhere near his
+// pixels, so the release lands anywhere in the (now desktop-sized) overlay.
+window.addEventListener('mouseup', (e) => {
+  if (e.button !== 0) return
+  if (dragging) { endDrag(); return }
+  if (press) { press = null; window.buddy.click() }
+})
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault()
   // menu.popup({ window, x, y }) expects coordinates relative to the window's own content

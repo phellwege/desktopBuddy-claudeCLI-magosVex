@@ -228,7 +228,7 @@ describe('ClaudeCliBrain', () => {
       checkDisplay: () => null,
       setMood: (m) => moodCalls.push(m), emote: async () => {}, say: () => {},
       openPanel: () => {}, closePanel: () => {}, sleep: () => {}, wake: () => {},
-      getState: () => ({ x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false }),
+      getState: () => ({ x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false, dragging: false }),
     }
     const server = await startLocalServer({
       actions,

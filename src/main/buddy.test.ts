@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { Buddy } from './buddy'
 import { RUN_SPEED, WALK_SPEED } from '../shared/types'
-import { byOrd, fromFraction, planTravel, roster, type ScreenLike } from './displays'
+import { byOrd, fromFraction, planDrop, planTravel, roster, type ScreenLike } from './displays'
 
 function seq(values: number[]) {
   let i = 0
@@ -436,6 +436,59 @@ describe('Buddy travel', () => {
     expect(b.getState().activity).toBe('idle')
     expect(b.getState().display).toBe(2)
     expect(b.getState().x).toBeCloseTo(0.5)
+  })
+
+  it('picking him up hovers him and drops any journey in progress', () => {
+    const b = onPrimary()
+    b.travel(plan(2, 1, 0.5))
+    b.beginDrag()
+    expect(b.getState().dragging).toBe(true)
+    expect(b.getState().activity).toBe('hovering')
+    expect(b.getState().leg).toBeUndefined()      // no route: the pointer is steering
+    expect(b.getState().targetX).toBeUndefined()
+    expect(b.view().animation).toBe('hover')
+  })
+
+  it('does not wander or doze off while held', () => {
+    const b = new Buddy({ rng: seq([0, 0.9]), initialX: 0.5, initialDisplay: 2, sleepAfterMs: 1000 })
+    b.tick(0)
+    b.beginDrag()
+    b.tick(60000)
+    expect(b.getState().activity).toBe('hovering')
+    expect(b.getState().asleep).toBe(false)
+    expect(b.getState().dragging).toBe(true)
+  })
+
+  it('releasing him flies him down onto the display he was dropped over', () => {
+    const b = onPrimary()
+    b.beginDrag()
+    const landing = planDrop(RIG, { x: 2800, y: 300 }, CHAR_W)   // over the right-hand panel
+    b.endDrag(landing)
+    expect(b.getState().dragging).toBe(false)
+    expect(b.getState().activity).toBe('hovering')               // still hovering, now falling
+    expect(b.getState().leg).toMatchObject({ kind: 'fly', hop: false })
+    b.arrived()
+    expect(b.getState().display).toBe(3)
+    expect(b.getState().activity).toBe('idle')
+  })
+
+  it('a release without a pickup does nothing', () => {
+    const b = onPrimary()
+    const before = b.getState()
+    b.endDrag(planDrop(RIG, { x: 2800, y: 300 }, CHAR_W))
+    expect(b.getState().activity).toBe(before.activity)
+    expect(b.getState().display).toBe(before.display)
+  })
+
+  it('takes the projecting pose after being dropped if the panel is open', () => {
+    const b = onPrimary()
+    b.openPanel()
+    b.beginDrag()
+    expect(b.getState().activity).toBe('hovering')               // not posing while carried
+    b.endDrag(planDrop(RIG, { x: 1000, y: -900 }, CHAR_W))       // dropped over the ultrawide
+    b.arrived()
+    expect(b.getState().display).toBe(1)
+    expect(b.getState().activity).toBe('projecting')
   })
 
   it('wandering never leaves the current display', () => {

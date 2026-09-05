@@ -6,7 +6,7 @@ import type { BuddyActions } from './actions'
 import { startLocalServer, summarizeToolInput, type LocalServer, type ServerDeps } from './server'
 
 function fakeState(): BuddyState {
-  return { x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false }
+  return { x: 0.5, display: 1, facing: 'right', activity: 'idle', mood: 'calm', panelOpen: false, asleep: false, dragging: false }
 }
 
 function fakeActions(): BuddyActions {

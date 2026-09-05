@@ -1,8 +1,15 @@
 # Future: multi-monitor travel and drag
 
 Date: 2026-09-04
-Status: parked, requested by Peter, not scheduled. Plan A/B keep the body on the
-primary display's bottom edge (main spec section 2 non-goals).
+Status: **DELIVERED 2026-09-05.** Both halves are built and merged: commanded travel
+(`2026-09-05-multi-monitor-travel.md`) and then click-and-drag on top of it. The
+non-goal in main spec section 2 no longer holds.
+
+Two things landed differently from the sketch below. The panel **hides and follows**
+rather than closing, because the brain calls `go_to` mid-reply and closing would discard
+a streaming turn. And there is **one overlay window**, not one per display: it is a
+bottom strip on the display he is standing on, and grows to span source and target only
+while he is in the air (the whole desktop while he is being carried).
 
 ## What Peter wants
 

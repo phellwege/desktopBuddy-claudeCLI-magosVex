@@ -3,8 +3,7 @@
 // every position is the character's floor-center point (the spot under the middle of him,
 // on the bottom edge of a display's work area). Virtual coordinates are routinely
 // negative: a monitor placed above or left of the primary has a negative origin.
-import type { Rect } from './geometry'
-import { FLY_SPEED, RUN_SPEED, WALK_SPEED, type Facing, type Leg, type PlannedLeg, type Point } from '../shared/types'
+import { FLY_SPEED, RUN_SPEED, WALK_SPEED, type Facing, type Leg, type PlannedLeg, type Point, type Rect } from '../shared/types'
 
 export type { Leg, PlannedLeg, Point }
 
@@ -134,6 +133,49 @@ export function planRoute(a: RouteArgs): Leg[] {
   legs.push({ kind: 'fly', to: { x: touchVX, y: toFloor }, hop })
   pushWalk(touchVX, clamp(landVX, toBand.min, toBand.max), toFloor, toBand)
   return legs
+}
+
+// The display a dropped point belongs to. A point can land in a gap (the virtual desktop
+// is not rectangular when monitors are different sizes or offset), so this falls back to
+// the nearest display by centre distance rather than returning nothing.
+export function displayAt(list: DisplayInfo[], p: Point): DisplayInfo {
+  const inside = list.find(d =>
+    p.x >= d.wa.x && p.x < d.wa.x + d.wa.width && p.y >= d.wa.y && p.y < d.wa.y + d.wa.height)
+  if (inside) return inside
+  let best = list[0]!, bestDist = Infinity
+  for (const d of list) {
+    // Distance to the rect, zero inside it, so a point just past a taskbar picks that screen.
+    const dx = Math.max(d.wa.x - p.x, 0, p.x - (d.wa.x + d.wa.width))
+    const dy = Math.max(d.wa.y - p.y, 0, p.y - (d.wa.y + d.wa.height))
+    const dist = Math.hypot(dx, dy)
+    if (dist < bestDist) { bestDist = dist; best = d }
+  }
+  return best
+}
+
+// Bounding box of every attached display's work area: what the overlay window becomes for
+// the duration of a drag, since he can be carried anywhere on the desktop.
+export function desktopBounds(list: DisplayInfo[]): Rect {
+  const first = list[0]!.wa
+  let x0 = first.x, y0 = first.y, x1 = first.x + first.width, y1 = first.y + first.height
+  for (const d of list) {
+    x0 = Math.min(x0, d.wa.x); y0 = Math.min(y0, d.wa.y)
+    x1 = Math.max(x1, d.wa.x + d.wa.width); y1 = Math.max(y1, d.wa.y + d.wa.height)
+  }
+  return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 }
+}
+
+// The straight descent onto the display he was dropped over: one fly leg, no hop, from
+// wherever he was released down to that display's floor.
+export function planDrop(list: DisplayInfo[], drop: Point, charW: number): PlannedLeg {
+  const to = displayAt(list, drop)
+  const band = walkBand(to.wa, charW)
+  const x = clamp(drop.x, band.min, band.max)
+  return {
+    kind: 'fly', to: { x, y: floorY(to.wa) }, hop: false,
+    display: to.ord, fraction: toFraction(x, to.wa, charW),
+    facing: x < drop.x ? 'left' : 'right',
+  }
 }
 
 export function legSpeed(leg: Leg): number {

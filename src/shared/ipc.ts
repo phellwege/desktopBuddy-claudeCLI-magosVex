@@ -11,6 +11,8 @@ export const CH = {
   overlayArrived: 'overlay:arrived',
   overlayOneShotDone: 'overlay:oneShotDone',
   overlayOrigin: 'overlay:origin',
+  overlayDragStart: 'overlay:dragStart',
+  overlayDragEnd: 'overlay:dragEnd',
   hologramOrigin: 'hologram:origin',
   hologramHover: 'hologram:hover',
   theme: 'theme',
@@ -70,6 +72,12 @@ export interface BuddyBridge {
    * ahead of Buddy.x (which only updates on arrival) - it lets main re-place the hologram
    * under a walking character instead of waiting for the walk to finish. */
   origin(x: number, y: number, xFraction: number): void
+  /** The pointer has picked him up. Main widens the overlay to the whole desktop and steps
+   * the panel aside; from here until dragEnd the renderer owns his position. */
+  dragStart(): void
+  /** Released at this floor-center point, in virtual pixels, so main can work out which
+   * display he was dropped over and send him down onto it. */
+  dragEnd(x: number, y: number): void
   onOrigin(cb: (p: OriginPayload) => void): () => void
   onTheme(cb: (p: ThemePayload) => void): () => void
   onChatDelta(cb: (p: ChatDeltaPayload) => void): () => void

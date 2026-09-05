@@ -13,7 +13,7 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
   return page
 }
 
-interface TestState { x: number; display: number; activity: string; panelOpen: boolean; leg?: unknown }
+interface TestState { x: number; display: number; activity: string; panelOpen: boolean; dragging: boolean; leg?: unknown }
 const state = (app: ElectronApplication) =>
   app.evaluate(() => (globalThis as { __buddy?: { getState(): TestState } }).__buddy!.getState()) as Promise<TestState>
 
@@ -102,6 +102,80 @@ test('a display prefix naming the current display is just a walk', async () => {
   const roster = await rosterOf(electronApp)
   const b = await overlayBoundsOf(electronApp)
   expect(b.width).toBe(roster.find(d => d.ord === here)!.wa.width)
+})
+
+// Drag works in window-relative page coordinates, so it needs the overlay's own origin to
+// turn a virtual-desktop target into somewhere to move the mouse.
+const overlayOriginOf = (app: ElectronApplication) => app.evaluate(({ BrowserWindow }) => {
+  const b = BrowserWindow.getAllWindows().find(x => !x.isFocusable())!.getBounds()
+  return { x: b.x, y: b.y }
+})
+
+test('dragging him picks him up, and dropping lands him on the display underneath', async () => {
+  const electronApp = app!
+  const roster = await rosterOf(electronApp)
+  const overlay = await windowByUrl(electronApp, 'overlay')
+  await expect.poll(
+    () => overlay.evaluate(() => (document.getElementById('buddy') as HTMLCanvasElement).width),
+    { timeout: 15000 },
+  ).toBeGreaterThan(0)
+
+  const here = (await state(electronApp)).display
+  const target = roster.find(d => d.ord !== here) ?? roster.find(d => d.ord === here)!
+
+  // Press on his sprite. The canvas is transform-positioned, so ask the page where it is
+  // rather than guessing, and aim at its horizontal middle just above the feet.
+  const origin = await overlayOriginOf(electronApp)
+  const grab = await overlay.evaluate(() => {
+    const r = (document.getElementById('buddy') as HTMLCanvasElement).getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 }
+  })
+  await overlay.mouse.move(grab.x, grab.y)
+  await overlay.mouse.down()
+  // Past the 4 px threshold, so this is a drag rather than a click that opens the panel.
+  await overlay.mouse.move(grab.x + 40, grab.y - 40)
+  await expect.poll(() => state(electronApp).then(s => s.dragging), { timeout: 10000 }).toBe(true)
+  expect((await state(electronApp)).activity).toBe('hovering')
+
+  // Carry him to the middle of the target display and let go. Page coordinates are relative
+  // to the overlay window, which is now the whole desktop.
+  const dropVirtual = { x: target.wa.x + target.wa.width / 2, y: target.wa.y + target.wa.height / 2 }
+  const expanded = await overlayOriginOf(electronApp)
+  await overlay.mouse.move(dropVirtual.x - expanded.x, dropVirtual.y - expanded.y)
+  await overlay.mouse.up()
+
+  await expect.poll(() => state(electronApp).then(s => s.dragging), { timeout: 10000 }).toBe(false)
+  await expect.poll(() => state(electronApp).then(s => s.leg === undefined), { timeout: 20000 }).toBe(true)
+
+  const s = await state(electronApp)
+  expect(s.display).toBe(target.ord)
+  expect(s.activity).not.toBe('hovering')
+
+  // Back to a strip on the display he was dropped on.
+  const b = await overlayBoundsOf(electronApp)
+  expect(b.width).toBe(target.wa.width)
+  expect(b.y + b.height).toBe(target.wa.y + target.wa.height)
+  void origin
+})
+
+test('a press without movement is still a click that opens the panel', async () => {
+  const electronApp = app!
+  const overlay = await windowByUrl(electronApp, 'overlay')
+  await expect.poll(
+    () => overlay.evaluate(() => (document.getElementById('buddy') as HTMLCanvasElement).width),
+    { timeout: 15000 },
+  ).toBeGreaterThan(0)
+
+  const grab = await overlay.evaluate(() => {
+    const r = (document.getElementById('buddy') as HTMLCanvasElement).getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height * 0.6 }
+  })
+  await overlay.mouse.move(grab.x, grab.y)
+  await overlay.mouse.down()
+  await overlay.mouse.up()
+
+  await expect.poll(() => state(electronApp).then(s => s.panelOpen), { timeout: 10000 }).toBe(true)
+  expect((await state(electronApp)).dragging).toBe(false)
 })
 
 test('travelling to another display lands him there and collapses the window onto it', async () => {

@@ -10,9 +10,9 @@ import type { Expression, Mood } from '../shared/types'
 import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
-import { createHologramWindow, createOverlayWindow, expandForFlight, loadPage, rebound, setHologramInteractive } from './windows'
+import { createHologramWindow, createOverlayWindow, expandForFlight, loadPage, rebound, setHologramInteractive, setOverlayDragging } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
-import { byOrd, floorY, fromFraction, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
+import { byOrd, desktopBounds, floorY, fromFraction, planDrop, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
 import { wireIpc } from './ipc'
 import { SessionAllows } from './permissions'
 import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type StagePayload } from '../shared/ipc'
@@ -309,8 +309,31 @@ async function main(): Promise<void> {
   else if (cliMissing) out.system(`echo brain (cli not found at ${cliPath})`)
   else checkCliAuth(cliPath)
 
+  // Picking him up is the same shape as a commanded flight: the window has to cover
+  // everywhere he might be carried before he moves, and the panel steps aside rather than
+  // closing. The difference is that there is no route, so nothing lands until he is dropped.
+  const beginDrag = (): void => {
+    journeying = true
+    overlay.setBounds(desktopBounds(displays))
+    setOverlayDragging(overlay, true)
+    sendStage()
+    if (buddy.getState().panelOpen) hologram.hide()
+    buddy.beginDrag()
+    appendLog(logDir, 'main', `drag: picked up on display ${current.ord}`)
+  }
+  const endDrag = (drop: { x: number; y: number }): void => {
+    if (!buddy.getState().dragging) return
+    setOverlayDragging(overlay, false)
+    const landing = planDrop(displays, drop, charW)
+    appendLog(logDir, 'main', `drag: dropped at ${Math.round(drop.x)},${Math.round(drop.y)} -> display ${landing.display}`)
+    // Straight down onto that display's floor. The journey-end path then collapses the
+    // window back to a strip and brings the panel back, exactly as a commanded trip does.
+    buddy.endDrag(landing)
+  }
+
   wireIpc({
     buddy, actions, overlay, hologram,
+    beginDrag, endDrag,
     packPayload: { atlasUrl: 'pack://app/' + pack.atlas.image, atlasJsonUrl: 'pack://app/atlas.json',
       animations: pack.animations, scale, name: pack.name, faces: pack.faces },
     theme: { ...pack.theme, name: pack.name },

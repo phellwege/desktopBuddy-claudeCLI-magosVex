@@ -22,6 +22,11 @@ export interface IpcDeps {
   /** Sends the overlay its window origin and resting display, which it needs before it can
    * place a character whose position is in absolute virtual coordinates. */
   sendStage(): void
+  /** The pointer has picked him up: widen the overlay to the whole desktop, keep it solid,
+   * and step the panel aside until he lands. */
+  beginDrag(): void
+  /** Released at this floor-center point, in virtual pixels. */
+  endDrag(drop: { x: number; y: number }): void
 }
 
 // Windows can be gone by the time a late IPC message wants them (app quitting, e2e teardown):
@@ -38,7 +43,14 @@ export function wireIpc(d: IpcDeps): void {
     d.sendStage()
     send(d.overlay, CH.buddyState, d.buddy.view())
   })
-  ipcMain.on(CH.overlayHover, (_e, p: { over: boolean }) => setOverlayInteractive(d.overlay, p.over))
+  // Hover drives click-through, but a drag must keep the window solid wherever the pointer
+  // goes, so the renderer's hover reports are ignored for the duration of one.
+  ipcMain.on(CH.overlayHover, (_e, p: { over: boolean }) => {
+    if (d.buddy.getState().dragging) return
+    setOverlayInteractive(d.overlay, p.over)
+  })
+  ipcMain.on(CH.overlayDragStart, () => d.beginDrag())
+  ipcMain.on(CH.overlayDragEnd, (_e, p: { x: number; y: number }) => d.endDrag(p))
   ipcMain.on(CH.overlayClick, () => {
     d.buddy.interact()
     if (d.buddy.getState().panelOpen) d.actions.closePanel(); else d.actions.openPanel()

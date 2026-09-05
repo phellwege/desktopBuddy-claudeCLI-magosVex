@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  roster, byOrd, primaryOf, relate, floorY, walkBand, fromFraction, toFraction, planRoute,
+  roster, byOrd, primaryOf, relate, desktopBounds, displayAt, planDrop, floorY, walkBand, fromFraction, toFraction, planRoute,
   type ScreenLike, type DisplayInfo,
 } from './displays'
 
@@ -79,6 +79,43 @@ describe('bands and fractions', () => {
   it('clamps a fraction outside 0..1 and a pixel outside the band', () => {
     expect(fromFraction(2, D2.workArea, CHAR_W)).toBe(BAND.primary.max)
     expect(toFraction(-9999, D2.workArea, CHAR_W)).toBe(0)
+  })
+})
+
+describe('drop', () => {
+  it('spans every display, including the negative origin', () => {
+    // The ultrawide overhangs both panels, so it sets the left and right edges alike:
+    // x from -575 to 4545, y from -1440 (its top) to 1032 (the 1080p floors).
+    expect(desktopBounds(rig())).toEqual({ x: -575, y: -1440, width: 5120, height: 2472 })
+  })
+  it('resolves a point inside a display to that display', () => {
+    expect(displayAt(rig(), { x: 960, y: 500 }).ord).toBe(2)
+    expect(displayAt(rig(), { x: 2800, y: 500 }).ord).toBe(3)
+    expect(displayAt(rig(), { x: 1000, y: -700 }).ord).toBe(1)
+  })
+  it('falls back to the nearest display for a point in a gap', () => {
+    // Below the ultrawide but left of both 1080p panels: nothing contains it.
+    expect(displayAt(rig(), { x: -400, y: 500 }).ord).toBe(2)
+    // Under the primary's taskbar strip, which is outside every work area.
+    expect(displayAt(rig(), { x: 960, y: 1060 }).ord).toBe(2)
+  })
+  it('drops straight down onto the floor of the display under the release point', () => {
+    const leg = planDrop(rig(), { x: 2800, y: 300 }, CHAR_W)
+    expect(leg).toEqual({
+      kind: 'fly', to: { x: 2800, y: FLOOR.right }, hop: false,
+      display: 3, fraction: toFraction(2800, D1.workArea, CHAR_W), facing: 'right',
+    })
+  })
+  it('pulls a drop near the edge back inside the walk band', () => {
+    const leg = planDrop(rig(), { x: 1910, y: 300 }, CHAR_W)
+    expect(leg.display).toBe(2)             // still the primary, which reaches x=1920
+    expect(leg.to.x).toBe(BAND.primary.max) // but inset so he is not half off the screen
+    expect(leg.facing).toBe('left')         // and he leans back the way he was pulled
+  })
+  it('lands on the ultrawide when dropped over it', () => {
+    const leg = planDrop(rig(), { x: 1000, y: -900 }, CHAR_W)
+    expect(leg.display).toBe(1)
+    expect(leg.to).toEqual({ x: 1000, y: FLOOR.ultrawide })
   })
 })
 

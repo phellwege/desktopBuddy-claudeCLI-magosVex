@@ -62,6 +62,17 @@ export function createHologramWindow(onBlur: () => void): BrowserWindow {
 // cursor position is a small, simple backstop for that gap.
 const watchdogs = new WeakMap<BrowserWindow, ReturnType<typeof setInterval>>()
 
+// While he is held, the overlay must stay solid no matter where the pointer goes: the
+// cursor spends the whole drag off his sprite, which is exactly what the hit-test and the
+// watchdog below would otherwise treat as "not over him" and hand back to the desktop.
+// The note calls this out: a body being dragged is solid by definition.
+export function setOverlayDragging(win: BrowserWindow, dragging: boolean): void {
+  const existing = watchdogs.get(win)
+  if (existing) { clearInterval(existing); watchdogs.delete(win) }
+  if (dragging) win.setIgnoreMouseEvents(false)
+  else win.setIgnoreMouseEvents(true, { forward: true })
+}
+
 export function setOverlayInteractive(win: BrowserWindow, interactive: boolean): void {
   const existing = watchdogs.get(win)
   if (existing) { clearInterval(existing); watchdogs.delete(win) }

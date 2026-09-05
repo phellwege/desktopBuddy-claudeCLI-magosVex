@@ -1,11 +1,18 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { join } from 'node:path'
 import { cleanEnv } from './env'
+import { loadPack } from '../src/main/pack'
 
 // ClaudeCliBrain spawns config.cliPath directly (no shell), and on Windows that can only be
 // a real executable: the app under test runs node.exe with the fake CLI script placed in
 // front of the CLI flags through the BUDDY_CLI_ARGS test hook.
 const fakeCliScript = join(__dirname, '../test/fake-claude.cjs')
+
+// The pack's own permissionDenied lines, so this tracks the pack instead of assuming any
+// particular wording appears in them.
+const loadedPack = loadPack(join(__dirname, '../packs/mechanicus'))
+if (!loadedPack.ok) throw new Error(loadedPack.errors.join('\n'))
+const DENIED_LINES = loadedPack.pack.persona.lines.permissionDenied
 
 async function windowByUrl(app: ElectronApplication, part: string): Promise<Page> {
   await expect.poll(() => app.windows().filter(w => w.url().includes(part)).length, { timeout: 15000 }).toBe(1)
@@ -81,9 +88,13 @@ test('a permission request opens the card, and Deny reaches the CLI turn', async
 
   await hologram.locator('#perm-deny').click()
   await expect(card).toBeHidden()
-  // Denying posts a system line from the pack's permissionDenied lines ("Denied. ...");
-  // match case-insensitively so this does not depend on the pack's exact capitalization.
-  await expect.poll(() => hologram.locator('#log').textContent(), { timeout: 15000 }).toMatch(/denied/i)
+  // Denying posts one of the pack's permissionDenied lines, picked at random. Assert against
+  // the pack's actual lines rather than a keyword: the pack gained lines like "Rite cancelled
+  // by operator" that never say "denied", which made a keyword match flaky.
+  await expect.poll(
+    () => hologram.locator('#log').textContent().then(log => DENIED_LINES.some(l => (log ?? '').includes(l))),
+    { timeout: 15000 },
+  ).toBe(true)
 })
 
 test('Sanction this session answers a later request for the same tool without reopening the card', async () => {

@@ -15,6 +15,8 @@ const bridge: BuddyBridge = {
   arrived: () => ipcRenderer.send(CH.overlayArrived),
   oneShotDone: () => ipcRenderer.send(CH.overlayOneShotDone),
   origin: (x, y, xFraction) => ipcRenderer.send(CH.overlayOrigin, { x, y, xFraction }),
+  dragStart: () => ipcRenderer.send(CH.overlayDragStart),
+  dragEnd: (x, y) => ipcRenderer.send(CH.overlayDragEnd, { x, y }),
   onOrigin: on(CH.hologramOrigin),
   onTheme: on(CH.theme),
   onChatDelta: on(CH.chatDelta),
