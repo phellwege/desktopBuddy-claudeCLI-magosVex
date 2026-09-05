@@ -104,31 +104,52 @@ async function runPermission() {
     process.exitCode = 2
     return
   }
+  // Same idea for --permission-mode (spec 6.4.1): buildArgs must always pass it through.
+  if (!process.argv.includes('--permission-mode')) {
+    process.stderr.write('fake-claude: missing --permission-mode on argv\n')
+    process.exitCode = 2
+    return
+  }
+  // FAKE_CLAUDE_PERMISSION_COUNT (default 1) drives how many sequential permission_prompt
+  // calls this scenario makes, same fake Bash input each time but a distinct tool_use_id -
+  // lets a test exercise the session allow-list (first call shows the card, later calls for
+  // the same tool name are answered without one).
+  const count = Number(process.env.FAKE_CLAUDE_PERMISSION_COUNT) || 1
   const raw = argValue('--mcp-config')
   const config = raw ? JSON.parse(raw) : null
   const buddy = config && config.mcpServers && config.mcpServers.buddy
-  let decision = 'deny'
+  let client = null
   if (buddy) {
     const { Client } = require('@modelcontextprotocol/sdk/client/index.js')
     const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js')
     const transport = new StreamableHTTPClientTransport(new URL(buddy.url), { requestInit: { headers: buddy.headers } })
-    const client = new Client({ name: 'fake-claude', version: '1.0.0' })
+    client = new Client({ name: 'fake-claude', version: '1.0.0' })
     await client.connect(transport)
-    const result = await client.callTool({
-      name: 'permission_prompt',
-      arguments: { tool_name: 'Bash', input: { command: 'echo hi' }, tool_use_id: 'pt1' },
-    })
-    try {
-      const text = result.content && result.content[0] && result.content[0].text
-      const parsed = text ? JSON.parse(text) : null
-      decision = parsed && parsed.behavior === 'allow' ? 'allow' : 'deny'
-    } catch { /* keep the default deny */ }
-    await client.close()
   }
+  let lastDecision = 'deny'
+  for (let i = 1; i <= count; i++) {
+    const toolUseId = `pt${i}`
+    let decision = 'deny'
+    if (client) {
+      const result = await client.callTool({
+        name: 'permission_prompt',
+        arguments: { tool_name: 'Bash', input: { command: 'echo hi' }, tool_use_id: toolUseId },
+      })
+      try {
+        const text = result.content && result.content[0] && result.content[0].text
+        const parsed = text ? JSON.parse(text) : null
+        decision = parsed && parsed.behavior === 'allow' ? 'allow' : 'deny'
+      } catch { /* keep the default deny */ }
+    }
+    lastDecision = decision
+    await emit([
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command: 'echo hi' } }] } },
+      { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: `decision: ${decision}` }] } },
+    ])
+  }
+  if (client) await client.close()
   await emit([
-    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'pt1', name: 'Bash', input: { command: 'echo hi' } }] } },
-    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'pt1', content: `decision: ${decision}` }] } },
-    { type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: `decision: ${decision}` },
+    { type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: `decision: ${lastDecision}` },
   ])
 }
 
