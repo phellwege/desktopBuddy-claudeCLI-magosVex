@@ -33,7 +33,7 @@ test('an idle thought bubble appears near him and hides itself again', async () 
   await expect(bubble).toBeVisible({ timeout: 10000 })
   await expect.poll(() => bubble.textContent().then(t => (t ?? '').trim().length)).toBeGreaterThan(0)
 
-  // ttlMs is fixed at 7000 in main (only the interval is overridden), so give the fade-out
+  // the same test hook shortens ttlMs to 1000 (production keeps 7000), so give the fade-out
   // and hide a generous margin past that.
   await expect(bubble).toBeHidden({ timeout: 12000 })
 })
