@@ -16,7 +16,7 @@ Spec: `docs/superpowers/specs/2026-09-04-readback-layer-design.md`.
 - The persona never reaches the main turn. The tools note (`src/main/brain/prompt.ts`) is untouched.
 - No test spawns the real `claude`; every test uses `test/fake-claude.cjs`. The only real-CLI path is `npm run smoke:claude`, run by hand only. Never run it as part of a task.
 - Readback flags (pinned against CLI 2.1.220): `-p --output-format json --model haiku --setting-sources project --no-session-persistence --system-prompt <persona + instruction> --tools "" --strict-mcp-config`. No `--mcp-config`, no `--session-id`, no `--resume`.
-- Input to the readback is cut at 12,000 characters with a trailing ` [truncated]`. Timeout 20 seconds. Scratch cwd is `<userData>/readback`, created on first use.
+- Input to the readback is cut at 12,000 characters with a trailing ` [truncated]`. Timeout 45 seconds (raised from 20 on 2026-09-05). Scratch cwd is `<userData>/readback`, created on first use.
 - Waiting state (Peter, 2026-09-04 evening): with readback on, the bubble shows three animated dots from its first delta until the readback lands or fails; the plain text accumulates hidden. On failure, timeout, or an error turn the dots give way to the plain text with no arrow. With readback off the bubble streams plain text as today.
 - Only real replies get a readback: not system lines, canned lines, permission cards, slash confirmations, error turns, empty replies, the echo brain, or `config.readback === false`. Old bubbles never change after their readback lands or fails.
 - Commit with `git -c user.name="phellwege" -c user.email="phellwege1@gmail.com" commit -m "<message>"`; every message ends with the trailer line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Stage only files you changed (never `git add -A`; ignore `build/` and `test-results/`). Branch `readback-layer`, in place, no PRs.
@@ -60,7 +60,7 @@ export function killTree(child: ChildProcess): void
 // src/main/brain/readback.ts
 export const READBACK_INSTRUCTION: string
 export const READBACK_MAX_CHARS = 12000
-export const READBACK_TIMEOUT_MS = 20000
+export const READBACK_TIMEOUT_MS = 45000
 export interface ReadbackDeps {
   cliPath: string
   persona: string            // the pack's persona.md text (PackData.persona.prompt)
@@ -175,7 +175,7 @@ export const READBACK_INSTRUCTION =
   'commands, and numbers exactly as written. Use no code blocks, lists, or headings. If the reply ' +
   'is only code, say what the code does. Output the restatement and nothing else.'
 export const READBACK_MAX_CHARS = 12000
-export const READBACK_TIMEOUT_MS = 20000
+export const READBACK_TIMEOUT_MS = 45000
 
 export interface ReadbackDeps {
   cliPath: string

@@ -5,7 +5,7 @@ import type { Actions } from './actions'
 import { setHologramInteractive, setOverlayInteractive } from './windows'
 import { originToWindow, shouldReplaceHologramX } from './geometry'
 
-export interface ChatPort { prompt(text: string): void; permissionAnswer(id: string, allow: boolean): void; stop(): void }
+export interface ChatPort { prompt(text: string): void; permissionAnswer(id: string, allow: boolean, remember?: boolean): void; stop(): void }
 export interface IpcDeps {
   buddy: Buddy; actions: Actions; overlay: BrowserWindow; hologram: BrowserWindow
   packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort
@@ -58,7 +58,7 @@ export function wireIpc(d: IpcDeps): void {
     send(d.hologram, CH.chatStatus, d.status())
   })
   ipcMain.on(CH.chatPrompt, (_e, p: { text: string }) => d.chat.prompt(p.text))
-  ipcMain.on(CH.chatPermissionAnswer, (_e, p: { id: string; allow: boolean }) => d.chat.permissionAnswer(p.id, p.allow))
+  ipcMain.on(CH.chatPermissionAnswer, (_e, p: { id: string; allow: boolean; remember?: boolean }) => d.chat.permissionAnswer(p.id, p.allow, p.remember))
   ipcMain.on(CH.chatClose, () => d.actions.closePanel())
   ipcMain.on(CH.chatStop, () => d.chat.stop())
 }

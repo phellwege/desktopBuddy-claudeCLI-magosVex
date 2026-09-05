@@ -89,7 +89,7 @@ claude -p --output-format json --model haiku
   polluting the `C:\repo` session list.
 - The environment is `childEnv(process.env)` from `claude-cli.ts` (no `CLAUDECODE`, no
   `ANTHROPIC_API_KEY`).
-- Timeout 20 seconds, then the child is killed (`taskkill /T /F` on Windows, as the brain
+- Timeout 45 seconds, then the child is killed (`taskkill /T /F` on Windows, as the brain
   does) and the call resolves to `null`.
 - Output: one JSON object on stdout. `result` is the readback when `is_error` is false and
   `subtype` is `success`; anything else resolves to `null`. Stderr's last lines go to the

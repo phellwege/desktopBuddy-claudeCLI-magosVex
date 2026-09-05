@@ -14,7 +14,7 @@ export const READBACK_INSTRUCTION =
   'commands, and numbers exactly as written. Use no code blocks, lists, or headings. If the reply ' +
   'is only code, say what the code does. Output the restatement and nothing else.'
 export const READBACK_MAX_CHARS = 12000
-export const READBACK_TIMEOUT_MS = 20000
+export const READBACK_TIMEOUT_MS = 45000
 
 export interface ReadbackDeps {
   cliPath: string

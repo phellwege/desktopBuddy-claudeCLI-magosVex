@@ -171,6 +171,14 @@ describe('ChatController', () => {
     expect(await pending).toEqual({ allow: true, reason: 'user allowed' })
     expect(out.faces).not.toContain('anger')
   })
+  it('answering allow with remember resolves with remember: true, no denial line', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    const pending = c.awaitPermissionAnswer('p1r')
+    c.permissionAnswer('p1r', true, true)
+    expect(await pending).toEqual({ allow: true, reason: 'user allowed', remember: true })
+    expect(out.systems).toEqual([])
+  })
   it('a denied permission posts the permissionDenied line with anger and resolves allow: false', async () => {
     const out = fakeOut()
     const withLine = { ...pack, persona: { ...pack.persona, lines: { ...pack.persona.lines, permissionDenied: ['Denied, heretic.'] } } }
@@ -225,6 +233,17 @@ describe('ChatController', () => {
     await ctrl.prompt('/cd C:\\x'); expect(out.systems.at(-1)).toBe('workspace: C:\\x')
     await ctrl.prompt('/model sonnet'); expect(out.systems.at(-1)).toBe('model: sonnet')
     await ctrl.prompt('/stop'); expect(out.systems.at(-1)).toBe('stopped')
+  })
+})
+
+describe('ChatController /cd', () => {
+  it('starts a new session when the workspace changes, so session allows are dropped', async () => {
+    const out = fakeOut(); const changes: { workspace: string; sessionId: string | null }[] = []
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out,
+      settings: { ...settings(), sessionId: 'old' }, onSettingsChange: s => changes.push({ workspace: s.workspace, sessionId: s.sessionId }) })
+    await c.prompt('/cd D:\other')
+    expect(changes.at(-1)).toEqual({ workspace: 'D:\other', sessionId: null })
+    expect(out.systems.at(-1)).toBe('workspace: D:\other')
   })
 })
 

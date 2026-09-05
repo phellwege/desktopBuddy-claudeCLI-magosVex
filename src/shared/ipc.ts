@@ -73,7 +73,7 @@ export interface BuddyBridge {
   hologramReady(): void
   hologramHover(over: boolean): void
   prompt(text: string): void
-  permissionAnswer(id: string, allow: boolean): void
+  permissionAnswer(id: string, allow: boolean, remember?: boolean): void
   closePanel(): void
   stop(): void
 }

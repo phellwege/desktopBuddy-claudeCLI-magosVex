@@ -17,6 +17,7 @@ export interface ClaudeCliDeps {
   extraDirs: string[]
   model: string | null
   allowedTools: string[]
+  permissionMode: 'acceptEdits' | 'manual'
   server: LocalServer
   lines: { authError?: string[]; cliMissing?: string[]; error?: string[] }
   onMood(mood: Mood | 'restore'): void
@@ -40,7 +41,7 @@ export function buildArgs(d: ClaudeCliDeps, sessionId: string | null, newSession
   args.push('--mcp-config', d.server.mcpConfig())
   args.push('--strict-mcp-config')
   args.push('--allowedTools', d.allowedTools.join(' '))
-  args.push('--permission-mode', 'manual')
+  args.push('--permission-mode', d.permissionMode)
   // The CLI calls this MCP tool (registered on the same buddy server as mcp-config above) for
   // any tool not already covered by --allowedTools, instead of the withdrawn hook design.
   args.push('--permission-prompt-tool', 'mcp__buddy__permission_prompt')

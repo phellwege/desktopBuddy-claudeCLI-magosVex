@@ -86,6 +86,31 @@ test('a permission request opens the card, and Deny reaches the CLI turn', async
   await expect.poll(() => hologram.locator('#log').textContent(), { timeout: 15000 }).toMatch(/denied/i)
 })
 
+test('Sanction this session answers a later request for the same tool without reopening the card', async () => {
+  // A slower gap between the fake CLI's scripted lines gives the intermediate assertions
+  // (card still hidden, only one of two activities done) a real window to land in, instead
+  // of the whole exchange completing before Playwright ever polls.
+  const { hologram } = await launch('permission', { FAKE_CLAUDE_PERMISSION_COUNT: '2', FAKE_CLAUDE_GAP_MS: '150' })
+
+  await hologram.locator('#input').fill('run something risky twice')
+  await hologram.locator('#input').press('Enter')
+
+  const card = hologram.locator('#permission')
+  await expect(card).toBeVisible({ timeout: 15000 })
+  await expect(hologram.locator('#perm-detail')).toContainText('Bash')
+
+  await hologram.locator('#perm-session').click()
+  await expect(card).toBeHidden()
+
+  // The second permission_prompt call is for the same tool name, so main answers it from the
+  // session allow-list without ever reopening the card - checked once while only the first of
+  // the two activity rows has finished, and again once both have.
+  await expect.poll(() => hologram.locator('.activity').count(), { timeout: 15000 }).toBe(2)
+  await expect(card).toBeHidden()
+  await expect.poll(() => hologram.locator('.activity.done').count(), { timeout: 15000 }).toBe(2)
+  await expect(card).toBeHidden()
+})
+
 test('a buddy MCP tool call from the CLI reaches the real body state', async () => {
   const { app: electronApp, hologram } = await launch('mcp')
 

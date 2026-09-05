@@ -174,6 +174,20 @@ The former hook design (a `PermissionRequest` hook posting to `POST /permission`
 withdrawn. Cards show one at a time: a request arriving while a card is up waits its turn;
 if the server's timeout expires it first, it is denied without ever showing a card.
 
+### 6.4.1 Permission mode and session allows (added 2026-09-05, Peter's call)
+
+Asking on every edit was too much. Two changes:
+
+- `config.permissionMode` is `acceptEdits` (default) or `manual`, passed to the CLI as
+  `--permission-mode`. With `acceptEdits` the CLI approves file edits inside the workspace
+  on its own; shell commands and anything outside the workspace still come through the
+  permission tool. `manual` restores the old behavior.
+- The permission card gets a third button, "Allow this session". It answers the request
+  as allowed and remembers the tool name (`Bash`, `WebFetch`, whatever asked) in a
+  session allow-list held in main; later requests for that tool name are answered
+  allowed without a card and without a line. The list clears on `/new` and `/cd` (a new
+  CLI session) and on app exit. Deny and the timeout behave as before.
+
 ### 6.5 Sessions, workspace, config
 
 One session per app run until `/new`. `/cd <path>` changes the workspace for the next
@@ -213,5 +227,5 @@ text; a failing first turn shows the `authError` line with the raw detail.
 
 ## 9. Config additions
 
-None new; existing fields become live. `allowedTools` default stays
-`["Read", "Glob", "Grep", "mcp__buddy__*"]`.
+`permissionMode: "acceptEdits" | "manual"`, default `acceptEdits` (6.4.1). Existing fields
+become live. `allowedTools` default stays `["Read", "Glob", "Grep", "mcp__buddy__*"]`.

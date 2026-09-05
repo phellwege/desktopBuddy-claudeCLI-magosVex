@@ -245,8 +245,9 @@ window.buddy.onChatPermission((p) => {
   if (p.dismiss) { if (pending?.id === p.id) { pending = null; perm.hidden = true }; return }
   pending = p; permLine.textContent = p.line ?? ''; permDetail.textContent = `${p.toolName ?? ''}: ${p.summary ?? ''}`; perm.hidden = false
 })
-const answer = (allow: boolean) => { if (!pending) return; window.buddy.permissionAnswer(pending.id, allow); pending = null; perm.hidden = true }
+const answer = (allow: boolean, remember = false) => { if (!pending) return; window.buddy.permissionAnswer(pending.id, allow, remember); pending = null; perm.hidden = true }
 $('perm-allow').addEventListener('click', () => answer(true))
+$('perm-session').addEventListener('click', () => answer(true, true))
 $('perm-deny').addEventListener('click', () => answer(false))
 
 input.addEventListener('keydown', (e) => {

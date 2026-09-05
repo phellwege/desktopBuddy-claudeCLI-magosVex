@@ -26,7 +26,7 @@ const bridge: BuddyBridge = {
   hologramReady: () => ipcRenderer.send(CH.hologramReady),
   hologramHover: (over) => ipcRenderer.send(CH.hologramHover, { over }),
   prompt: (text) => ipcRenderer.send(CH.chatPrompt, { text }),
-  permissionAnswer: (id, allow) => ipcRenderer.send(CH.chatPermissionAnswer, { id, allow }),
+  permissionAnswer: (id, allow, remember) => ipcRenderer.send(CH.chatPermissionAnswer, { id, allow, remember }),
   closePanel: () => ipcRenderer.send(CH.chatClose),
   stop: () => ipcRenderer.send(CH.chatStop),
 }

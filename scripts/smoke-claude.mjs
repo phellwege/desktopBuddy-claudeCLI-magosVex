@@ -91,6 +91,10 @@ function buildSmokeArgs({ sessionId, mcpConfig }) {
     '--mcp-config', mcpConfig,
     '--strict-mcp-config',
     '--allowedTools', 'Read Glob Grep mcp__buddy__*',
+    // Deliberately kept as 'manual' regardless of config.permissionMode: this script's whole
+    // point is to exercise the permission-prompt tool (the Bash request above), and acceptEdits
+    // would not change that (it only auto-approves file edits, not shell commands), so there is
+    // no reason to ever pass acceptEdits here.
     '--permission-mode', 'manual',
     '--permission-prompt-tool', 'mcp__buddy__permission_prompt',
   ]

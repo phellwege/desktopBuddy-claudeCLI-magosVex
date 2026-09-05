@@ -26,6 +26,7 @@ function baseDeps(overrides: Partial<ClaudeCliDeps> = {}): ClaudeCliDeps {
     extraDirs: [],
     model: null,
     allowedTools: ['Read', 'Glob'],
+    permissionMode: 'acceptEdits',
     server: fakeServer(),
     lines: {},
     onMood: () => {},
@@ -34,8 +35,8 @@ function baseDeps(overrides: Partial<ClaudeCliDeps> = {}): ClaudeCliDeps {
 }
 
 describe('buildArgs', () => {
-  it('produces the exact flag list for a first turn', () => {
-    const deps = baseDeps()
+  it.each(['acceptEdits', 'manual'] as const)('produces the exact flag list for a first turn (permissionMode: %s)', (permissionMode) => {
+    const deps = baseDeps({ permissionMode })
     expect(buildArgs(deps, null, 'new-id')).toEqual([
       '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
       '--setting-sources', 'project',
@@ -44,13 +45,13 @@ describe('buildArgs', () => {
       '--mcp-config', deps.server.mcpConfig(),
       '--strict-mcp-config',
       '--allowedTools', 'Read Glob',
-      '--permission-mode', 'manual',
+      '--permission-mode', permissionMode,
       '--permission-prompt-tool', 'mcp__buddy__permission_prompt',
     ])
   })
 
-  it('produces the exact flag list for a resumed turn, with model and extraDirs appended', () => {
-    const deps = baseDeps({ model: 'sonnet', extraDirs: ['C:\\other', 'C:\\more'] })
+  it.each(['acceptEdits', 'manual'] as const)('produces the exact flag list for a resumed turn, with model and extraDirs appended (permissionMode: %s)', (permissionMode) => {
+    const deps = baseDeps({ model: 'sonnet', extraDirs: ['C:\\other', 'C:\\more'], permissionMode })
     expect(buildArgs(deps, 'sess-1', 'new-id')).toEqual([
       '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
       '--setting-sources', 'project',
@@ -59,7 +60,7 @@ describe('buildArgs', () => {
       '--mcp-config', deps.server.mcpConfig(),
       '--strict-mcp-config',
       '--allowedTools', 'Read Glob',
-      '--permission-mode', 'manual',
+      '--permission-mode', permissionMode,
       '--permission-prompt-tool', 'mcp__buddy__permission_prompt',
       '--model', 'sonnet',
       '--add-dir', 'C:\\other',
