@@ -37,6 +37,28 @@ describe('loadPack', () => {
     expect(a.idle.fps).toBe(6)
     expect(a.sit.fps).toBe(2)
   })
+  it('defaults repeat to 1 and carries an explicit repeat through', () => {
+    const r = loadPack(FIXTURE)
+    if (!r.ok) throw new Error(r.errors.join())
+    expect(r.pack.animations.emote_happy.repeat).toBe(1)   // fallback-resolved
+    expect(r.pack.animations.idle.repeat).toBe(1)          // declared, no repeat given
+    const dir = copyFixture(d => writeFileSync(join(d, 'animations.json'), JSON.stringify({
+      idle: { frames: ['a0', 'a1'] }, walk: { right: ['w0'] },
+      emote_alarmed: { frames: ['a0', 'a1'], fps: 5, repeat: 3 },
+    })))
+    const r2 = loadPack(dir)
+    if (!r2.ok) throw new Error(r2.errors.join())
+    expect(r2.pack.animations.emote_alarmed.repeat).toBe(3)
+  })
+  it('rejects repeat on a looping animation', () => {
+    const dir = copyFixture(d => writeFileSync(join(d, 'animations.json'), JSON.stringify({
+      idle: { frames: ['a0', 'a1'], repeat: 2 }, walk: { right: ['w0'] },
+    })))
+    const r = loadPack(dir)
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.errors.join('\n')).toContain('animations.idle: repeat has no effect')
+  })
   it('mirrors a right-only walk', () => {
     const r = loadPack(FIXTURE)
     if (!r.ok) throw new Error(r.errors.join())

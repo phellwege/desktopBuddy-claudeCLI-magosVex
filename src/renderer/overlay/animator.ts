@@ -6,11 +6,14 @@ export class Animator {
   private index = 0
   private elapsed = 0
   private finished = false
+  // Completed passes of the current one-shot. A one-shot with repeat n restarts from frame 0
+  // until it has played n times, then reports justFinished exactly once, as before.
+  private passes = 0
   constructor(private readonly animations: Animations) {}
 
   set(key: AnimationKey): void {
     if (key === this.key) return
-    this.key = key; this.index = 0; this.elapsed = 0; this.finished = false
+    this.key = key; this.index = 0; this.elapsed = 0; this.finished = false; this.passes = 0
   }
   setFacing(f: Facing): void { this.facing = f }
   private list(): string[] {
@@ -33,6 +36,7 @@ export class Animator {
       this.elapsed -= frameMs
       if (this.index + 1 < n) this.index++
       else if (def.loop) this.index = 0
+      else if (++this.passes < def.repeat) this.index = 0
       else { this.finished = true; return { justFinished: true } }
     }
     return { justFinished: false }

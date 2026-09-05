@@ -14,7 +14,9 @@ export interface BuddyState { x: number; facing: Facing; activity: Activity; moo
   panelOpen: boolean; asleep: boolean; targetX?: number }
 export interface AtlasFrame { x: number; y: number; w: number; h: number; ax: number; ay: number; origin?: [number, number] }
 export interface Atlas { image: string; maxFrameSize: [number, number]; frames: Record<string, AtlasFrame> }
-export interface AnimationDef { right: string[]; left: string[]; fps: number; loop: boolean; mirrorLeft: boolean }
+// repeat: how many times a one-shot animation plays before it reports finishing. Only
+// meaningful when loop is false; a short emote needs a few passes to be noticed at all.
+export interface AnimationDef { right: string[]; left: string[]; fps: number; loop: boolean; mirrorLeft: boolean; repeat: number }
 export type Animations = Record<AnimationKey, AnimationDef> & { faces?: Partial<Record<Expression, string>> }
 export interface PackTheme { accent: string; glow: string; background: string; text: string; font: string; glyph: string }
 export type LineKey = 'greeting' | 'idleMutter' | 'thinking' | 'toolRunning' | 'permissionAsk' |

@@ -37,7 +37,8 @@ const AtlasSchema = z.object({ image: z.string(),
   frames: z.record(z.string(), FrameSchema) })
 const RawAnimSchema = z.object({ frames: z.array(z.string()).optional(), right: z.array(z.string()).optional(),
   left: z.array(z.string()).optional(), fps: z.number().positive().optional(),
-  loop: z.boolean().optional(), mirror: z.boolean().optional() })
+  loop: z.boolean().optional(), mirror: z.boolean().optional(),
+  repeat: z.number().int().positive().optional() })
 type RawAnim = z.infer<typeof RawAnimSchema>
 const AnimationsSchema = z.record(z.string(), RawAnimSchema)
 const FacesRawSchema = z.record(z.string(), z.string())
@@ -69,7 +70,11 @@ export function resolveAnimations(raw: Record<string, RawAnim>, frameNames: Set<
     for (const f of new Set([...right, ...left])) {
       if (!frameNames.has(f)) errors.push(`animations.${key}: unknown frame "${f}"`)
     }
-    out[key] = { right, left, fps: r.fps ?? DEFAULT_FPS[key] ?? 8, loop: r.loop ?? LOOPING.has(key), mirrorLeft }
+    const loop = r.loop ?? LOOPING.has(key)
+    // A looping animation never ends, so it would silently swallow a repeat: say so rather
+    // than let a pack author set a number that does nothing.
+    if (loop && r.repeat !== undefined) errors.push(`animations.${key}: repeat has no effect on a looping animation`)
+    out[key] = { right, left, fps: r.fps ?? DEFAULT_FPS[key] ?? 8, loop, mirrorLeft, repeat: r.repeat ?? 1 }
   }
   for (const key of ['idle', 'walk'] as const) {
     if (!out[key]) errors.push(`animations: missing required "${key}"`)
@@ -80,7 +85,7 @@ export function resolveAnimations(raw: Record<string, RawAnim>, frameNames: Set<
     const src = fb ? out[fb] : undefined
     if (!src) continue
     out[key] = { right: src.right, left: src.left, mirrorLeft: src.mirrorLeft,
-      fps: DEFAULT_FPS[key] ?? 8, loop: LOOPING.has(key) }
+      fps: DEFAULT_FPS[key] ?? 8, loop: LOOPING.has(key), repeat: 1 }
   }
   if (errors.length) return null
   return out as Animations
