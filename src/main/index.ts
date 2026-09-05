@@ -350,7 +350,10 @@ async function main(): Promise<void> {
 
   buddy.onChange((v) => {
     if (overlay.isDestroyed()) return
-    const inJourney = v.state.leg !== undefined
+    // A body being carried by the pointer is mid-journey too: it has no leg yet (the drop
+    // plans one), and treating that as "landed" collapsed the window back to the strip the
+    // instant a drag began, which is why he vanished above it.
+    const inJourney = v.state.leg !== undefined || v.state.dragging
     if (journeying && !inJourney) {
       // Landed: settle onto the new display and shrink the window back to a strip. Both
       // happen before the state message so the renderer never sees a stale window origin.

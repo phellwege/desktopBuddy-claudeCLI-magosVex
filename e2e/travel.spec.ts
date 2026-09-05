@@ -136,6 +136,9 @@ test('dragging him picks him up, and dropping lands him on the display underneat
   await overlay.mouse.move(grab.x + 40, grab.y - 40)
   await expect.poll(() => state(electronApp).then(s => s.dragging), { timeout: 10000 }).toBe(true)
   expect((await state(electronApp)).activity).toBe('hovering')
+  // The window must really have grown past the bottom strip, or he vanishes the moment he
+  // is carried above it (Windows ignores setBounds on a non-resizable window).
+  await expect.poll(() => overlayBoundsOf(electronApp).then(b => b.height), { timeout: 5000 }).toBeGreaterThan(500)
 
   // Carry him to the middle of the target display and let go. Page coordinates are relative
   // to the overlay window, which is now the whole desktop.
