@@ -540,7 +540,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `ChatDonePayload.id`, `ChatReadbackPayload`, `window.buddy.onChatReadback` from Task 2; the fake CLI's readback behavior from Task 1 (`Readback: ` plus the first 40 characters of the reply).
-- Produces: bubble DOM after a readback: `.msg.buddy > .face-slot? + .text > (.readback, button.plain-toggle, .plain[hidden])`.
+- Produces: bubble DOM after a readback: `.msg.buddy > .face-slot? + .text > (.readback, button.plain-toggle, .plain[hidden])`. The toggle is a bare chevron (down when collapsed, up when expanded) with a "plain text" tooltip, no text label.
 
 - [ ] **Step 1: Write the failing e2e cases**
 
@@ -596,8 +596,10 @@ function applyReadback(bubble: HTMLDivElement, text: string): void {
   while (textEl.firstChild) plain.appendChild(textEl.firstChild)
   const headline = document.createElement('div'); headline.className = 'readback'
   headline.innerHTML = renderMarkdown(text)
+  // A bare arrow (Peter's call): no label, a tooltip carries the meaning.
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'plain-toggle'
-  const label = (): void => { toggle.textContent = `${plain.hidden ? '\u25B8' : '\u25BE'} plain text` }
+  toggle.title = 'plain text'; toggle.setAttribute('aria-label', 'show plain text')
+  const label = (): void => { toggle.textContent = plain.hidden ? '\u25BE' : '\u25B4' }
   label()
   toggle.addEventListener('click', () => { plain.hidden = !plain.hidden; label() })
   textEl.append(headline, toggle, plain)
@@ -630,12 +632,12 @@ window.buddy.onChatReadback(({ id, text }) => {
 
 ```css
 .readback { }
-.plain-toggle { display: block; margin-top: 4px; padding: 0; border: none; background: none; color: inherit; font: inherit; font-size: 11px; opacity: 0.7; cursor: pointer; }
+.plain-toggle { display: block; margin-top: 2px; padding: 0 4px; border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; line-height: 1; opacity: 0.7; cursor: pointer; }
 .plain-toggle:hover { opacity: 1; }
 .plain { margin-top: 4px; padding-top: 4px; border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
 ```
 
-The toggle's leading chevron is part of its text; the `.activity::before` rule does not apply to it.
+The toggle's chevron is its whole text; the `.activity::before` rule does not apply to it.
 
 - [ ] **Step 4: Run the e2e to verify it passes**
 

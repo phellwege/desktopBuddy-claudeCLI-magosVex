@@ -141,7 +141,8 @@ Bubble structure after a readback lands (`src/renderer/hologram/main.ts`):
   .face-slot            (unchanged)
   .text
     .readback           markdown-rendered readback text
-    .plain-toggle       "▸ plain text" / "▾ plain text", a button styled as a row
+    .plain-toggle       a bare chevron button (down when collapsed, up when expanded) with a
+                        "plain text" tooltip; no label (Peter, 2026-09-04 evening)
     .plain[hidden]      the original rendered reply, moved here as-is
 ```
 
