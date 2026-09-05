@@ -78,6 +78,21 @@ describe('config', () => {
     writeFileSync(p2, JSON.stringify({ readback: false }))
     expect(loadConfig(p2).readback).toBe(false)
   })
+  it('accepts an explicit permissionMode of manual', () => {
+    const p = tmp()
+    writeFileSync(p, JSON.stringify({ permissionMode: 'manual' }))
+    expect(loadConfig(p).permissionMode).toBe('manual')
+  })
+  it('falls back to the acceptEdits default for an invalid permissionMode, with a logged line, keeping the rest', () => {
+    const p = tmp()
+    writeFileSync(p, JSON.stringify({ permissionMode: 'yolo', model: 'sonnet' }))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const cfg = loadConfig(p)
+    expect(cfg.permissionMode).toBe('acceptEdits')
+    expect(cfg.model).toBe('sonnet')
+    expect(spy).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('permissionMode'))
+    spy.mockRestore()
+  })
   it('round-trips through saveConfig', () => {
     const p = tmp()
     saveConfig(p, { ...DEFAULT_CONFIG, workspace: 'D:\\w' })

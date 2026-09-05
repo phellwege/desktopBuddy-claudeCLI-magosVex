@@ -11,6 +11,7 @@ import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, loadPage, rebound, setHologramInteractive } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
 import { wireIpc } from './ipc'
+import { SessionAllows } from './permissions'
 import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload } from '../shared/ipc'
 import { EchoBrain } from './brain/echo'
 import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
@@ -132,15 +133,22 @@ async function main(): Promise<void> {
   // their real logic exists yet (the brain needs the server, and the controller needs the
   // brain): they close over this ref instead, filled in once the controller is built.
   let chatRef: ChatController | undefined
+  // "Allow this session" (spec 6.4.1): tool names answered allowed-and-remembered here are
+  // granted on every later request without a card. Cleared on /new and /cd, and (implicitly)
+  // on app exit since the whole process instance goes away.
+  const sessionAllows = new SessionAllows()
   const showPermission = async (req: PermissionRequest): Promise<{ allow: boolean; reason: string }> => {
     // Expired while waiting its turn: the server already answered deny on the wire.
     if (expiredPermissions.delete(req.id)) return { allow: false, reason: 'timed out' }
+    if (sessionAllows.allows(req.toolName)) return { allow: true, reason: 'allowed for this session' }
     actions.openPanel()
     const line = pickLine(pack, 'permissionAsk') ?? `Allow ${req.toolName}?`
     out.system(line, 'begging')
     const payload: ChatPermissionPayload = { id: req.id, toolName: req.toolName, summary: req.summary, line }
     toHologram(CH.chatPermission, payload)
-    return chatRef!.awaitPermissionAnswer(req.id)
+    const decision = await chatRef!.awaitPermissionAnswer(req.id)
+    if (decision.allow && decision.remember) sessionAllows.remember(req.toolName)
+    return decision
   }
   // Cards show one at a time. The renderer has a single card slot, so a second request that
   // arrives while one is up (parallel tool calls) waits for the first answer or its expiry
@@ -190,7 +198,7 @@ async function main(): Promise<void> {
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
-    allowedTools: config.allowedTools, server,
+    allowedTools: config.allowedTools, permissionMode: config.permissionMode, server,
     lines: { authError: pack.persona.lines.authError, cliMissing: pack.persona.lines.cliMissing, error: pack.persona.lines.error },
     onMood,
   })
@@ -198,7 +206,13 @@ async function main(): Promise<void> {
   const chat = new ChatController({
     brain, actions, pack, out,
     settings: { workspace: config.workspace, model: config.model, sessionId: null },
-    onSettingsChange: (s) => { config.workspace = s.workspace; config.model = s.model; saveConfig(configPath, config) },
+    onSettingsChange: (s) => {
+      config.workspace = s.workspace; config.model = s.model; saveConfig(configPath, config)
+      // A null session id means a fresh CLI session is starting (/new, or /cd before any
+      // turn has run yet): the allow-list belongs to the session that is ending, not the one
+      // about to start.
+      if (s.sessionId === null) sessionAllows.clear()
+    },
     readback, log: (line) => appendLog(logDir, 'main', line),
   })
   chatRef = chat

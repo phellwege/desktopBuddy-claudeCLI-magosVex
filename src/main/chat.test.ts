@@ -171,6 +171,14 @@ describe('ChatController', () => {
     expect(await pending).toEqual({ allow: true, reason: 'user allowed' })
     expect(out.faces).not.toContain('anger')
   })
+  it('answering allow with remember resolves with remember: true, no denial line', async () => {
+    const out = fakeOut()
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
+    const pending = c.awaitPermissionAnswer('p1r')
+    c.permissionAnswer('p1r', true, true)
+    expect(await pending).toEqual({ allow: true, reason: 'user allowed', remember: true })
+    expect(out.systems).toEqual([])
+  })
   it('a denied permission posts the permissionDenied line with anger and resolves allow: false', async () => {
     const out = fakeOut()
     const withLine = { ...pack, persona: { ...pack.persona, lines: { ...pack.persona.lines, permissionDenied: ['Denied, heretic.'] } } }

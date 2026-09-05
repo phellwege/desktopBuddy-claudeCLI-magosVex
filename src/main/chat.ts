@@ -24,7 +24,7 @@ export class ChatController implements ChatPort {
   private currentExpression: Expression = 'neutral'
   // Permission requests the local server is waiting on: keyed by the hook's tool_use_id,
   // resolved by permissionAnswer() once the user answers the card in the panel.
-  private readonly pendingPermissions = new Map<string, (d: { allow: boolean; reason: string }) => void>()
+  private readonly pendingPermissions = new Map<string, (d: { allow: boolean; reason: string; remember?: boolean }) => void>()
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void;
@@ -137,7 +137,7 @@ export class ChatController implements ChatPort {
   // Called by the local server's onPermission callback (bound in main/index.ts) once it has
   // shown the permission card; resolves when the user answers, or never, if the server's own
   // timeout fires first and answers the hook on its own.
-  awaitPermissionAnswer(id: string): Promise<{ allow: boolean; reason: string }> {
+  awaitPermissionAnswer(id: string): Promise<{ allow: boolean; reason: string; remember?: boolean }> {
     return new Promise((resolve) => { this.pendingPermissions.set(id, resolve) })
   }
   // Called by main/index.ts's onPermissionTimeout once the server's own timeout has already
@@ -150,12 +150,15 @@ export class ChatController implements ChatPort {
     this.pendingPermissions.delete(id)
     resolve({ allow: false, reason: 'timed out' })
   }
-  permissionAnswer(id: string, allow: boolean): void {
+  // remember is only ever honored when the answer is allow: a deny is never remembered, no
+  // matter what the caller passes (there is no "deny this session" button, but a stray true
+  // here must still not poison the session allow-list).
+  permissionAnswer(id: string, allow: boolean, remember = false): void {
     const resolve = this.pendingPermissions.get(id)
     if (!resolve) return
     this.pendingPermissions.delete(id)
     if (!allow) this.deps.out.system(pickLine(this.deps.pack, 'permissionDenied') ?? 'Denied.', 'anger')
-    resolve({ allow, reason: allow ? 'user allowed' : 'user denied' })
+    resolve({ allow, reason: allow ? 'user allowed' : 'user denied', remember: allow && remember ? true : undefined })
   }
   // Called directly by the local server's set_expression tool during a turn (buddy tool
   // calls never reach the stream parser, so this is the only path an in-turn expression

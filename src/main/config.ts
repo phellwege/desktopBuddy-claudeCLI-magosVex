@@ -11,6 +11,10 @@ export interface Config {
   model: string | null
   allowedTools: string[]
   permissionTimeoutSec: number
+  // acceptEdits: the CLI approves file edits inside the workspace on its own; shell commands
+  // and anything outside the workspace still come through the permission tool. manual restores
+  // asking for everything (spec 6.4.1).
+  permissionMode: 'acceptEdits' | 'manual'
   readback: boolean
   wanderIntervalSec: [number, number]
   sleepAfterMin: number
@@ -25,6 +29,7 @@ export const DEFAULT_CONFIG: Config = {
   model: null,
   allowedTools: ['Read', 'Glob', 'Grep', 'mcp__buddy__*'],
   permissionTimeoutSec: 120,
+  permissionMode: 'acceptEdits',
   readback: true,
   wanderIntervalSec: [8, 30],
   sleepAfterMin: 10,
@@ -55,6 +60,7 @@ const VALIDATORS: { [K in keyof Config]: (v: unknown) => boolean } = {
   // 5..600 s: below 5 a permission card could never realistically be answered in time, and
   // above 600 an unanswered card would block the CLI's turn for an unreasonably long time.
   permissionTimeoutSec: (v) => isFiniteNumber(v) && v >= 5 && v <= 600,
+  permissionMode: (v) => v === 'acceptEdits' || v === 'manual',
   readback: (v) => typeof v === 'boolean',
   wanderIntervalSec: (v) => Array.isArray(v) && v.length === 2 && v.every((x) => typeof x === 'number'),
   sleepAfterMin: isFiniteNumber,
