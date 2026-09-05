@@ -123,11 +123,16 @@ function isOver(clientX: number, clientY: number): boolean {
   return hit.hit(fx, fy)
 }
 
+// The window only receives the pointer while it is over his opaque pixels (click-through
+// everywhere else), so a hand cursor here reads as "he is clickable" and never leaks onto
+// the desktop around him.
+function setCursor(over: boolean): void { document.body.style.cursor = over ? 'pointer' : 'default' }
+
 window.addEventListener('mousemove', (e) => {
   const over = isOver(e.clientX, e.clientY)
-  if (over !== hovering) { hovering = over; window.buddy.hover(over) }
+  if (over !== hovering) { hovering = over; window.buddy.hover(over); setCursor(over) }
 })
-document.addEventListener('mouseleave', () => { if (hovering) { hovering = false; window.buddy.hover(false) } })
+document.addEventListener('mouseleave', () => { if (hovering) { hovering = false; window.buddy.hover(false); setCursor(false) } })
 canvas.addEventListener('mousedown', (e) => { if (e.button === 0 && isOver(e.clientX, e.clientY)) window.buddy.click() })
 window.addEventListener('contextmenu', (e) => {
   e.preventDefault()
