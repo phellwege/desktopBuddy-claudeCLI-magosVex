@@ -190,8 +190,13 @@ export class ChatController implements ChatPort {
   // Fire and forget: the next turn may start while this runs, and a failure only logs.
   private async readback(id: number, text: string): Promise<void> {
     let result: ReadbackResult
+    const started = Date.now()
     try { result = await this.deps.readback!.run(text) } catch (e) { result = { ok: false, reason: (e as Error).message } }
-    if (result.ok) { this.deps.out.readback({ id, text: result.text }); return }
+    if (result.ok) {
+      this.deps.out.readback({ id, text: result.text })
+      this.deps.log?.(`readback ok in ${((Date.now() - started) / 1000).toFixed(1)} s`)
+      return
+    }
     this.deps.log?.(`readback failed: ${result.reason}`)
     // The bubble is waiting on this id; tell it to settle to the plain text now.
     this.deps.out.readback({ id, failed: true })

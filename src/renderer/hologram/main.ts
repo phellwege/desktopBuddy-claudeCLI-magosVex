@@ -41,7 +41,8 @@ const activities = new Map<string, HTMLDivElement>()
 // new reply bubble starts in the waiting state.
 let readbackOn = false
 // Bubbles waiting for their readback, by message id. Cleared when it lands, fails, or after
-// 30 s (the fallback settles the bubble to plain text).
+// 60 s (the fallback settles the bubble to plain text; it must outlast the readback
+// call's own 45 s timeout in src/main/brain/readback.ts, which reports failure itself).
 const awaitingReadback = new Map<number, { bubble: HTMLDivElement; timer: number }>()
 // Reply bubbles of the in-flight turn. A system line (an error line, the stopped line, a
 // CLI status line) clears `current` so later text starts a fresh bubble under it, but every
@@ -221,7 +222,7 @@ window.buddy.onChatDone((p: ChatDonePayload) => {
   if (last) renderFaceInto(last, p.expression ?? 'neutral')
   for (const bubble of turnReplies) {
     if (bubble !== last || p.error || !p.readback) { settlePlain(bubble); continue }
-    const timer = window.setTimeout(() => { awaitingReadback.delete(p.id); settlePlain(bubble) }, 30000)
+    const timer = window.setTimeout(() => { awaitingReadback.delete(p.id); settlePlain(bubble) }, 60000)
     awaitingReadback.set(p.id, { bubble, timer })
   }
   turnReplies = []; current = null; buffer = ''; activities.clear()
