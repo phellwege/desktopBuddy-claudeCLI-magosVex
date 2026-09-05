@@ -17,6 +17,7 @@ Spec: `docs/superpowers/specs/2026-09-04-readback-layer-design.md`.
 - No test spawns the real `claude`; every test uses `test/fake-claude.cjs`. The only real-CLI path is `npm run smoke:claude`, run by hand only. Never run it as part of a task.
 - Readback flags (pinned against CLI 2.1.220): `-p --output-format json --model haiku --setting-sources project --no-session-persistence --system-prompt <persona + instruction> --tools "" --strict-mcp-config`. No `--mcp-config`, no `--session-id`, no `--resume`.
 - Input to the readback is cut at 12,000 characters with a trailing ` [truncated]`. Timeout 20 seconds. Scratch cwd is `<userData>/readback`, created on first use.
+- Waiting state (Peter, 2026-09-04 evening): with readback on, the bubble shows three animated dots from its first delta until the readback lands or fails; the plain text accumulates hidden. On failure, timeout, or an error turn the dots give way to the plain text with no arrow. With readback off the bubble streams plain text as today.
 - Only real replies get a readback: not system lines, canned lines, permission cards, slash confirmations, error turns, empty replies, the echo brain, or `config.readback === false`. Old bubbles never change after their readback lands or fails.
 - Commit with `git -c user.name="phellwege" -c user.email="phellwege1@gmail.com" commit -m "<message>"`; every message ends with the trailer line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`. Stage only files you changed (never `git add -A`; ignore `build/` and `test-results/`). Branch `readback-layer`, in place, no PRs.
 - Windows: PowerShell-safe or Git Bash commands; never `taskkill` from Git Bash. Kill leftover test Electron processes with PowerShell `Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force` only when no dev instance is running (ask the controller if unsure; the controller runs the dev instance).
@@ -539,20 +540,21 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `src/renderer/hologram/main.ts`, `src/renderer/hologram/styles.css`, `e2e/brain.spec.ts`, `scripts/smoke-claude.mjs`
 
 **Interfaces:**
-- Consumes: `ChatDonePayload.id`, `ChatReadbackPayload`, `window.buddy.onChatReadback` from Task 2; the fake CLI's readback behavior from Task 1 (`Readback: ` plus the first 40 characters of the reply).
-- Produces: bubble DOM after a readback: `.msg.buddy > .face-slot? + .text > (.readback, button.plain-toggle, .plain[hidden])`. The toggle is a bare chevron (down when collapsed, up when expanded) with a "plain text" tooltip, no text label.
+- Consumes: `ChatDonePayload.id` and `.readback`, `ChatStatusPayload.readback`, `ChatReadbackPayload { id, text?, failed? }`, `window.buddy.onChatReadback` from Task 2 (the last three added by the controller after Task 2 landed); the fake CLI's readback behavior from Task 1 (`Readback: ` plus the first 40 characters of the reply).
+- Produces: bubble DOM while waiting: `.msg.buddy.waiting > .face-slot? + .text > (.dots, .plain[hidden])`; after a readback: `.msg.buddy > .face-slot? + .text > (.readback, button.plain-toggle, .plain[hidden])`; after a failure: `.text > .plain` visible, no toggle. The toggle is a bare chevron (down when collapsed, up when expanded) with a "plain text" tooltip, no text label.
 
 - [ ] **Step 1: Write the failing e2e cases**
 
-Append to `e2e/brain.spec.ts` (reuse its `launch(scenario)` helper; the text scenario's reply is `Hello`, so the fake readback is `Readback: Hello`):
+Append to `e2e/brain.spec.ts` (reuse its `launch(scenario)` helper; the text scenario's reply is `Hello`, so the fake readback is `Readback: Hello`). Give `launch` an optional second parameter `extraEnv: Record<string, string> = {}` spread into the launch env after the existing entries. Use the file's actual input selectors if they differ from `#input` (check `src/renderer/hologram/index.html`).
 
 ```ts
-test('a reply gets an in-character headline with the plain text folded under a toggle', async () => {
+test('a reply settles to an in-character headline with the plain text folded under the arrow', async () => {
   const { hologram } = await launch('text')
   await hologram.fill('#input', 'hi')
   await hologram.press('#input', 'Enter')
   const lastReply = hologram.locator('.msg.buddy').last()
   await expect(lastReply.locator('.readback')).toContainText('Readback: Hello', { timeout: 15000 })
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
   await expect(lastReply.locator('.plain')).toBeHidden()
   await expect(lastReply.locator('.face')).toHaveCount(1)
   await lastReply.locator('.plain-toggle').click()
@@ -560,81 +562,167 @@ test('a reply gets an in-character headline with the plain text folded under a t
   await expect(lastReply.locator('.plain')).toContainText('Hello')
 })
 
-test('with readback off the bubble stays plain and has no toggle', async () => {
+test('while the readback is pending the bubble shows dots and hides the text', async () => {
+  const { hologram } = await launch('text', { FAKE_CLAUDE_READBACK: 'hang' })
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.face')).toHaveCount(1, { timeout: 15000 })
+  await expect(lastReply.locator('.dots')).toBeVisible()
+  await expect(lastReply.locator('.plain')).toBeHidden()
+  await expect(lastReply.locator('.readback')).toHaveCount(0)
+})
+
+test('a failed readback settles the bubble to plain text with no arrow', async () => {
+  const { hologram } = await launch('text', { FAKE_CLAUDE_READBACK: 'fail' })
+  await hologram.fill('#input', 'hi')
+  await hologram.press('#input', 'Enter')
+  const lastReply = hologram.locator('.msg.buddy').last()
+  await expect(lastReply.locator('.plain')).toBeVisible({ timeout: 15000 })
+  await expect(lastReply.locator('.plain')).toContainText('Hello')
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
+  await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
+})
+
+test('with readback off the bubble streams plain and has no dots or toggle', async () => {
   const { hologram } = await launch('text', { BUDDY_READBACK: '0' })
   await hologram.fill('#input', 'hi')
   await hologram.press('#input', 'Enter')
   const lastReply = hologram.locator('.msg.buddy').last()
   await expect.poll(() => lastReply.textContent(), { timeout: 15000 }).toContain('Hello')
-  await hologram.waitForTimeout(1500)
+  await expect(lastReply.locator('.dots')).toHaveCount(0)
   await expect(lastReply.locator('.plain-toggle')).toHaveCount(0)
   await expect(lastReply.locator('.readback')).toHaveCount(0)
 })
 ```
 
-Give `launch` an optional second parameter `extraEnv: Record<string, string> = {}` spread into the launch env after the existing entries. Use the file's actual input selectors if they differ from `#input` (check `src/renderer/hologram/index.html`).
+The `FAKE_CLAUDE_READBACK` variable reaches the readback child because the app hands its own environment to the CLI; the `hang` variant keeps the readback pending for the app's 20 s timeout, longer than the assertions need.
 
 - [ ] **Step 2: Run the e2e to verify it fails**
 
 Run: `npm run test:e2e -- e2e/brain.spec.ts`
-Expected: the first new case FAILS on `.readback` never appearing; the second may pass already. Kill nothing but the test's own Electron (the test closes it in `afterEach`).
+Expected: the first three new cases FAIL (`.readback`, `.dots`, `.plain` never appear); the last may already pass. Kill nothing but the test's own Electron (the test closes it in `afterEach`).
 
 - [ ] **Step 3: Renderer**
 
-`src/renderer/hologram/main.ts`:
+`src/renderer/hologram/main.ts`. State:
 
 ```ts
-// Bubbles waiting for their readback, by message id. Cleared when it lands or after 30 s.
+// Whether main will follow replies with a readback (from chat:status). Decides whether a
+// new reply bubble starts in the waiting state.
+let readbackOn = false
+// Bubbles waiting for their readback, by message id. Cleared when it lands, fails, or after
+// 30 s (the fallback settles the bubble to plain text).
 const awaitingReadback = new Map<number, { bubble: HTMLDivElement; timer: number }>()
+```
 
-function applyReadback(bubble: HTMLDivElement, text: string): void {
+In the `onChatStatus` handler (find it; it updates the status row), add `readbackOn = p.readback === true`.
+
+Waiting-state bubble creation. Where `onChatDelta` and `onChatActivity` do `current = add('buddy', '')`, call a new helper instead:
+
+```ts
+function newReply(): HTMLDivElement {
+  const bubble = add('buddy', '')
+  if (readbackOn) {
+    const textEl = bubble.querySelector('.text') as HTMLElement
+    const dots = document.createElement('div'); dots.className = 'dots'
+    for (let i = 0; i < 3; i++) dots.appendChild(document.createElement('span'))
+    const plain = document.createElement('div'); plain.className = 'plain'; plain.hidden = true
+    textEl.append(dots, plain)
+    bubble.classList.add('waiting')
+  }
+  return bubble
+}
+```
+
+`flush()` must render the buffer into the right place: if the bubble has a `.plain` child (waiting state), render into that `.plain`; otherwise into `.text` as today:
+
+```ts
+function replyTarget(bubble: HTMLDivElement): HTMLElement | null {
+  return (bubble.querySelector('.plain') as HTMLElement | null) ?? (bubble.querySelector('.text') as HTMLElement | null)
+}
+```
+
+Settling helpers:
+
+```ts
+function settlePlain(bubble: HTMLDivElement): void {
+  // Readback failed, timed out, or the turn errored: show the plain text, no arrow.
+  bubble.querySelector('.dots')?.remove()
+  const plain = bubble.querySelector('.plain') as HTMLElement | null
+  if (plain) plain.hidden = false
+  bubble.classList.remove('waiting')
+}
+
+function settleReadback(bubble: HTMLDivElement, text: string): void {
   const textEl = bubble.querySelector('.text') as HTMLElement | null
   if (!textEl) return
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 4
-  // Move the already-rendered reply as-is (highlighted code, links as text stay intact).
-  const plain = document.createElement('div'); plain.className = 'plain'; plain.hidden = true
-  while (textEl.firstChild) plain.appendChild(textEl.firstChild)
+  bubble.querySelector('.dots')?.remove()
+  let plain = bubble.querySelector('.plain') as HTMLElement | null
+  if (!plain) {
+    // Not created in the waiting state (readback was switched on mid-session): fold the
+    // rendered reply as-is so highlighted code and links-as-text stay intact.
+    plain = document.createElement('div'); plain.className = 'plain'
+    while (textEl.firstChild) plain.appendChild(textEl.firstChild)
+    textEl.appendChild(plain)
+  }
+  plain.hidden = true
   const headline = document.createElement('div'); headline.className = 'readback'
   headline.innerHTML = renderMarkdown(text)
   // A bare arrow (Peter's call): no label, a tooltip carries the meaning.
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'plain-toggle'
   toggle.title = 'plain text'; toggle.setAttribute('aria-label', 'show plain text')
-  const label = (): void => { toggle.textContent = plain.hidden ? '\u25BE' : '\u25B4' }
+  const label = (): void => { toggle.textContent = plain!.hidden ? '\u25BE' : '\u25B4' }
   label()
-  toggle.addEventListener('click', () => { plain.hidden = !plain.hidden; label() })
-  textEl.append(headline, toggle, plain)
+  toggle.addEventListener('click', () => { plain!.hidden = !plain!.hidden; label() })
+  textEl.insertBefore(toggle, plain)
+  textEl.insertBefore(headline, toggle)
+  bubble.classList.remove('waiting')
   if (atBottom) log.scrollTop = log.scrollHeight
 }
 ```
 
-In the `onChatDone` handler, before `current = null`: if `current` and no `p.error`, register it:
+The two arrow literals are the JavaScript unicode escapes for the small down-pointing triangle (U+25BE) and the small up-pointing triangle (U+25B4).
+
+In the `onChatDone` handler, before `current = null`:
 
 ```ts
-  if (current && !p.error) {
-    const bubble = current
-    const timer = window.setTimeout(() => awaitingReadback.delete(p.id), 30000)
-    awaitingReadback.set(p.id, { bubble, timer })
+  if (current) {
+    if (p.error || !p.readback) settlePlain(current)
+    else {
+      const bubble = current
+      const timer = window.setTimeout(() => { awaitingReadback.delete(p.id); settlePlain(bubble) }, 30000)
+      awaitingReadback.set(p.id, { bubble, timer })
+    }
   }
 ```
 
 Add the listener:
 
 ```ts
-window.buddy.onChatReadback(({ id, text }) => {
+window.buddy.onChatReadback(({ id, text, failed }) => {
   const entry = awaitingReadback.get(id)
   if (!entry) return
   awaitingReadback.delete(id); clearTimeout(entry.timer)
-  applyReadback(entry.bubble, text)
+  if (failed || !text) settlePlain(entry.bubble)
+  else settleReadback(entry.bubble, text)
 })
 ```
 
 `src/renderer/hologram/styles.css`:
 
 ```css
+.dots { display: inline-flex; gap: 4px; align-items: center; height: 1.35em; }
+.dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.35; animation: dotpulse 1.2s ease-in-out infinite; }
+.dots span:nth-child(2) { animation-delay: 0.2s; }
+.dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dotpulse { 0%, 80%, 100% { opacity: 0.35; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-2px); } }
 .readback { }
 .plain-toggle { display: block; margin-top: 2px; padding: 0 4px; border: none; background: none; color: var(--accent); font: inherit; font-size: 12px; line-height: 1; opacity: 0.7; cursor: pointer; }
 .plain-toggle:hover { opacity: 1; }
 .plain { margin-top: 4px; padding-top: 4px; border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
+.msg.buddy.waiting .plain { border-top: none; padding-top: 0; margin-top: 0; }
 ```
 
 The toggle's chevron is its whole text; the `.activity::before` rule does not apply to it.
@@ -642,7 +730,7 @@ The toggle's chevron is its whole text; the `.activity::before` rule does not ap
 - [ ] **Step 4: Run the e2e to verify it passes**
 
 Run: `npm run test:e2e`
-Expected: all cases PASS (5 existing plus 2 new). Then `npm run typecheck` and `npx vitest run`.
+Expected: all cases PASS (5 existing plus 4 new). Then `npm run typecheck` and `npx vitest run`.
 
 - [ ] **Step 5: Smoke step**
 

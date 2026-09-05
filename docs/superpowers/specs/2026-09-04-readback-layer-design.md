@@ -29,21 +29,25 @@ persona never reaches it, so answers, tool use, and code stay exactly as they ar
 
 ## 3. Behavior
 
-### 3.1 Flow of one reply
+### 3.1 Flow of one reply (amended 2026-09-04 evening: waiting state)
 
-1. The turn runs as now. Text streams into the bubble as plain Claude text, activity rows
-   appear under it, and the expression face lands at `done`.
+1. The turn runs as now. Activity rows appear under the bubble as tools run, and the
+   expression face lands at `done`. With readback on, the bubble itself shows a waiting
+   indicator, three animated dots, from its first text delta; the plain reply accumulates
+   in a hidden section of the same bubble instead of streaming into view.
 2. On a clean `done` (no error) with non-empty reply text, main starts a readback call
-   (section 4) with the reply text as input.
-3. While the call runs, the bubble stays as it is. Nothing spins, nothing is greyed out.
-   The next prompt may be typed and sent; the readback and the next turn overlap freely.
-4. When the readback arrives, the bubble reflows once: the readback text becomes the
-   headline beside the face, and the plain reply moves under an arrow row that reads
-   "plain text", collapsed. Clicking the row toggles it. Each bubble keeps its own toggle
+   (section 4) with the reply text as input. The dots stay up.
+3. The next prompt may be typed and sent while the readback runs; the readback and the
+   next turn overlap freely.
+4. When the readback arrives, the bubble settles once: the readback text becomes the
+   headline beside the face, the dots go away, and the plain reply stays folded under a
+   small arrow, collapsed. Clicking the arrow toggles it. Each bubble keeps its own toggle
    state; nothing is remembered across bubbles or launches.
-5. If the call fails, times out, or returns empty text, the bubble stays plain with no
-   arrow row and main logs one line. No system line, because the answer is already on
-   screen.
+5. If the call fails, times out, or returns empty text, main tells the renderer, the dots
+   go away, and the plain reply shows with no arrow; main logs one line. No system line,
+   because the answer is on screen. The same happens for a turn that ends with an error.
+6. With readback off (config, echo brain, missing CLI), the bubble streams plain text as
+   before, with no dots and no arrow.
 
 Old bubbles never change after their readback lands or fails.
 
@@ -122,7 +126,12 @@ The scratch `cwd` stays regardless, so the CLI reads no workspace `CLAUDE.md`.
 
 - Every brain reply gets a message id: `ChatController` increments a counter per turn
   and includes it in `ChatDonePayload.id`. The renderer uses it to find the bubble later.
-- New channel `chat:readback` (main to hologram), payload `{ id: number; text: string }`.
+  `ChatDonePayload.readback` says whether a readback was started for that reply, and
+  `ChatStatusPayload.readback` tells the renderer up front whether readbacks are on, so
+  the waiting dots can start with the first delta.
+- New channel `chat:readback` (main to hologram), payload
+  `{ id: number; text?: string; failed?: true }`: text on success, `failed` when the call
+  failed, timed out, or returned nothing, so the bubble can settle to plain text at once.
 - `ChatController.ask` collects the reply text as it streams (it already forwards the
   deltas). After `done` without error and with non-empty text, it calls
   `readback.run(text)` without awaiting it, and on a non-null result sends
@@ -140,6 +149,7 @@ Bubble structure after a readback lands (`src/renderer/hologram/main.ts`):
 .msg.buddy
   .face-slot            (unchanged)
   .text
+    .dots               three animated dots, present only while waiting (readback on)
     .readback           markdown-rendered readback text
     .plain-toggle       a bare chevron button (down when collapsed, up when expanded) with a
                         "plain text" tooltip; no label (Peter, 2026-09-04 evening)
@@ -151,8 +161,11 @@ Bubble structure after a readback lands (`src/renderer/hologram/main.ts`):
 - Moving the plain reply means moving the already-rendered node, not re-rendering, so
   highlighted code and links-as-text stay exactly as they were.
 - Activity rows sit after the bubble today and stay there.
+- With readback on, the bubble starts in the waiting state: the streamed text goes into
+  the hidden `.plain` section from the first delta and `.dots` is what the user sees.
 - The renderer keeps a `Map<number, HTMLDivElement>` of bubbles awaiting a readback,
-  filled at `chat:done` and cleared when the readback arrives or after 30 seconds.
+  filled at `chat:done` and cleared when the readback arrives, fails, or after 30 seconds
+  (the fallback reveals the plain text).
 - If the log was scrolled to the bottom before the reflow, it stays at the bottom after.
 - Styles: the toggle row uses the activity row's size and opacity with the accent chevron;
   the expanded plain section gets a faint top border. No new fonts or colors.
