@@ -29,6 +29,7 @@ export const HELP_TEXT = [
   '/ls [path]      list a directory (relative to the workspace)',
   '/model [name]   set or clear the model (next session)',
   '/help',
+  'Dictation: Win+H (Windows) or your dictation key (Mac) types into this box.',
 ].join('\n')
 
 function parseTarget(arg: string | undefined): number | null {

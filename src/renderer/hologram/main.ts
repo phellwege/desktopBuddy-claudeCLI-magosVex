@@ -283,4 +283,17 @@ input.addEventListener('keydown', (e) => {
 input.addEventListener('input', growInput)
 window.addEventListener('focus', () => input.focus())
 window.buddy.hologramReady()
+// One-time hint that the OS dictation shortcut types into this box. Once per machine:
+// local storage is per Chromium profile, which is per userData dir.
+const NORMAL_PLACEHOLDER = 'Speak, operator. /help for rites.'
+function dictationHint(): string | null {
+  try {
+    if (localStorage.getItem('hint.dictation')) return null
+    localStorage.setItem('hint.dictation', '1')
+  } catch { return null }
+  const mac = /Macintosh|Mac OS/.test(navigator.userAgent)
+  return mac ? 'Speak, operator. Double-tap your dictation key to dictate. /help for rites.'
+             : 'Speak, operator. Win+H to dictate. /help for rites.'
+}
+input.placeholder = dictationHint() ?? NORMAL_PLACEHOLDER
 input.focus()
