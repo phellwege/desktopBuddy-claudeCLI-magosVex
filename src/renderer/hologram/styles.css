@@ -26,7 +26,7 @@ html, body { margin: 0; width: 100%; height: 100%; background: transparent; over
 #perm-detail { font-size: 12px; opacity: 0.85; margin: 4px 0; white-space: pre-wrap; }
 .perm-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .perm-buttons button { font-family: var(--font); background: transparent; color: var(--text); border: 1px solid var(--accent); padding: 3px 10px; cursor: pointer; }
-#input { border: none; border-top: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: rgba(0,0,0,0.3); color: var(--text); font-family: var(--font); font-size: 13px; padding: 6px 8px; resize: none; outline: none; overflow-y: auto; }
+#input { border: none; border-top: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: rgba(0,0,0,0.3); color: var(--text); font-family: var(--font); font-size: 13px; padding: 6px 8px; resize: none; outline: none; overflow-y: auto; box-sizing: border-box; }
 .hljs-keyword { color: #ff9f6b; } .hljs-string { color: #9bffb0; } .hljs-comment { color: #7a8c99; } .hljs-number { color: #ffd479; } .hljs-title { color: #7fdcff; }
 .dots { display: inline-flex; gap: 4px; align-items: center; height: 1.35em; }
 .dots span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0.35; animation: dotpulse 1.2s ease-in-out infinite; }
