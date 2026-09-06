@@ -26,6 +26,10 @@ import { createTray } from './tray'
 import { showContextMenu } from './menu'
 import { appendLog } from './log'
 
+// Test hook: an isolated profile (config, state, logs, renderer local storage) so specs
+// never read or write the real one.
+if (process.env.BUDDY_USER_DATA) app.setPath('userData', process.env.BUDDY_USER_DATA)
+
 // Computed at module scope (not inside main()) so the top-level .catch() below can log a
 // bootstrap failure to the same file even if it throws before this point is reached.
 const logDir = join(app.getPath('userData'), 'logs')
