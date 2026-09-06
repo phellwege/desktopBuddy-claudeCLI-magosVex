@@ -1,4 +1,5 @@
 import { renderMarkdown } from './markdown'
+import { grownHeight } from './compose'
 import { ProjectionCone } from './cone'
 import { HoloFace } from './face'
 import type { ChatDonePayload, ChatPermissionPayload, ChatReadbackPayload, ChatSystemPayload, PackLoadedPayload, ThemePayload } from '../../shared/ipc'
@@ -9,6 +10,8 @@ const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), s
 const perm = $<HTMLDivElement>('permission'), permLine = $<HTMLDivElement>('perm-line'), permDetail = $<HTMLDivElement>('perm-detail')
 const panel = $<HTMLDivElement>('panel'), coneCanvas = $<HTMLCanvasElement>('cone')
 const cone = new ProjectionCone(coneCanvas)
+const LINE_PX = parseFloat(getComputedStyle(input).lineHeight) || 18
+function growInput(): void { input.style.height = 'auto'; input.style.height = `${grownHeight(input.scrollHeight, LINE_PX)}px` }
 
 function sizeCone(): void {
   coneCanvas.width = window.innerWidth
@@ -266,17 +269,31 @@ $('perm-deny').addEventListener('click', () => answer(false))
 
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); if (pending) answer(false); else window.buddy.closePanel(); return }
-  if (e.key === 'ArrowUp' && input.value === '') { input.value = lastInput; return }
+  if (e.key === 'ArrowUp' && input.value === '') { input.value = lastInput; growInput(); return }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     const text = input.value.trim()
     if (!text) return
-    lastInput = text; input.value = ''
+    lastInput = text; input.value = ''; growInput()
     if (!text.startsWith('/')) add('user', renderMarkdown(text))
     current = null
     window.buddy.prompt(text)
   }
 })
+input.addEventListener('input', growInput)
 window.addEventListener('focus', () => input.focus())
 window.buddy.hologramReady()
+// One-time hint that the OS dictation shortcut types into this box. Once per machine:
+// local storage is per Chromium profile, which is per userData dir.
+const NORMAL_PLACEHOLDER = 'Speak, operator. /help for rites.'
+function dictationHint(): string | null {
+  try {
+    if (localStorage.getItem('hint.dictation')) return null
+    localStorage.setItem('hint.dictation', '1')
+  } catch { return null }
+  const mac = /Macintosh|Mac OS/.test(navigator.userAgent)
+  return mac ? 'Speak, operator. Double-tap your dictation key to dictate. /help for rites.'
+             : 'Speak, operator. Win+H to dictate. /help for rites.'
+}
+input.placeholder = dictationHint() ?? NORMAL_PLACEHOLDER
 input.focus()

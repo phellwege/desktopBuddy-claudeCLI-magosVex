@@ -18,12 +18,12 @@
        toggles the side-* class that aims the two trailing "thought" circles at him. */
     #mutter {
       position: absolute; left: 0; top: 0;
-      max-width: 260px;
-      padding: 8px 10px;
-      border-radius: 12px;
+      max-width: 390px;
+      padding: 12px 15px;
+      border-radius: 18px;
       background: rgba(10, 14, 18, 0.86);
       color: #e8f1f2;
-      font: 13px system-ui;
+      font: 20px system-ui;
       border: 1px solid rgba(255, 255, 255, 0.18);
       pointer-events: none;
       opacity: 0;
@@ -37,17 +37,17 @@
       background: rgba(10, 14, 18, 0.86);
       border: 1px solid rgba(255, 255, 255, 0.18);
     }
-    #mutter::before { width: 8px; height: 8px; }
-    #mutter::after { width: 5px; height: 5px; }
+    #mutter::before { width: 12px; height: 12px; }
+    #mutter::after { width: 8px; height: 8px; }
     /* Bubble sits above him: circles trail down toward his head. */
-    #mutter.side-above::before { bottom: -14px; left: 28%; }
-    #mutter.side-above::after { bottom: -22px; left: 20%; }
+    #mutter.side-above::before { bottom: -21px; left: 28%; }
+    #mutter.side-above::after { bottom: -33px; left: 20%; }
     /* Bubble sits to his left: circles trail right toward him. */
-    #mutter.side-left::before { right: -14px; bottom: 6px; }
-    #mutter.side-left::after { right: -22px; bottom: -3px; }
+    #mutter.side-left::before { right: -21px; bottom: 9px; }
+    #mutter.side-left::after { right: -33px; bottom: -5px; }
     /* Bubble sits to his right: circles trail left toward him. */
-    #mutter.side-right::before { left: -14px; bottom: 6px; }
-    #mutter.side-right::after { left: -22px; bottom: -3px; }
+    #mutter.side-right::before { left: -21px; bottom: 9px; }
+    #mutter.side-right::after { left: -33px; bottom: -5px; }
   </style>
 </head>
 <body><canvas id="buddy"></canvas><div id="mutter" hidden></div><script type="module" src="./main.ts"></script></body>

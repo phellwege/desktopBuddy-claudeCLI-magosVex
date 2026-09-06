@@ -19,6 +19,11 @@ let lastState: BuddyStatePayload | null = null
 let hitFrame = ''
 let drawn: { f: AtlasFrame; mirror: boolean } | null = null
 let lastOrigin: { x: number; y: number } | null = null
+// The frame's actual drawn rect within the canvas (the canvas is the full character cell,
+// but the trimmed sprite inside it is usually smaller and off-centre), so the mutter bubble
+// can anchor on his real pixels instead of floating off the canvas box. Zero width means
+// nothing has drawn yet; placeMutter falls back to the canvas box in that case.
+let drawnRect = { x: 0, y: 0, w: 0, h: 0 }
 
 async function loadImage(url: string): Promise<HTMLImageElement> {
   const blob = await (await fetch(url)).blob()
@@ -80,23 +85,30 @@ function placeMutter(canvasLeft: number, canvasTop: number): void {
   const bh = mutterEl.offsetHeight
   const winW = window.innerWidth
   const winH = window.innerHeight
+  // Anchor on his actual drawn pixels, not the full character cell, so the bubble sits
+  // close to him instead of floating off toward the cell's empty margin. Before the first
+  // draw (drawnRect.w is 0) fall back to the canvas box.
+  const haveDrawn = drawnRect.w > 0
+  const bx = canvasLeft + (haveDrawn ? drawnRect.x : 0)
+  const by = canvasTop + (haveDrawn ? drawnRect.y : 0)
+  const bw2 = haveDrawn ? drawnRect.w : canvas.width
   mutterEl.classList.remove('side-above', 'side-left', 'side-right')
-  const aboveTop = canvasTop - bh - 8
+  const aboveTop = by - bh - 4
   if (aboveTop >= 0) {
-    const left = Math.min(Math.max(0, canvasLeft + canvas.width / 2 - bw / 2), Math.max(0, winW - bw))
+    const left = Math.min(Math.max(0, bx + bw2 / 2 - bw / 2), Math.max(0, winW - bw))
     mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(aboveTop)}px)`
     mutterEl.classList.add('side-above')
     return
   }
-  const top = Math.min(Math.max(0, canvasTop + 12), Math.max(0, winH - bh))
+  const top = Math.min(Math.max(0, by + 6), Math.max(0, winH - bh))
   const roomLeft = canvasLeft
   const roomRight = winW - (canvasLeft + canvas.width)
   if (roomRight >= roomLeft) {
-    const left = Math.min(canvasLeft + canvas.width + 8, Math.max(0, winW - bw))
+    const left = Math.min(bx + bw2 + 4, Math.max(0, winW - bw))
     mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
     mutterEl.classList.add('side-right')
   } else {
-    const left = Math.max(0, canvasLeft - bw - 8)
+    const left = Math.max(0, bx - bw - 4)
     mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
     mutterEl.classList.add('side-left')
   }
@@ -201,6 +213,7 @@ function draw(): void {
   const baselineY = canvas.height - 4
   const dx = canvas.width / 2 - f.ax * scale
   const dy = baselineY - f.ay * scale
+  drawnRect = { x: mirror ? canvas.width - dx - f.w * scale : dx, y: dy, w: f.w * scale, h: f.h * scale }
   ctx.save()
   if (mirror) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
   ctx.drawImage(image, f.x, f.y, f.w, f.h, dx, dy, f.w * scale, f.h * scale)
