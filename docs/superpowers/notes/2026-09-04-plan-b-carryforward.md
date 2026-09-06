@@ -58,3 +58,12 @@ random line from the pack's `idleMutter` set and fades out on its own. It never 
 while the panel is open, while asleep, mid-drag, or mid-journey, and it never counts as an
 interaction itself (it does not delay sleep). The interval is `mutterIntervalMin` in
 config.json (minutes, default 2; 0 disables mutters entirely).
+
+Dictation (2026-09-05, `docs/superpowers/specs/2026-09-05-dictation-design.md`): speech
+recognition stays the OS's job (Win+H, macOS dictation), so the app-side work is small: a
+one-time placeholder hint naming the shortcut, the composer textarea growing with a
+dictated take up to six rows, and a `BUDDY_USER_DATA` test hook so specs get an isolated
+profile.
+
+Mutter bubble sizing (2026-09-05): the idle thought bubble anchors on his actual drawn
+pixels instead of the full character cell, and is 1.5x the size (bubble and font) it was.
