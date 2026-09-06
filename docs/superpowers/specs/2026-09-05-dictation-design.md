@@ -38,10 +38,15 @@ grows with its content up to six rows, then scrolls; it snaps back to one row af
 and after `/clear`. Growth follows the `input` event (OS dictation inserts text through
 the normal input path, so it fires). Shift+Enter newlines are unchanged.
 
-Implementation: a pure helper `rowsFor(lineCount, max = 6)` in a new
-`src/renderer/hologram/compose.ts` (unit-tested in jsdom, no layout needed), applied by
-setting `rows` from the current line count on every input event, and reset to 1 on send.
-CSS: `max-height` for six rows and `overflow-y: auto` on `#input`.
+Dictation arrives as one long line with no newlines, so growth follows the rendered
+height, not the line count. Implementation: a pure helper
+`grownHeight(scrollHeight, lineHeight, maxRows = 6, padding = 12)` in a new
+`src/renderer/hologram/compose.ts` returning `min(scrollHeight, lineHeight * maxRows +
+padding)` (unit-tested, no layout needed). On every `input` event the renderer sets the
+box's height to `auto`, then to `grownHeight(scrollHeight, lineHeight)` pixels, with the
+line height read once from computed style (fallback 18). The same call after a send, an
+ArrowUp recall, and `/clear` (the value is empty or short again, so it snaps back). CSS:
+`overflow-y: auto` on `#input`.
 
 ### 2.2 A one-time dictation hint
 
@@ -79,10 +84,13 @@ The file is delivered with this round and Peter tunes the voice.
 
 ## 4. Tests
 
-- Unit: `rowsFor` (1 line gives 1, six gives 6, twenty gives 6, blank gives 1).
-- E2E, echo brain: type three Shift+Enter lines into the box and assert `rows` is 3; press
-  Enter and assert it is back to 1. Launch with a fresh profile and assert the placeholder
-  carries the hint, reload the page and assert it does not. E2E count 20 today; two new.
+- Unit: `grownHeight` (a scroll height under the cap comes back as is, one over the cap is
+  clamped to `lineHeight * maxRows + padding`, zero comes back as zero).
+- E2E, echo brain: fill the box with a 600-character line and assert its bounding height
+  is at least twice the empty height and no more than seven line heights; press Enter and
+  assert it is back to the empty height. Launch with a fresh profile and assert the
+  placeholder carries the hint, reload the page and assert it does not. E2E count 20
+  today; two new.
 - Test hook: `BUDDY_USER_DATA=<dir>` makes main call `app.setPath('userData', dir)` before
   anything reads the path (the log dir is computed at module load in `src/main/index.ts`,
   so the override goes at the very top). The hint spec launches with a temp dir. Today the
