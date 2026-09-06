@@ -83,6 +83,11 @@ The file is delivered with this round and Peter tunes the voice.
 - E2E, echo brain: type three Shift+Enter lines into the box and assert `rows` is 3; press
   Enter and assert it is back to 1. Launch with a fresh profile and assert the placeholder
   carries the hint, reload the page and assert it does not. E2E count 20 today; two new.
+- Test hook: `BUDDY_USER_DATA=<dir>` makes main call `app.setPath('userData', dir)` before
+  anything reads the path (the log dir is computed at module load in `src/main/index.ts`,
+  so the override goes at the very top). The hint spec launches with a temp dir. Today the
+  e2e suite runs against the real profile (config, state, local storage); this hook is the
+  first step away from that and the other specs may adopt it later.
 
 ## 5. Out of scope
 
