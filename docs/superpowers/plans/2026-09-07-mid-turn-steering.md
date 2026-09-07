@@ -696,8 +696,8 @@ Expected: no hits outside `src/main/chat.ts` and its test. If `README.md` has a 
 
 - [ ] **Step 2: Em dash sweep of everything this branch touched**
 
-Run: `cd /c/repo/mechanicus-buddy-steer && git diff master --name-only | xargs grep -lP "\x{2014}" ; echo "exit=$?"`
-Expected: no file names printed (`exit=1` from grep means no matches). Fix any hit.
+Run: `cd /c/repo/mechanicus-buddy-steer && git diff master --name-only | xargs grep -l "$(printf '\xe2\x80\x94')" ; echo "exit=$?"`
+Expected: no file names printed (`exit=123` from xargs means grep matched nothing in any file). Fix any hit. Git Bash's grep rejects `-P` unicode escapes without a UTF-8 locale, hence the printf form.
 
 - [ ] **Step 3: Full unit suite and typecheck**
 
