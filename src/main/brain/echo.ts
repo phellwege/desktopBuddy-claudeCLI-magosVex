@@ -15,7 +15,11 @@ export class EchoBrain implements Brain {
     const rng = this.opts.rng ?? Math.random
     const delay = this.opts.delayMs ?? 40
     const line = pickLine(this.pack, rng() < 0.5 ? 'greeting' : 'idleMutter', rng) ?? 'Acknowledged.'
-    const text = `${line} You said: "${prompt}". The cogitator that answers properly arrives in the next slice.`
+    // The echo brain is what runs on a machine with no Claude Code installed (and in the
+    // e2e suite), so the tail says how to get a real brain rather than promising one.
+    // Picked with a fixed roll so the rng draws below stay where the tests expect them.
+    const tail = pickLine(this.pack, 'cliMissing', () => 0) ?? 'No brain is installed here; I can only repeat you.'
+    const text = `${line} You said: "${prompt}". ${tail}`
     if (rng() < 0.5) this.actions.setMood('happy')
     for (const word of text.split(/(?<=\s)/)) {
       if (this.stopped) break
