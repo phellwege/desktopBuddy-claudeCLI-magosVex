@@ -181,6 +181,32 @@ describe('ClaudeCliBrain', () => {
     expect((last as { sessionId?: string }).sessionId).toBe('s1')
   }, 10000)
 
+  it('steer() returns false once stop() has been called, even before the child has closed', async () => {
+    // A generous gap between scripted lines so stop() has time to run before the fake
+    // finishes on its own; same rationale as the 'stop() mid-turn' test above.
+    const spawnFn = ((_command: string, args: readonly string[], options: Record<string, unknown>) =>
+      nodeSpawn(process.execPath, [fakeCliScript, ...args], {
+        ...options,
+        env: { ...(options.env as NodeJS.ProcessEnv), FAKE_CLAUDE_SCENARIO: 'text', FAKE_CLAUDE_GAP_MS: '300' },
+      })) as unknown as ClaudeCliDeps['spawn']
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: spawnFn }))
+    const iter = brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
+    const first = await iter.next()
+    expect(first.done).toBe(false)
+    brain.stop()
+    // The child is still alive (killTree's taskkill is async on Windows), but stop() has
+    // been called: steer must refuse right away rather than writing to a doomed child.
+    expect(brain.steer('after stop')).toBe(false)
+    let last: BrainEvent | undefined
+    for (;;) {
+      const r = await iter.next()
+      if (r.done) break
+      last = r.value
+    }
+    expect(last?.type).toBe('done')
+    expect((last as { error?: string }).error).toContain('stopped')
+  }, 10000)
+
   it('holds stdin open: a steer reaches the child, and a follow-on turn queued behind the first result drains into the same reply with one done', async () => {
     const brain = new ClaudeCliBrain(baseDeps({ spawn: fakeSpawn('steer-drain') }))
     const iter = brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
@@ -200,11 +226,14 @@ describe('ClaudeCliBrain', () => {
   }, 10000)
 
   it('declares the turn done after the grace when the child lingers past its result with no follow-on turn', async () => {
-    const spawnFn = ((_command: string, args: readonly string[], options: Record<string, unknown>) =>
-      nodeSpawn(process.execPath, [fakeCliScript, ...args], {
+    let created: ReturnType<typeof nodeSpawn> | undefined
+    const spawnFn = ((_command: string, args: readonly string[], options: Record<string, unknown>) => {
+      created = nodeSpawn(process.execPath, [fakeCliScript, ...args], {
         ...options,
         env: { ...(options.env as NodeJS.ProcessEnv), FAKE_CLAUDE_SCENARIO: 'linger', FAKE_CLAUDE_LINGER_MS: '1500' },
-      })) as unknown as ClaudeCliDeps['spawn']
+      })
+      return created
+    }) as unknown as ClaudeCliDeps['spawn']
     const brain = new ClaudeCliBrain(baseDeps({ spawn: spawnFn, drainGraceMs: 100 }))
     const started = Date.now()
     const events = await collect(brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null }))
@@ -213,6 +242,41 @@ describe('ClaudeCliBrain', () => {
     // Well before the child's 1500 ms linger: the grace, not the child's exit, ended the turn.
     expect(Date.now() - started).toBeLessThan(1200)
     expect(brain.steer('late')).toBe(false)
+    // Let the fake's own linger timer run out so no child outlives the test.
+    await new Promise<void>((resolve) => created?.once('close', () => resolve()))
+  }, 10000)
+
+  it('steer() returns false once the first result has ended stdin, while the child is still draining', async () => {
+    let created: ReturnType<typeof nodeSpawn> | undefined
+    const spawnFn = ((_command: string, args: readonly string[], options: Record<string, unknown>) => {
+      created = nodeSpawn(process.execPath, [fakeCliScript, ...args], {
+        ...options,
+        env: { ...(options.env as NodeJS.ProcessEnv), FAKE_CLAUDE_SCENARIO: 'linger', FAKE_CLAUDE_LINGER_MS: '600' },
+      })
+      return created
+    }) as unknown as ClaudeCliDeps['spawn']
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: spawnFn, drainGraceMs: 400 }))
+    const iter = brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
+    const first = await iter.next()
+    expect(first.value).toEqual({ type: 'text', delta: 'Hello' })
+    // A generator is suspended at that yield until .next() is called again, so it would not
+    // otherwise process the result line (and end stdin) while this test is merely waiting.
+    // Prime it now, the same way a consumer pumping in a loop would, and capture whatever it
+    // eventually yields instead of discarding it.
+    const rest: BrainEvent[] = []
+    let pending = iter.next().then((r) => { if (!r.done) rest.push(r.value); return r })
+    // The result line follows the text by one 20 ms gap; 150 ms later stdin has been ended
+    // and the child is still alive (it exits at 600 ms, the grace fires at 400 ms).
+    await new Promise((r) => setTimeout(r, 150))
+    expect(created?.exitCode).toBeNull()
+    expect(brain.steer('late')).toBe(false)
+    for (;;) {
+      const r = await pending
+      if (r.done) break
+      pending = iter.next().then((n) => { if (!n.done) rest.push(n.value); return n })
+    }
+    expect(rest).toEqual([{ type: 'done', sessionId: 's1', error: undefined }])
+    await new Promise<void>((resolve) => created?.once('close', () => resolve()))
   }, 10000)
 
   it('steer() returns false when no turn is running', () => {

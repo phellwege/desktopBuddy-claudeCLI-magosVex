@@ -110,7 +110,7 @@ type Item =
   | { kind: 'line'; line: string }
   | { kind: 'spawnError'; error: NodeJS.ErrnoException }
   | { kind: 'close'; code: number | null }
-  | { kind: 'grace' }
+  | { kind: 'grace'; token: number }
 
 export class ClaudeCliBrain implements Brain {
   private child: ChildProcess | null = null
@@ -137,14 +137,23 @@ export class ClaudeCliBrain implements Brain {
     const stderrLines: string[] = []
     let sessionIdFromInit: string | undefined
     let sawActivity = false
+    let sawAuthLine = false
     // The most recent result line. Set at the first result (the turn boundary) and replaced
     // by any follow-on turn's result while the child drains; reported in the single done.
     let lastResult: { sessionId?: string; error?: string } | null = null
     let graceTimer: ReturnType<typeof setTimeout> | null = null
-    const clearGrace = (): void => { if (graceTimer) { clearTimeout(graceTimer); graceTimer = null } }
+    // Each arming gets a fresh token; a grace item that reaches the loop with a stale token
+    // was cancelled (by a follow-on init or a later result) after it had already been
+    // queued, and is ignored.
+    let graceToken = 0
+    const clearGrace = (): void => {
+      graceToken++
+      if (graceTimer) { clearTimeout(graceTimer); graceTimer = null }
+    }
     const armGrace = (): void => {
       clearGrace()
-      graceTimer = setTimeout(() => channel.push({ kind: 'grace' }), this.deps.drainGraceMs ?? DRAIN_GRACE_MS)
+      const token = graceToken
+      graceTimer = setTimeout(() => channel.push({ kind: 'grace', token }), this.deps.drainGraceMs ?? DRAIN_GRACE_MS)
     }
 
     const child = spawnFn(this.deps.cliPath, [...(this.deps.argsPrefix ?? []), ...args], { cwd: workspace, env })
@@ -203,7 +212,8 @@ export class ClaudeCliBrain implements Brain {
                 yield out
                 break
               case 'done': {
-                if (out.error && isAuthError(out.error)) {
+                if (out.error && isAuthError(out.error) && !sawAuthLine) {
+                  sawAuthLine = true
                   const authLine = pickLine(this.deps.lines.authError)
                   if (authLine) yield { type: 'status', text: authLine, expression: 'sadness' }
                 }
@@ -226,6 +236,7 @@ export class ClaudeCliBrain implements Brain {
           yield { type: 'done', error: item.error.message }
           return
         } else if (item.kind === 'grace') {
+          if (item.token !== graceToken) continue
           // The child is still alive after its result with no follow-on turn (the real CLI
           // waits on background work this way). The reply is complete; leave the child to
           // finish on its own, as the code did before stdin was held open, and stop
@@ -245,6 +256,7 @@ export class ClaudeCliBrain implements Brain {
             const tail = stderrLines.slice(-5).join('\n')
             yield { type: 'done', sessionId: sessionIdFromInit, error: `exit code ${item.code ?? 'null'}${tail ? ': ' + tail : ''}` }
           }
+          return
         }
       }
     } finally {
@@ -265,7 +277,7 @@ export class ClaudeCliBrain implements Brain {
   // error listener above swallows a write to a child that has gone.
   steer(text: string): boolean {
     const child = this.child
-    if (!child || !this.stdinOpen || !child.stdin || child.stdin.destroyed || child.stdin.writableEnded) return false
+    if (!child || this.stopped || !this.stdinOpen || !child.stdin || child.stdin.destroyed || child.stdin.writableEnded) return false
     child.stdin.write(userLine(text))
     return true
   }
