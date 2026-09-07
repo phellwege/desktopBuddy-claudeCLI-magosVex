@@ -2,24 +2,68 @@
 'use strict'
 
 // Fake Claude Code CLI for tests. It parses the flags ClaudeCliBrain.buildArgs produces,
-// drains stdin (the prompt), and prints scripted stream-json lines picked by the
-// FAKE_CLAUDE_SCENARIO env var, each 20 ms apart. Two scenarios go further and perform real
-// JSON-RPC tools/call requests against the live buddy MCP server named in --mcp-config: "mcp"
-// calls set_mood and set_expression, and "permission" calls permission_prompt (the CLI's own
-// permission-prompt tool, named on argv by --permission-prompt-tool) with a fake Bash request.
-// No quota is spent; nothing here talks to the real Claude API.
+// reads the prompt as the first stdin line (later lines are steers), and prints scripted
+// stream-json lines picked by the FAKE_CLAUDE_SCENARIO env var, each 20 ms apart. Two scenarios
+// go further and perform real JSON-RPC tools/call requests against the live buddy MCP server
+// named in --mcp-config: "mcp" calls set_mood and set_expression, and "permission" calls
+// permission_prompt (the CLI's own permission-prompt tool, named on argv by
+// --permission-prompt-tool) with a fake Bash request. No quota is spent; nothing here talks to
+// the real Claude API.
 
 function argValue(name) {
   const i = process.argv.indexOf(name)
   return i !== -1 && i + 1 < process.argv.length ? process.argv[i + 1] : undefined
 }
 
-function readStdin() {
+// stdin is line-delimited. The brain writes stream-json user lines, {"type":"user",
+// "message":{"role":"user","content":"..."}}, and keeps the pipe open so it can steer a
+// running turn with further lines (docs/superpowers/specs/2026-09-07-mid-turn-steering-design.md).
+// The first line is the prompt and starts the scenario; later lines land in `steers`; EOF
+// flips `stdinEnded`. A first line that is not JSON is taken as a plain-text prompt, which
+// is what an older caller (or a test fake) writes.
+const steers = []
+let stdinEnded = false
+let onStdinEnd = () => {}
+
+function userText(line) {
+  try {
+    const msg = JSON.parse(line)
+    const content = msg && msg.message && msg.message.content
+    return typeof content === 'string' ? content : line
+  } catch {
+    return line
+  }
+}
+
+function readPrompt() {
   return new Promise((resolve) => {
-    const chunks = []
-    process.stdin.on('data', (c) => chunks.push(c))
-    process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    let buf = ''
+    let first = null
+    const take = (line) => {
+      if (first === null) { first = userText(line); resolve(first) } else steers.push(userText(line))
+    }
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', (chunk) => {
+      buf += chunk
+      let i
+      while ((i = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, i).trim()
+        buf = buf.slice(i + 1)
+        if (line) take(line)
+      }
+    })
+    process.stdin.on('end', () => {
+      const rest = buf.trim()
+      buf = ''
+      if (rest) take(rest)
+      stdinEnded = true
+      onStdinEnd()
+    })
   })
+}
+
+function waitStdinEnd() {
+  return stdinEnded ? Promise.resolve() : new Promise((resolve) => { onStdinEnd = resolve })
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -75,6 +119,34 @@ async function runTextCrash() {
   ])
   process.stderr.write('fake crash after text\n')
   process.exitCode = 2
+}
+
+// One turn, then, once the brain has closed stdin (it does so at the first result), a second
+// turn whose text echoes everything that came down the pipe: the prompt and every steer.
+async function runSteerDrain(prompt) {
+  await emit([
+    { type: 'system', subtype: 'init', session_id: 's1', model: 'm' },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hel' } } },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'lo' } } },
+    { type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: 'Hello' },
+  ])
+  await waitStdinEnd()
+  await emit([
+    { type: 'system', subtype: 'init', session_id: 's2', model: 'm' },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: ` prompt=${prompt} steers=${steers.join('|')}` } } },
+    { type: 'result', subtype: 'success', is_error: false, session_id: 's2', result: 'ok' },
+  ])
+}
+
+// A result, then the process lingers the way the real CLI does while background work runs,
+// and exits on its own after FAKE_CLAUDE_LINGER_MS (default 1500).
+async function runLinger() {
+  await emit([
+    { type: 'system', subtype: 'init', session_id: 's1', model: 'm' },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hello' } } },
+    { type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: 'Hello' },
+  ])
+  await sleep(Number(process.env.FAKE_CLAUDE_LINGER_MS) || 1500)
 }
 
 async function runMcp() {
@@ -176,16 +248,24 @@ async function main() {
   // The readback call (src/main/brain/readback.ts) is the only caller that asks for plain
   // json output; it inherits FAKE_CLAUDE_SCENARIO from the app, so it is keyed on argv.
   if (argValue('--output-format') === 'json') return runReadback()
-  await readStdin()
-  switch (process.env.FAKE_CLAUDE_SCENARIO) {
-    case 'tool': return runTool()
-    case 'auth': return runAuth()
-    case 'crash': return runCrash()
-    case 'text-crash': return runTextCrash()
-    case 'mcp': return runMcp()
-    case 'permission': return runPermission()
-    case 'text':
-    default: return runText()
+  const prompt = await readPrompt()
+  try {
+    switch (process.env.FAKE_CLAUDE_SCENARIO) {
+      case 'tool': await runTool(); break
+      case 'auth': await runAuth(); break
+      case 'crash': await runCrash(); break
+      case 'text-crash': await runTextCrash(); break
+      case 'mcp': await runMcp(); break
+      case 'permission': await runPermission(); break
+      case 'steer-drain': await runSteerDrain(prompt); break
+      case 'linger': await runLinger(); break
+      case 'text':
+      default: await runText()
+    }
+  } finally {
+    // An open stdin would keep the event loop, and so this process, alive after the
+    // scenario has said everything it has to say.
+    process.stdin.destroy()
   }
 }
 
