@@ -696,7 +696,7 @@ Expected: no hits outside `src/main/chat.ts` and its test. If `README.md` has a 
 
 - [ ] **Step 2: Em dash sweep of everything this branch touched**
 
-Run: `cd /c/repo/mechanicus-buddy-steer && git diff master --name-only | xargs grep -ln "—" ; echo "exit=$?"`
+Run: `cd /c/repo/mechanicus-buddy-steer && git diff master --name-only | xargs grep -lP "\x{2014}" ; echo "exit=$?"`
 Expected: no file names printed (`exit=1` from grep means no matches). Fix any hit.
 
 - [ ] **Step 3: Full unit suite and typecheck**
