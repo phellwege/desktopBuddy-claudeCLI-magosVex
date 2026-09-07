@@ -56,6 +56,10 @@ function readPrompt() {
       const rest = buf.trim()
       buf = ''
       if (rest) take(rest)
+      // EOF with nothing taken (empty or whitespace-only stdin): run the scenario with an
+      // empty prompt, as the old EOF-only reader did, rather than leaving main() awaiting
+      // a promise that never settles and the process exiting with no output.
+      if (first === null) { first = ''; resolve(first) }
       stdinEnded = true
       onStdinEnd()
     })
