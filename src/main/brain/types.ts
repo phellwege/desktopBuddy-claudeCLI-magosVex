@@ -7,4 +7,11 @@ export type BrainEvent =
   | { type: 'status'; text: string; expression?: Expression }
   | { type: 'expression'; name: Expression }
   | { type: 'done'; sessionId?: string; error?: string; stopped?: boolean }
-export interface Brain { respond(prompt: string, ctx: BrainContext): AsyncIterable<BrainEvent>; stop(): void }
+export interface Brain {
+  respond(prompt: string, ctx: BrainContext): AsyncIterable<BrainEvent>
+  stop(): void
+  // Hands a further user message to the turn that is running right now (the CLI gives it
+  // to the model at its next tool boundary, or runs it as the next turn). Returns false
+  // when there is nothing running that can take it; the caller then refuses the prompt.
+  steer?(text: string): boolean
+}

@@ -26,12 +26,15 @@ export interface ClaudeCliDeps {
   // (cliPath = node.exe, argsPrefix = [fake script]). Never set for a real CLI.
   argsPrefix?: string[]
   env?: NodeJS.ProcessEnv
+  // How long, after the first result, to wait for a child that neither exits nor starts a
+  // follow-on turn before the turn is declared done and the child left to itself.
+  drainGraceMs?: number
 }
 
 type SpawnFn = typeof nodeSpawn
 
 export function buildArgs(d: ClaudeCliDeps, sessionId: string | null, newSessionId: string): string[] {
-  const args = ['-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose']
+  const args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--include-partial-messages', '--verbose']
   // Keeps the user's own hooks and plugins out of the buddy's turns; --bare is not an option,
   // it drops the subscription login the CLI relies on.
   args.push('--setting-sources', 'project')
@@ -58,6 +61,12 @@ export function childEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   delete env.CLAUDECODE
   delete env.ANTHROPIC_API_KEY
   return env
+}
+
+// One stream-json user message, newline terminated: the shape the CLI reads from stdin
+// under --input-format stream-json, both for the prompt and for a steer.
+export function userLine(text: string): string {
+  return JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n'
 }
 
 function pickLine(lines: string[] | undefined): string | undefined {

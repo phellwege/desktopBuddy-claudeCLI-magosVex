@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { spawn as nodeSpawn } from 'node:child_process'
 import { join } from 'node:path'
 import { toolsNote } from './prompt'
-import { buildArgs, childEnv, ClaudeCliBrain, type ClaudeCliDeps } from './claude-cli'
+import { buildArgs, childEnv, ClaudeCliBrain, userLine, type ClaudeCliDeps } from './claude-cli'
 import type { LocalServer } from '../server'
 import type { BuddyActions } from '../actions'
 import type { Mood } from '../../shared/types'
@@ -38,7 +38,7 @@ describe('buildArgs', () => {
   it.each(['acceptEdits', 'manual'] as const)('produces the exact flag list for a first turn (permissionMode: %s)', (permissionMode) => {
     const deps = baseDeps({ permissionMode })
     expect(buildArgs(deps, null, 'new-id')).toEqual([
-      '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+      '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--include-partial-messages', '--verbose',
       '--setting-sources', 'project',
       '--session-id', 'new-id',
       '--append-system-prompt', toolsNote(),
@@ -53,7 +53,7 @@ describe('buildArgs', () => {
   it.each(['acceptEdits', 'manual'] as const)('produces the exact flag list for a resumed turn, with model and extraDirs appended (permissionMode: %s)', (permissionMode) => {
     const deps = baseDeps({ model: 'sonnet', extraDirs: ['C:\\other', 'C:\\more'], permissionMode })
     expect(buildArgs(deps, 'sess-1', 'new-id')).toEqual([
-      '-p', '--output-format', 'stream-json', '--include-partial-messages', '--verbose',
+      '-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--include-partial-messages', '--verbose',
       '--setting-sources', 'project',
       '--resume', 'sess-1',
       '--append-system-prompt', toolsNote(),
@@ -73,6 +73,12 @@ describe('childEnv', () => {
   it('drops CLAUDECODE and ANTHROPIC_API_KEY but keeps everything else', () => {
     const env = childEnv({ CLAUDECODE: '1', ANTHROPIC_API_KEY: 'sk-x', PATH: 'x', HOME: 'y' })
     expect(env).toEqual({ PATH: 'x', HOME: 'y' })
+  })
+})
+
+describe('userLine', () => {
+  it('is one stream-json user message per line, newline terminated', () => {
+    expect(userLine('hi there')).toBe('{"type":"user","message":{"role":"user","content":"hi there"}}\n')
   })
 })
 
