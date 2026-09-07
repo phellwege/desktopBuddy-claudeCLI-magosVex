@@ -1,0 +1,103 @@
+# Mechanicus Buddy
+
+A desktop companion for Windows (macOS in progress). A hooded tech-priest sprite wanders
+the bottom edge of your screen, sleeps when ignored, mutters to himself, and travels
+between monitors when asked. Click him and a servo-skull hologram opens a chat panel
+driven by your own Claude Code login: he reads your workspace, edits files with your
+sanction, and comments on the result in character.
+
+Unofficial fan project. Not affiliated with, endorsed by, or sponsored by Games Workshop.
+Names and likenesses from the Warhammer 40,000 setting belong to Games Workshop Limited.
+Non-commercial, and it must stay that way.
+
+## What you need
+
+- Windows 10 or 11. The overlay relies on click-through window forwarding, which Linux
+  does not support; a macOS port is small and planned.
+- Node 22 or newer.
+- [Claude Code](https://claude.com/claude-code) installed and logged in. The buddy spawns
+  `claude.exe` per turn on your subscription. No API key is used or supported.
+
+## Run it
+
+```bash
+npm ci
+npm run dev
+```
+
+He appears on the primary display. Click him for the panel, right-click for the menu,
+Ctrl+Q in the panel quits. Drag him to another monitor; he hovers there and lands.
+
+## Panel commands
+
+| Command | What it does |
+| --- | --- |
+| `/goto [display:]<0-100\|left\|center\|right>` | walk there (`/run` to run) |
+| `/displays` | list the attached monitors |
+| `/mood`, `/emote`, `/sleep`, `/wake` | body language |
+| `/stop` | abort the current turn |
+| `/new`, `/clear` | fresh session; `/clear` also empties the panel |
+| `/cd [path]`, `/ls [path]` | change or inspect the workspace (new session on change) |
+| `/model [name]` | set or clear the model for the next session |
+| `/help` | this list |
+
+Dictation: Windows voice typing (Win+H) or your Mac's dictation key types straight into
+the panel's text box. Nothing in the app listens to the microphone.
+
+## How it works
+
+Two Electron windows. The overlay is a transparent, click-through strip along the bottom
+of the current display that draws the sprite from an atlas; only his pixels are solid.
+The hologram is a focusable panel that projects from the servo skull's position.
+
+The brain is the Claude Code CLI in print mode with streaming JSON. Body actions (walk,
+mood, emote, sleep) are exposed to it through a small MCP server inside the app, and
+permission requests come back through the same server as cards in the panel. The
+default permission mode approves file edits inside the workspace and asks for
+everything else; "Sanction this session" remembers a tool for the rest of the session.
+A second, tool-less call restates each reply in character as the bubble's headline,
+with the plain reply under an arrow.
+
+## Configuration
+
+`config.json` in the app's user-data folder (created on first run). Fields:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `pack` | `packs/mechanicus` | persona pack directory |
+| `cliPath` | `%USERPROFILE%\.local\bin\claude.exe` | the Claude Code executable |
+| `workspace` | `C:\repo` | where he works; `/cd` changes it |
+| `extraDirs` | `[]` | additional directories the CLI may read |
+| `model` | `null` | model override for the CLI |
+| `allowedTools` | `Read, Glob, Grep, mcp__buddy__*` | tools that never prompt |
+| `permissionMode` | `acceptEdits` | or `manual` to be asked about everything |
+| `permissionTimeoutSec` | `120` | a card left unanswered denies |
+| `readback` | `true` | the in-character headline call |
+| `wanderIntervalSec` | `[8, 30]` | idle wandering cadence |
+| `sleepAfterMin` | `10` | idle minutes before he sleeps |
+| `mutterIntervalMin` | `2` | idle minutes between thought bubbles; `0` disables |
+| `scale` | `1.0` | sprite scale |
+
+## Persona packs
+
+`packs/<name>/` holds `manifest.json` (theme, canned lines, faces), `persona.md` (the
+character prompt used for the headline), `atlas.png` and `atlas.json` (sprites, with the
+servo skull origin per frame), and `animations.json`. The sprite pipeline under `tools/`
+keys a raw sheet, seeds masks with SAM 2, lets you correct them in a small Gradio
+annotator, and slices the atlas. See `docs/superpowers/` for the design notes.
+
+## Tests
+
+```bash
+npm test
+npm run typecheck
+npm run test:e2e
+```
+
+Unit tests are Vitest. The end-to-end suite builds the app and drives it with Playwright
+against a fake brain, so it never touches your Claude login.
+
+## License
+
+MIT, see `LICENSE`. The sprite sheets under `raw/` and `packs/` are included for the
+project's own use.
