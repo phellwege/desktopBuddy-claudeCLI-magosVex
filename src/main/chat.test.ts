@@ -142,6 +142,18 @@ describe('ChatController', () => {
     release()
     await new Promise(r => setTimeout(r, 5))
   })
+  it('readback gets the whole reply, including text that arrives after a drained follow-on turn', async () => {
+    const out = fakeOut()
+    const rb = fakeReadback({ ok: true, text: 'spoken' })
+    const c = new ChatController({
+      brain: scriptedBrain([{ type: 'text', delta: 'Hel' }, { type: 'text', delta: 'lo' }, { type: 'text', delta: ' and the answer' }, { type: 'done', sessionId: 's2' }]),
+      actions: fakeActions(), pack, out, settings: settings(), readback: rb,
+    })
+    c.prompt('hi')
+    await new Promise(r => setTimeout(r, 10))
+    expect(rb.calls).toEqual(['Hello and the answer'])
+    expect(c.status().session).toBe('s2')
+  })
   it('/stop uses the pack stopped line when the pack has one', async () => {
     const out = fakeOut()
     const withLine = { ...pack, persona: { ...pack.persona, lines: { ...pack.persona.lines, stopped: ['Rite aborted.'] } } }
