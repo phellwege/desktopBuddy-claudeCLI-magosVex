@@ -1,7 +1,8 @@
 // Claude Code CLI brain: one process per turn. Spawns the installed CLI in print mode with
-// stream-json output, feeds it the prompt over stdin, and turns each line of stdout into
-// BrainEvents via parseStreamLine. No persona lives here; the tools note (prompt.ts) is the
-// only system-prompt addition, and the CLI's own output is shown unaltered.
+// stream-json in and out, feeds it the prompt as a user line, keeps stdin open so a running
+// turn can be steered, and turns each line of stdout into BrainEvents via parseStreamLine.
+// No persona lives here; the tools note (prompt.ts) is the only system-prompt addition, and
+// the CLI's own output is shown unaltered.
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { Mood } from '../../shared/types'
@@ -32,6 +33,8 @@ export interface ClaudeCliDeps {
 }
 
 type SpawnFn = typeof nodeSpawn
+
+const DRAIN_GRACE_MS = 1500
 
 export function buildArgs(d: ClaudeCliDeps, sessionId: string | null, newSessionId: string): string[] {
   const args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--include-partial-messages', '--verbose']
@@ -107,10 +110,14 @@ type Item =
   | { kind: 'line'; line: string }
   | { kind: 'spawnError'; error: NodeJS.ErrnoException }
   | { kind: 'close'; code: number | null }
+  | { kind: 'grace' }
 
 export class ClaudeCliBrain implements Brain {
   private child: ChildProcess | null = null
   private stopped = false
+  // True from the prompt going down stdin until the first result, when the brain ends stdin
+  // so the child can drain whatever it queued and exit. steer() writes only while this holds.
+  private stdinOpen = false
 
   constructor(private readonly deps: ClaudeCliDeps) {}
 
@@ -130,22 +137,33 @@ export class ClaudeCliBrain implements Brain {
     const stderrLines: string[] = []
     let sessionIdFromInit: string | undefined
     let sawActivity = false
-    let doneEmitted = false
+    // The most recent result line. Set at the first result (the turn boundary) and replaced
+    // by any follow-on turn's result while the child drains; reported in the single done.
+    let lastResult: { sessionId?: string; error?: string } | null = null
+    let graceTimer: ReturnType<typeof setTimeout> | null = null
+    const clearGrace = (): void => { if (graceTimer) { clearTimeout(graceTimer); graceTimer = null } }
+    const armGrace = (): void => {
+      clearGrace()
+      graceTimer = setTimeout(() => channel.push({ kind: 'grace' }), this.deps.drainGraceMs ?? DRAIN_GRACE_MS)
+    }
 
     const child = spawnFn(this.deps.cliPath, [...(this.deps.argsPrefix ?? []), ...args], { cwd: workspace, env })
     this.child = child
 
-    child.stdout?.on('data', (chunk: Buffer) => {
+    const onStdout = (chunk: Buffer): void => {
       stdoutRemainder += chunk.toString('utf8')
       const lines = stdoutRemainder.split('\n')
       stdoutRemainder = lines.pop() ?? ''
       for (const line of lines) if (line.trim()) channel.push({ kind: 'line', line })
-    })
-    child.stderr?.on('data', (chunk: Buffer) => {
+    }
+    const onStderr = (chunk: Buffer): void => {
       for (const line of chunk.toString('utf8').split('\n')) if (line.trim()) stderrLines.push(line.trim())
-    })
+    }
+    child.stdout?.on('data', onStdout)
+    child.stderr?.on('data', onStderr)
     child.on('error', (error: NodeJS.ErrnoException) => { channel.push({ kind: 'spawnError', error }); channel.end() })
     child.on('close', (code) => {
+      clearGrace()
       if (stdoutRemainder.trim()) channel.push({ kind: 'line', line: stdoutRemainder })
       channel.push({ kind: 'close', code })
       channel.end()
@@ -155,8 +173,17 @@ export class ClaudeCliBrain implements Brain {
     // tests don't) can make this write fail with EPIPE/EOF; without a listener, Node treats
     // an 'error' event with no handler as an uncaught exception and crashes the process.
     child.stdin?.on('error', () => { /* ignore: the child is gone, nothing to write to */ })
-    child.stdin?.write(prompt)
-    child.stdin?.end()
+    child.stdin?.write(userLine(prompt))
+    // stdin stays open: steer() writes further user lines until the first result. Measured
+    // CLI behaviour (spec section 2): a line written during a tool loop is handed to the
+    // model at its next tool boundary; one written with no boundary left runs as the next
+    // turn of the same process once stdin is closed.
+    this.stdinOpen = true
+    const endStdin = (): void => {
+      if (!this.stdinOpen) return
+      this.stdinOpen = false
+      child.stdin?.end()
+    }
 
     try {
       for await (const item of channel) {
@@ -164,38 +191,56 @@ export class ClaudeCliBrain implements Brain {
           for (const out of parseStreamLine(item.line)) {
             switch (out.type) {
               case 'ignore': break
-              case 'init': sessionIdFromInit = out.init.sessionId; break
+              case 'init':
+                sessionIdFromInit = out.init.sessionId
+                // An init after the first result is a queued steer running as its own turn:
+                // wait for its result rather than declaring the turn done under it.
+                clearGrace()
+                break
               case 'text': yield out; break
               case 'activity':
                 if (!sawActivity) { sawActivity = true; this.deps.onMood('thinking') }
                 yield out
                 break
               case 'done': {
-                doneEmitted = true
                 if (out.error && isAuthError(out.error)) {
                   const authLine = pickLine(this.deps.lines.authError)
                   if (authLine) yield { type: 'status', text: authLine, expression: 'sadness' }
                 }
-                yield { type: 'done', sessionId: out.sessionId ?? sessionIdFromInit, error: out.error }
-                // The result line is terminal: nothing after it belongs to this turn.
-                return
+                // A result line is a turn boundary, not the end of the child. Close stdin
+                // (the child then drains anything queued and exits) and keep reading; the
+                // single done goes out at close, or after the grace if the child lingers.
+                lastResult = { sessionId: out.sessionId ?? sessionIdFromInit, error: out.error }
+                endStdin()
+                armGrace()
+                break
               }
               default: break
             }
           }
         } else if (item.kind === 'spawnError') {
-          doneEmitted = true
           if (item.error.code === 'ENOENT') {
             const missingLine = pickLine(this.deps.lines.cliMissing)
             if (missingLine) yield { type: 'status', text: missingLine, expression: 'sadness' }
           }
           yield { type: 'done', error: item.error.message }
           return
-        } else if (item.kind === 'close' && !doneEmitted) {
-          // The session id learned from init survives a stop or a crash, so the next turn
-          // resumes the same conversation instead of starting over.
+        } else if (item.kind === 'grace') {
+          // The child is still alive after its result with no follow-on turn (the real CLI
+          // waits on background work this way). The reply is complete; leave the child to
+          // finish on its own, as the code did before stdin was held open, and stop
+          // listening to it.
+          child.stdout?.off('data', onStdout)
+          child.stderr?.off('data', onStderr)
+          yield { type: 'done', sessionId: lastResult?.sessionId ?? sessionIdFromInit, error: lastResult?.error }
+          return
+        } else if (item.kind === 'close') {
           if (this.stopped) {
+            // The session id learned from init survives a stop or a crash, so the next turn
+            // resumes the same conversation instead of starting over.
             yield { type: 'done', sessionId: sessionIdFromInit, error: `stopped (exit code ${item.code ?? 'null'})`, stopped: true }
+          } else if (lastResult) {
+            yield { type: 'done', sessionId: lastResult.sessionId ?? sessionIdFromInit, error: lastResult.error }
           } else {
             const tail = stderrLines.slice(-5).join('\n')
             yield { type: 'done', sessionId: sessionIdFromInit, error: `exit code ${item.code ?? 'null'}${tail ? ': ' + tail : ''}` }
@@ -203,9 +248,21 @@ export class ClaudeCliBrain implements Brain {
         }
       }
     } finally {
+      clearGrace()
+      this.stdinOpen = false
       this.child = null
       this.deps.onMood('restore')
     }
+  }
+
+  // Writes one more user line to the running child. False when nothing is running or the
+  // turn is already draining (stdin closed at its first result); never throws, the stdin
+  // error listener above swallows a write to a child that has gone.
+  steer(text: string): boolean {
+    const child = this.child
+    if (!child || !this.stdinOpen || !child.stdin || child.stdin.destroyed || child.stdin.writableEnded) return false
+    child.stdin.write(userLine(text))
+    return true
   }
 
   stop(): void {

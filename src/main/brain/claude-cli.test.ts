@@ -181,6 +181,44 @@ describe('ClaudeCliBrain', () => {
     expect((last as { sessionId?: string }).sessionId).toBe('s1')
   }, 10000)
 
+  it('holds stdin open: a steer reaches the child, and a follow-on turn queued behind the first result drains into the same reply with one done', async () => {
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: fakeSpawn('steer-drain') }))
+    const iter = brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
+    const first = await iter.next()
+    expect(first.value).toEqual({ type: 'text', delta: 'Hel' })
+    // The turn is running (its first result is still 40 ms away); steer must be accepted.
+    expect(brain.steer('status?')).toBe(true)
+    const rest: BrainEvent[] = []
+    for (;;) { const r = await iter.next(); if (r.done) break; rest.push(r.value) }
+    const text = rest.filter(e => e.type === 'text').map(e => (e as { delta: string }).delta).join('')
+    // The fake's second turn echoes what came down stdin: the JSON prompt line and the steer.
+    expect(text).toBe('lo prompt=hi steers=status?')
+    expect(rest.filter(e => e.type === 'done')).toHaveLength(1)
+    expect(rest.at(-1)).toEqual({ type: 'done', sessionId: 's2', error: undefined })
+    // The turn is over: nothing left to steer.
+    expect(brain.steer('late')).toBe(false)
+  }, 10000)
+
+  it('declares the turn done after the grace when the child lingers past its result with no follow-on turn', async () => {
+    const spawnFn = ((_command: string, args: readonly string[], options: Record<string, unknown>) =>
+      nodeSpawn(process.execPath, [fakeCliScript, ...args], {
+        ...options,
+        env: { ...(options.env as NodeJS.ProcessEnv), FAKE_CLAUDE_SCENARIO: 'linger', FAKE_CLAUDE_LINGER_MS: '1500' },
+      })) as unknown as ClaudeCliDeps['spawn']
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: spawnFn, drainGraceMs: 100 }))
+    const started = Date.now()
+    const events = await collect(brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null }))
+    expect(events.filter(e => e.type === 'text').map(e => (e as { delta: string }).delta).join('')).toBe('Hello')
+    expect(events.at(-1)).toEqual({ type: 'done', sessionId: 's1', error: undefined })
+    // Well before the child's 1500 ms linger: the grace, not the child's exit, ended the turn.
+    expect(Date.now() - started).toBeLessThan(1200)
+    expect(brain.steer('late')).toBe(false)
+  }, 10000)
+
+  it('steer() returns false when no turn is running', () => {
+    expect(new ClaudeCliBrain(baseDeps()).steer('x')).toBe(false)
+  })
+
   it('reports cliMissing on ENOENT and never spawns a real child', async () => {
     const events = await collect(new ClaudeCliBrain(baseDeps({
       cliPath: 'C:\\definitely\\not\\a\\real\\claude.exe',
