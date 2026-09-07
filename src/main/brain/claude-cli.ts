@@ -248,6 +248,11 @@ export class ClaudeCliBrain implements Brain {
         }
       }
     } finally {
+      // Every exit path, including a consumer that stops iterating early or a throw inside
+      // the loop: a child left with stdin open would never exit on its own, so close it here
+      // (idempotent; a write to a child that is already gone is swallowed by the stdin error
+      // listener above).
+      endStdin()
       clearGrace()
       this.stdinOpen = false
       this.child = null

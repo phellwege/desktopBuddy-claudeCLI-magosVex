@@ -219,6 +219,26 @@ describe('ClaudeCliBrain', () => {
     expect(new ClaudeCliBrain(baseDeps()).steer('x')).toBe(false)
   })
 
+  it('ends stdin when the consumer abandons the turn early, so the child can exit', async () => {
+    let created: ReturnType<typeof nodeSpawn> | undefined
+    const spawnFn = ((_command: string, args: readonly string[], options: Record<string, unknown>) => {
+      created = nodeSpawn(process.execPath, [fakeCliScript, ...args], {
+        ...options,
+        env: { ...(options.env as NodeJS.ProcessEnv), FAKE_CLAUDE_SCENARIO: 'text', FAKE_CLAUDE_GAP_MS: '300' },
+      })
+      return created
+    }) as unknown as ClaudeCliDeps['spawn']
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: spawnFn }))
+    const iter = brain.respond('hi', { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
+    await iter.next()
+    expect(created?.stdin?.writableEnded).toBe(false)
+    await iter.return?.(undefined)
+    expect(created?.stdin?.writableEnded).toBe(true)
+    expect(brain.steer('late')).toBe(false)
+    // Let the fake finish its scripted lines so no child outlives the test.
+    await new Promise<void>((resolve) => created?.once('close', () => resolve()))
+  }, 10000)
+
   it('reports cliMissing on ENOENT and never spawns a real child', async () => {
     const events = await collect(new ClaudeCliBrain(baseDeps({
       cliPath: 'C:\\definitely\\not\\a\\real\\claude.exe',
