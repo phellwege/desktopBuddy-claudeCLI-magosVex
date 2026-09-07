@@ -66,6 +66,9 @@ Ctrl+Q in the panel quits. Drag him to another monitor; he hovers there and land
 | `/model [name]` | set or clear the model for the next session |
 | `/help` | this list |
 
+Typing while a rite runs hands the message to the running turn: he answers at his next
+tool boundary and carries on. `/stop` still aborts.
+
 Dictation: Windows voice typing (Win+H) or your Mac's dictation key types straight into
 the panel's text box. Nothing in the app listens to the microphone.
 

@@ -99,6 +99,21 @@ stdin open that would leave the child waiting forever (measurement 4), so:
   `stopped` done event is unchanged.
 - Mood handling is unchanged: `thinking` on the first activity, `restore` in `finally`.
 
+Known costs and limits:
+
+1. `done` now fires at child close or after the grace, so the reply settles roughly half a
+   second later than before (the measured post-EOF exit), and readback starts then;
+   streamed text is unaffected. If the pause is noticeable the knob is `DRAIN_GRACE_MS`.
+2. The last result's error wins: an errored follow-on turn marks the whole reply errored
+   (which suppresses readback), and a successful follow-on turn hides a first-turn error.
+3. A follow-on turn whose `init` arrives later than the grace after the previous result is
+   silently lost (the brain has detached); measured latency is tens of milliseconds, so
+   this is a limit, not an expected path.
+4. `/new` and `/cd` do not stop a running turn; a message typed after them steers the
+   still-running child in the old session and workspace, whose id is then discarded.
+5. The grace path detaches without killing; the next turn may `--resume` a session the
+   detached child is still writing to. Same shape as before this change, slightly widened.
+
 ### 4.4 Interface
 
 `Brain` gains `steer?(text: string): boolean`. Optional, so the echo brain and every
@@ -127,8 +142,8 @@ messages: the first line is the prompt and starts the scenario; later lines are 
 recorded so a scenario can react to them; EOF is observed separately. Every existing
 scenario keeps its output. Two scenarios are added: `steer-drain` (first result, then on
 EOF a second `init`, text and `result` with session id `s2`, then exit) and
-`linger` (a result, then the process stays alive until killed or stdin EOF plus a delay
-longer than the test's grace).
+`linger` (a result, then the process stays alive `FAKE_CLAUDE_LINGER_MS` ms, default 1500,
+and exits on its own; it never consults stdin).
 
 `src/main/brain/claude-cli.test.ts`, driven by those scenarios:
 
