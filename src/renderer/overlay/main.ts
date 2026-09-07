@@ -18,6 +18,10 @@ let hovering = false
 let lastState: BuddyStatePayload | null = null
 let hitFrame = ''
 let drawn: { f: AtlasFrame; mirror: boolean } | null = null
+// The canvas keeps its pixels between frames, so the paint only needs to happen when the
+// animation frame or facing changes (a few times a second at idle, not every vsync). Set
+// whenever the canvas is resized, which clears it.
+let redrawNeeded = true
 let lastOrigin: { x: number; y: number } | null = null
 // The frame's actual drawn rect within the canvas (the canvas is the full character cell,
 // but the trimmed sprite inside it is usually smaller and off-centre), so the mutter bubble
@@ -148,6 +152,7 @@ function layout(): void {
   if (!atlas) return
   canvas.width = Math.ceil(atlas.maxFrameSize[0] * scale)
   canvas.height = Math.ceil(atlas.maxFrameSize[1] * scale)
+  redrawNeeded = true
   place()
 }
 
@@ -209,17 +214,24 @@ function draw(): void {
     if (!missingFrames.has(name)) { missingFrames.add(name); console.warn(`overlay: atlas has no frame "${name}"`) }
     return
   }
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  const baselineY = canvas.height - 4
-  const dx = canvas.width / 2 - f.ax * scale
-  const dy = baselineY - f.ay * scale
-  drawnRect = { x: mirror ? canvas.width - dx - f.w * scale : dx, y: dy, w: f.w * scale, h: f.h * scale }
-  ctx.save()
-  if (mirror) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
-  ctx.drawImage(image, f.x, f.y, f.w, f.h, dx, dy, f.w * scale, f.h * scale)
-  ctx.restore()
-  if (name !== hitFrame) { hit.update(image, f); hitFrame = name }
-  drawn = { f, mirror }
+  // Paint only when something visible changed. Position changes move the canvas element
+  // (place()), not its pixels, so an unchanged frame and facing means the pixels are
+  // already right. The origin report below still runs every frame: the skull's screen
+  // position moves with the canvas even when the picture does not.
+  if (redrawNeeded || !drawn || drawn.f !== f || drawn.mirror !== mirror) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    const baselineY = canvas.height - 4
+    const dx = canvas.width / 2 - f.ax * scale
+    const dy = baselineY - f.ay * scale
+    drawnRect = { x: mirror ? canvas.width - dx - f.w * scale : dx, y: dy, w: f.w * scale, h: f.h * scale }
+    ctx.save()
+    if (mirror) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1) }
+    ctx.drawImage(image, f.x, f.y, f.w, f.h, dx, dy, f.w * scale, f.h * scale)
+    ctx.restore()
+    if (name !== hitFrame) { hit.update(image, f); hitFrame = name }
+    drawn = { f, mirror }
+    redrawNeeded = false
+  }
   if (lastState?.state.panelOpen) {
     const p = originScreenPosition(f, mirror, scale, canvas, canvas.getBoundingClientRect(), { x: window.screenX, y: window.screenY })
     if (p && (!lastOrigin || Math.abs(p.x - lastOrigin.x) >= 1 || Math.abs(p.y - lastOrigin.y) >= 1)) {
