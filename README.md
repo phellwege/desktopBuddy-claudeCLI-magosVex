@@ -6,6 +6,12 @@ between monitors when asked. Click him and a servo-skull hologram opens a chat p
 driven by your own Claude Code login: he reads your workspace, edits files with your
 sanction, and comments on the result in character.
 
+![Magos Vex walking along the bottom of the screen](docs/media/walk.gif)
+
+| A real reply with its in-character headline | A shell command stopped at the sanction card | Left alone for two minutes |
+| --- | --- | --- |
+| ![The hologram panel showing a reply and its readback headline](docs/media/panel.png) | ![The permission card asking to sanction a PowerShell command](docs/media/permission.png) | ![An idle thought bubble beside his head](docs/media/mutter.png) |
+
 Unofficial fan project. Not affiliated with, endorsed by, or sponsored by Games Workshop.
 Names and likenesses from the Warhammer 40,000 setting belong to Games Workshop Limited.
 Non-commercial, and it must stay that way.
