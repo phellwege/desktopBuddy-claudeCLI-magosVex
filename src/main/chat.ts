@@ -61,7 +61,16 @@ export class ChatController implements ChatPort {
     const parsed = parseCommand(text)
     if (parsed.ok) { this.run(parsed.command); return }
     if ('error' in parsed) { this.deps.out.system(parsed.error); return }
-    if (this.running) { this.deps.out.system('Still working. Use /stop to abort the current rite.'); return }
+    if (this.running) {
+      // A message typed mid-rite goes into the running turn: the CLI hands it to the model at
+      // its next tool boundary, or runs it as the next turn if none is left (spec
+      // 2026-09-07-mid-turn-steering-design). The panel already shows the operator's bubble,
+      // so nothing is posted. Only a brain that cannot take it (the echo brain, or a turn
+      // that is already draining) gets the refusal.
+      if (this.deps.brain.steer?.(text.trim())) return
+      this.deps.out.system('Still working. Use /stop to abort the current rite.')
+      return
+    }
     void this.ask(text.trim())
   }
 

@@ -87,7 +87,7 @@ describe('ChatController', () => {
     expect(c.status().session).toBe('new')
     expect(changes.at(-1)).toMatchObject({ sessionId: null })
   })
-  it('refuses a second prompt while busy and /stop stops the brain', async () => {
+  it('refuses a second prompt while busy when the brain cannot steer, and /stop stops the brain', async () => {
     const out = fakeOut()
     let release!: () => void
     const brain: Brain & { stopped: number } = { stopped: 0,
@@ -104,6 +104,43 @@ describe('ChatController', () => {
     release()
     await new Promise(r => setTimeout(r, 5))
     expect(c.busy).toBe(false)
+  })
+  it('steers a second prompt into the running turn when the brain can take it, and posts nothing', async () => {
+    const out = fakeOut()
+    let release!: () => void
+    const steers: string[] = []
+    const brain: Brain = {
+      async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } },
+      stop() {},
+      steer(text) { steers.push(text); return true },
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('one')
+    await new Promise(r => setTimeout(r, 5))
+    expect(c.busy).toBe(true)
+    c.prompt('  how is it going?  ')
+    expect(steers).toEqual(['how is it going?'])
+    expect(out.systems).toEqual([])
+    release()
+    await new Promise(r => setTimeout(r, 5))
+    expect(c.busy).toBe(false)
+    expect(out.dones).toBe(1)
+  })
+  it('falls back to the refusal line when the brain declines the steer', async () => {
+    const out = fakeOut()
+    let release!: () => void
+    const brain: Brain = {
+      async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } },
+      stop() {},
+      steer() { return false },
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('one')
+    await new Promise(r => setTimeout(r, 5))
+    c.prompt('two')
+    expect(out.systems.at(-1)).toContain('/stop')
+    release()
+    await new Promise(r => setTimeout(r, 5))
   })
   it('/stop uses the pack stopped line when the pack has one', async () => {
     const out = fakeOut()
