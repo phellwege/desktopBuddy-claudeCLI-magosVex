@@ -14,11 +14,30 @@ Non-commercial, and it must stay that way.
 
 - Windows 10 or 11. The overlay relies on click-through window forwarding, which Linux
   does not support; a macOS port is small and planned.
-- Node 22 or newer.
-- [Claude Code](https://claude.com/claude-code) installed and logged in. The buddy spawns
-  `claude.exe` per turn on your subscription. No API key is used or supported.
+- Node 22 or newer for development. The installer script below brings its own.
+- [Claude Code](https://claude.com/claude-code) installed and logged in, if you want him
+  to think. The buddy spawns `claude.exe` per turn on your subscription; no API key is
+  used or supported. Without it he still wanders, sleeps, mutters, travels between
+  monitors and takes every slash command, and the panel answers with canned echo lines.
 
-## Run it
+## Install on a machine without dev tools
+
+Install [Git](https://git-scm.com/download/win), clone this repo anywhere, then
+double-click `install\Install Mechanicus Buddy.cmd`. It downloads a portable Node into the
+checkout, installs and builds in place, creates a Start-menu shortcut, writes a first
+config with your home folder as the workspace, and launches him. Nothing is installed
+system-wide and no admin prompt appears. From a terminal you can pass switches:
+
+```bash
+powershell -ExecutionPolicy Bypass -File install\install.ps1 -StartWithWindows
+```
+
+`-StartWithWindows` adds a Startup shortcut, `-WithClaude` runs Anthropic's official
+Claude Code installer afterwards (then run `claude` once in a terminal to log in),
+`-NoLaunch` skips the launch, `-Uninstall` removes the shortcuts and the build and leaves
+the checkout and your settings. To update: `git pull`, then run it again.
+
+## Run it from source
 
 ```bash
 npm ci
