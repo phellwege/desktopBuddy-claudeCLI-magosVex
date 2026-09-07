@@ -2,12 +2,15 @@ import { Animator } from './animator'
 import { Motion } from './motion'
 import { HitTester } from './hittest'
 import { originScreenPosition } from './origin'
+import { headPoint, trailDots, trailStart, type Rect, type Side } from './thought'
 import type { Atlas, AtlasFrame } from '../../shared/types'
 import type { BuddyStatePayload, OverlayMutterPayload, PackLoadedPayload, StagePayload } from '../../shared/ipc'
 
 const canvas = document.getElementById('buddy') as HTMLCanvasElement
 const ctx = canvas.getContext('2d')!
 const mutterEl = document.getElementById('mutter') as HTMLDivElement
+const mutterWrap = document.getElementById('mutter-wrap') as HTMLDivElement
+const dotEls = [document.getElementById('mutter-dot-big'), document.getElementById('mutter-dot-small')] as HTMLDivElement[]
 const motion = new Motion(0, 0)
 const hit = new HitTester()
 let atlas: Atlas | null = null
@@ -82,7 +85,9 @@ let mutterFadeTimer: ReturnType<typeof setTimeout> | undefined
 
 // Beside his head: above the canvas if the window (the bottom strip, usually) has room for
 // the bubble there, otherwise to whichever side of the canvas has more room. Re-run from
-// place() on every frame he might be walking through, so the bubble tracks him.
+// place() on every frame he might be walking through, so the bubble tracks him. The two
+// lead-in dots are then laid on the line from the bubble's near edge to his head
+// (thought.ts), so they stay on him even when the bubble is clamped away by a window edge.
 function placeMutter(canvasLeft: number, canvasTop: number): void {
   if (!mutterVisible) return
   const bw = mutterEl.offsetWidth
@@ -93,29 +98,39 @@ function placeMutter(canvasLeft: number, canvasTop: number): void {
   // close to him instead of floating off toward the cell's empty margin. Before the first
   // draw (drawnRect.w is 0) fall back to the canvas box.
   const haveDrawn = drawnRect.w > 0
-  const bx = canvasLeft + (haveDrawn ? drawnRect.x : 0)
-  const by = canvasTop + (haveDrawn ? drawnRect.y : 0)
-  const bw2 = haveDrawn ? drawnRect.w : canvas.width
-  mutterEl.classList.remove('side-above', 'side-left', 'side-right')
-  const aboveTop = by - bh - 4
+  const drawn: Rect = haveDrawn
+    ? { x: canvasLeft + drawnRect.x, y: canvasTop + drawnRect.y, w: drawnRect.w, h: drawnRect.h }
+    : { x: canvasLeft, y: canvasTop, w: canvas.width, h: canvas.height }
+  let bubble: Rect
+  let side: Side
+  const aboveTop = drawn.y - bh - 4
   if (aboveTop >= 0) {
-    const left = Math.min(Math.max(0, bx + bw2 / 2 - bw / 2), Math.max(0, winW - bw))
-    mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(aboveTop)}px)`
-    mutterEl.classList.add('side-above')
-    return
-  }
-  const top = Math.min(Math.max(0, by + 6), Math.max(0, winH - bh))
-  const roomLeft = canvasLeft
-  const roomRight = winW - (canvasLeft + canvas.width)
-  if (roomRight >= roomLeft) {
-    const left = Math.min(bx + bw2 + 4, Math.max(0, winW - bw))
-    mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
-    mutterEl.classList.add('side-right')
+    const left = Math.min(Math.max(0, drawn.x + drawn.w / 2 - bw / 2), Math.max(0, winW - bw))
+    bubble = { x: left, y: aboveTop, w: bw, h: bh }
+    side = 'above'
   } else {
-    const left = Math.max(0, bx - bw - 4)
-    mutterEl.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`
-    mutterEl.classList.add('side-left')
+    const top = Math.min(Math.max(0, drawn.y + 6), Math.max(0, winH - bh))
+    const roomLeft = canvasLeft
+    const roomRight = winW - (canvasLeft + canvas.width)
+    if (roomRight >= roomLeft) {
+      bubble = { x: Math.min(drawn.x + drawn.w + 4, Math.max(0, winW - bw)), y: top, w: bw, h: bh }
+      side = 'right'
+    } else {
+      bubble = { x: Math.max(0, drawn.x - bw - 4), y: top, w: bw, h: bh }
+      side = 'left'
+    }
   }
+  mutterEl.style.transform = `translate(${Math.round(bubble.x)}px, ${Math.round(bubble.y)}px)`
+  const head = headPoint(drawn)
+  const dots = trailDots(trailStart(bubble, side, head), head)
+  dots.forEach((d, i) => {
+    const el = dotEls[i]
+    if (!el) return
+    const r = d.size / 2
+    const cx = Math.min(Math.max(r, d.x), Math.max(r, winW - r))
+    const cy = Math.min(Math.max(r, d.y), Math.max(r, winH - r))
+    el.style.transform = `translate(${Math.round(cx - r)}px, ${Math.round(cy - r)}px)`
+  })
 }
 
 // Hidden immediately, no fade: used when a buddy state says he is no longer somewhere a
@@ -124,27 +139,27 @@ function hideMutterAtOnce(): void {
   if (mutterTtlTimer !== undefined) { clearTimeout(mutterTtlTimer); mutterTtlTimer = undefined }
   if (mutterFadeTimer !== undefined) { clearTimeout(mutterFadeTimer); mutterFadeTimer = undefined }
   mutterVisible = false
-  mutterEl.classList.remove('visible')
-  mutterEl.hidden = true
+  mutterWrap.classList.remove('visible')
+  mutterWrap.hidden = true
 }
 
 // Its ttl ran out on its own: fade out over the same 300ms as the entrance, then hide for
 // real (display: none, via the hidden attribute) once the transition has had time to run.
 function fadeOutMutter(): void {
   mutterVisible = false
-  mutterEl.classList.remove('visible')
-  mutterFadeTimer = setTimeout(() => { mutterEl.hidden = true; mutterFadeTimer = undefined }, 300)
+  mutterWrap.classList.remove('visible')
+  mutterFadeTimer = setTimeout(() => { mutterWrap.hidden = true; mutterFadeTimer = undefined }, 300)
 }
 
 function showMutter(text: string, ttlMs: number): void {
   if (mutterTtlTimer !== undefined) clearTimeout(mutterTtlTimer)
   if (mutterFadeTimer !== undefined) { clearTimeout(mutterFadeTimer); mutterFadeTimer = undefined }
   mutterEl.textContent = text
-  mutterEl.hidden = false
+  mutterWrap.hidden = false
   mutterVisible = true
   place()
   void mutterEl.offsetWidth // force a reflow so the opacity transition below actually runs
-  mutterEl.classList.add('visible')
+  mutterWrap.classList.add('visible')
   mutterTtlTimer = setTimeout(fadeOutMutter, ttlMs)
 }
 

@@ -13,9 +13,13 @@
        below the window for the whole of a flight, when the window grows to span both
        displays. That was the cross-display "blip": he was clipped out, not teleported. */
     #buddy { position: absolute; left: 0; top: 0; will-change: transform; }
-    /* An idle thought bubble. Positioned the same way as #buddy (an absolute offset from
-       the window origin via transform); main.ts decides above-his-head vs beside him and
-       toggles the side-* class that aims the two trailing "thought" circles at him. */
+    /* An idle thought bubble and its two lead-in dots. The wrapper carries visibility
+       (hidden attribute + the visible class for the fade); its children are positioned
+       the same way as #buddy, an absolute offset from the window origin via transform.
+       main.ts places the bubble above his head or beside him, then puts the dots on the
+       straight line from the bubble's near edge to his head (overlay/thought.ts). */
+    #mutter-wrap { position: absolute; left: 0; top: 0; pointer-events: none; opacity: 0; transition: opacity 300ms; }
+    #mutter-wrap.visible { opacity: 1; }
     #mutter {
       position: absolute; left: 0; top: 0;
       max-width: 390px;
@@ -25,30 +29,17 @@
       color: #e8f1f2;
       font: 20px system-ui;
       border: 1px solid rgba(255, 255, 255, 0.18);
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 300ms;
     }
-    #mutter.visible { opacity: 1; }
-    #mutter::before, #mutter::after {
-      content: '';
-      position: absolute;
+    .mutter-dot {
+      position: absolute; left: 0; top: 0;
       border-radius: 50%;
       background: rgba(10, 14, 18, 0.86);
       border: 1px solid rgba(255, 255, 255, 0.18);
+      box-sizing: border-box;
     }
-    #mutter::before { width: 12px; height: 12px; }
-    #mutter::after { width: 8px; height: 8px; }
-    /* Bubble sits above him: circles trail down toward his head. */
-    #mutter.side-above::before { bottom: -21px; left: 28%; }
-    #mutter.side-above::after { bottom: -33px; left: 20%; }
-    /* Bubble sits to his left: circles trail right toward him. */
-    #mutter.side-left::before { right: -21px; bottom: 9px; }
-    #mutter.side-left::after { right: -33px; bottom: -5px; }
-    /* Bubble sits to his right: circles trail left toward him. */
-    #mutter.side-right::before { left: -21px; bottom: 9px; }
-    #mutter.side-right::after { left: -33px; bottom: -5px; }
+    #mutter-dot-big { width: 12px; height: 12px; }
+    #mutter-dot-small { width: 8px; height: 8px; }
   </style>
 </head>
-<body><canvas id="buddy"></canvas><div id="mutter" hidden></div><script type="module" src="./main.ts"></script></body>
+<body><canvas id="buddy"></canvas><div id="mutter-wrap" hidden><div id="mutter"></div><div id="mutter-dot-big" class="mutter-dot"></div><div id="mutter-dot-small" class="mutter-dot"></div></div><script type="module" src="./main.ts"></script></body>
 </html>
