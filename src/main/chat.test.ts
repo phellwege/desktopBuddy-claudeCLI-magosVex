@@ -112,7 +112,7 @@ describe('ChatController', () => {
     const brain: Brain = {
       async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } },
       stop() {},
-      steer(text) { steers.push(text); return true },
+      steer(content) { if (typeof content === 'string') steers.push(content); return true },
     }
     const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
     c.prompt('one')

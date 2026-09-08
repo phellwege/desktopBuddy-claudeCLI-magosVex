@@ -11,6 +11,7 @@ import { isAuthError, parseStreamLine } from './stream'
 import { toolsNote } from './prompt'
 import { killTree } from './process'
 import type { Brain, BrainContext, BrainEvent } from './types'
+import type { UserContent } from './content'
 
 export interface ClaudeCliDeps {
   cliPath: string
@@ -67,9 +68,11 @@ export function childEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 // One stream-json user message, newline terminated: the shape the CLI reads from stdin
-// under --input-format stream-json, both for the prompt and for a steer.
-export function userLine(text: string): string {
-  return JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n'
+// under --input-format stream-json, both for the prompt and for a steer. content is the
+// operator's text, or content blocks when images ride along (measured against 2.1.261:
+// the CLI accepts the array form on stdin as the prompt and as a later line).
+export function userLine(content: UserContent): string {
+  return JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n'
 }
 
 function pickLine(lines: string[] | undefined): string | undefined {
@@ -121,7 +124,7 @@ export class ClaudeCliBrain implements Brain {
 
   constructor(private readonly deps: ClaudeCliDeps) {}
 
-  async *respond(prompt: string, ctx: BrainContext): AsyncIterable<BrainEvent> {
+  async *respond(prompt: UserContent, ctx: BrainContext): AsyncIterable<BrainEvent> {
     this.stopped = false
     const spawnFn: SpawnFn = this.deps.spawn ?? nodeSpawn
     const newSessionId = randomUUID()
@@ -275,10 +278,10 @@ export class ClaudeCliBrain implements Brain {
   // Writes one more user line to the running child. False when nothing is running or the
   // turn is already draining (stdin closed at its first result); never throws, the stdin
   // error listener above swallows a write to a child that has gone.
-  steer(text: string): boolean {
+  steer(content: UserContent): boolean {
     const child = this.child
     if (!child || this.stopped || !this.stdinOpen || !child.stdin || child.stdin.destroyed || child.stdin.writableEnded) return false
-    child.stdin.write(userLine(text))
+    child.stdin.write(userLine(content))
     return true
   }
 

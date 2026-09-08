@@ -32,6 +32,12 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine('{"type":"weird"}')).toEqual([{ type: 'ignore' }])
     expect(parseStreamLine('not json')).toEqual([{ type: 'ignore' }])
   })
+  it('ignores the system lines that are not init, and the top-level rate limit line', () => {
+    for (const subtype of ['thinking_tokens', 'post_turn_summary']) {
+      expect(parseStreamLine(JSON.stringify({ type: 'system', subtype, session_id: 's1' }))).toEqual([{ type: 'ignore' }])
+    }
+    expect(parseStreamLine(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: {} }))).toEqual([{ type: 'ignore' }])
+  })
   it('never throws and never emits done on a truncated stream missing its final result line', () => {
     const ev = events('truncated.jsonl')
     expect(() => events('truncated.jsonl')).not.toThrow()

@@ -80,6 +80,13 @@ describe('userLine', () => {
   it('is one stream-json user message per line, newline terminated', () => {
     expect(userLine('hi there')).toBe('{"type":"user","message":{"role":"user","content":"hi there"}}\n')
   })
+  it('serializes content blocks as the message content, unchanged', () => {
+    const blocks = [
+      { type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'QUJD' } },
+      { type: 'text' as const, text: '[Image #1: a.png]' },
+    ]
+    expect(userLine(blocks)).toBe('{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}},{"type":"text","text":"[Image #1: a.png]"}]}}\n')
+  })
 })
 
 // Runs the fake CLI as `node test/fake-claude.cjs <the real flags>` via process.execPath,
