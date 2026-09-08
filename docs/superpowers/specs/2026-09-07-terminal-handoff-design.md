@@ -18,16 +18,18 @@ sub-project with its own spec; the image attachments spec is the other.
 
 Against claude.exe 2.1.261 and Electron 44.1.1 on Windows 11, 2026-09-07:
 
-1. `--resume <id>` keeps the id. A session created with `--session-id X` and resumed with
-   `--resume X` reports `session_id` X in its result and remembers the earlier turn.
+1. From the first version, kept for the record: `--resume <id>` keeps the id. A session
+   created with `--session-id X` and resumed with `--resume X` reports `session_id` X in
+   its result and remembers the earlier turn.
 2. A console program spawned as a direct child of the Electron main process, which has
    no console of its own, gets none either: with `stdio: 'ignore'` its stdin is NUL
    (`timeout.exe` reports "Input redirection is not supported"), and redirecting from
    `CON` fails with "Access is denied". The interactive CLI cannot run that way.
-3. `cmd.exe /c start "" /wait <program>` from Electron opens a real console
-   (`timeout.exe` counted down in it) and the wrapper's exit is the program's exit: 2.6 s
-   for a 3 s countdown, the balance being the window's own teardown. PowerShell's
-   `Start-Process -Wait` behaves the same at about a second more startup.
+3. From the first version, kept for the record: `cmd.exe /c start "" /wait <program>`
+   from Electron opens a real console (`timeout.exe` counted down in it) and the
+   wrapper's exit is the program's exit: 2.6 s for a 3 s countdown, the balance being the
+   window's own teardown. PowerShell's `Start-Process -Wait` behaves the same at about a
+   second more startup.
 4. The default-terminal delegation in this machine's registry names Windows Terminal, so
    the window `start` opens is a Windows Terminal window; without it, conhost. Nothing
    here depends on which.
@@ -62,6 +64,12 @@ carry paths with spaces; a path containing a double quote is refused with a reas
 rather than passed through. Nothing else goes on the command line: no session id, no MCP
 config, no tool or permission flags, no model.
 
+In the non-hook branch, `open` first checks that `cliPath` exists on disk and refuses
+with `no Claude Code at <cliPath>` when it does not, rather than handing a missing path
+to `cmd /c start`: that pops a "Windows cannot find ..." dialog that `windowsHide` buries,
+leaving the detached wrapper alive behind it after the panel has already posted the
+confirmation. The hook branch skips this check.
+
 `Handoff.open(o)` spawns that command (or the `BUDDY_HANDOFF_CMD` test hook's argv in
 place of it, not verbatim) with `{ cwd: o.workspace, env: childEnv(...), stdio: 'ignore',
 windowsHide: true, windowsVerbatimArguments, detached: true }`, then calls `child.unref()`
@@ -79,6 +87,10 @@ which works at any time: mid-turn, right after another `/cli`, regardless of the
 id. There is no hand-off state left for it to be gated on.
 
 - With no handoff dep (no CLI installed, or the echo brain): the pack's `cliMissing` line.
+- With a handoff dep but a workspace that no longer exists: `no such directory:
+  <workspace>` (the same wording `/cd` uses), and `handoff.open` is never called, so a
+  vanished workspace cannot produce a confirmation followed by an async spawn error or a
+  silent `start` failure.
 - Otherwise: `handoff.open({ workspace, onError })`. A refusal to build the launch
   command, or a spawn error reported through `onError`, posts the pack's `error` line
   plus the reason, with the `sadness` face. Otherwise: `Opened Claude Code in a
@@ -92,12 +104,18 @@ the same path for the menu.
 ## 6. Menu (`src/main/index.ts`)
 
 The right-click menu gains `Open in Claude Code`, calling `openCli`. It is always enabled;
-the refusals above explain themselves in the panel.
+the refusals above explain themselves in the panel. `index.ts` opens the panel first,
+then calls `chat.openCli()`, so the confirmation or refusal line is on screen rather than
+posted to a panel the operator has not opened.
 
 ## 7. Edge cases, documented rather than handled
 
 - `/cd` inside the terminal does not move the panel's workspace: the two are independent
   conversations from the moment the window opens.
+- `cmd` re-expands `%NAME%` inside the quoted paths before running `start`, so a workspace
+  or CLI path containing a percent-delimited name opens elsewhere or fails. Both values
+  are the operator's own (`/cd` insists the directory exists; `cliPath` is config), so
+  this is data-only and documented, not guarded.
 
 ## 8. Tests
 

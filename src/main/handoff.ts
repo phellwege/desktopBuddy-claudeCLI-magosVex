@@ -4,6 +4,7 @@
 // at all, so the launch goes through `cmd /c start`, which opens a real one; and a window
 // opened that way survives the app's exit, so nothing here tracks or stops it.
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { childEnv } from './brain/claude-cli'
 
 export interface HandoffDeps {
@@ -13,6 +14,10 @@ export interface HandoffDeps {
   // Test hook (BUDDY_HANDOFF_CMD): a full argv that replaces the launcher, so the e2e
   // suite runs a short node process instead of opening a console.
   command?: string[]
+  // Checked before the non-hook launch is built: a missing cliPath makes `cmd /c start`
+  // pop a "Windows cannot find ..." dialog that windowsHide buries, leaving a detached
+  // wrapper alive behind it after the panel has already posted the confirmation.
+  exists?: (path: string) => boolean
 }
 export interface HandoffOpen { workspace: string; onError: (message: string) => void }
 export type HandoffResult = { ok: true } | { ok: false; reason: string }
@@ -35,7 +40,12 @@ export class Handoff {
   // process from the first moment and the buddy can quit under it.
   open(o: HandoffOpen): HandoffResult {
     const hook = this.deps.command
-    const cmd: LaunchCommand = hook && hook.length > 0
+    const hasHook = Boolean(hook && hook.length > 0)
+    if (!hasHook) {
+      const exists = this.deps.exists ?? existsSync
+      if (!exists(this.deps.cliPath)) return { ok: false, reason: `no Claude Code at ${this.deps.cliPath}` }
+    }
+    const cmd: LaunchCommand = hasHook && hook
       ? { ok: true, file: hook[0] ?? '', args: hook.slice(1), verbatim: false }
       : buildHandoffCommand(this.deps.cliPath, o.workspace)
     if (!cmd.ok) return cmd

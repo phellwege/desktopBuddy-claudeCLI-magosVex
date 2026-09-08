@@ -20,6 +20,9 @@ function fakeSpawn() {
   return { spawn, calls, children }
 }
 const open = (h: Handoff, onError: (m: string) => void = () => {}) => h.open({ workspace: 'C:\\repo', onError })
+// The fake CLI path does not exist on disk; every test but the missing-CLI one asserts
+// behaviour past that check, so they all pretend it is there.
+const deps = (overrides: Partial<HandoffDeps> = {}): HandoffDeps => ({ cliPath: CLI, exists: () => true, ...overrides })
 
 describe('buildHandoffCommand', () => {
   it('is cmd /c start "Claude Code" /d with the workspace and the cli, nothing else', () => {
@@ -43,7 +46,7 @@ describe('buildHandoffCommand', () => {
 describe('Handoff', () => {
   it('spawns the built command detached, hidden, verbatim, stdio ignored, in the workspace, with the scrubbed env, and unrefs it', () => {
     const f = fakeSpawn()
-    const h = new Handoff({ cliPath: CLI, spawn: f.spawn, env: { CLAUDECODE: '1', ANTHROPIC_API_KEY: 'k', PATH: 'p' } })
+    const h = new Handoff(deps({ spawn: f.spawn, env: { CLAUDECODE: '1', ANTHROPIC_API_KEY: 'k', PATH: 'p' } }))
     expect(open(h)).toEqual({ ok: true })
     expect(f.calls[0]?.file).toBe('cmd.exe')
     expect(f.calls[0]?.args[1]).toBe(`start "Claude Code" /d "C:\\repo" "${CLI}"`)
@@ -53,28 +56,34 @@ describe('Handoff', () => {
   })
   it('a hook command replaces the launcher and is not verbatim', () => {
     const f = fakeSpawn()
-    const h = new Handoff({ cliPath: CLI, spawn: f.spawn, command: ['node', '-e', 'setTimeout(() => {}, 50)'] })
+    const h = new Handoff(deps({ spawn: f.spawn, command: ['node', '-e', 'setTimeout(() => {}, 50)'] }))
     expect(open(h)).toEqual({ ok: true })
     expect(f.calls[0]).toMatchObject({ file: 'node', args: ['-e', 'setTimeout(() => {}, 50)'] })
     expect(f.calls[0]?.options).toMatchObject({ windowsVerbatimArguments: false, detached: true })
   })
   it('every open spawns a new window', () => {
     const f = fakeSpawn()
-    const h = new Handoff({ cliPath: CLI, spawn: f.spawn })
+    const h = new Handoff(deps({ spawn: f.spawn }))
     open(h); open(h)
     expect(f.calls).toHaveLength(2)
   })
   it('reports a spawn error through onError', () => {
     const f = fakeSpawn(); const errors: string[] = []
-    const h = new Handoff({ cliPath: CLI, spawn: f.spawn })
+    const h = new Handoff(deps({ spawn: f.spawn }))
     open(h, (m) => errors.push(m))
     f.children[0]?.emit('error', new Error('ENOENT cmd.exe'))
     expect(errors).toEqual(['ENOENT cmd.exe'])
   })
   it('refuses when the command cannot be built, without spawning', () => {
     const f = fakeSpawn()
-    const h = new Handoff({ cliPath: 'C:\\odd"name\\claude.exe', spawn: f.spawn })
+    const h = new Handoff(deps({ cliPath: 'C:\\odd"name\\claude.exe', spawn: f.spawn }))
     expect(open(h).ok).toBe(false)
+    expect(f.calls).toHaveLength(0)
+  })
+  it('refuses a missing CLI before launching, without spawning', () => {
+    const f = fakeSpawn()
+    const h = new Handoff(deps({ spawn: f.spawn, exists: () => false }))
+    expect(open(h)).toEqual({ ok: false, reason: `no Claude Code at ${CLI}` })
     expect(f.calls).toHaveLength(0)
   })
 })

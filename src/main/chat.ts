@@ -179,6 +179,9 @@ export class ChatController implements ChatPort {
   openCli(): void {
     const h = this.deps.handoff
     if (!h) { this.deps.out.system(pickLine(this.deps.pack, 'cliMissing') ?? 'No Claude Code is installed here.'); return }
+    if (!(this.deps.fs ?? nodeWorkspaceFs).isDirectory(this.settings.workspace)) {
+      this.deps.out.system(`no such directory: ${this.settings.workspace}`); return
+    }
     const errorLine = (reason: string): void => this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${reason}`, 'sadness')
     const r = h.open({ workspace: this.settings.workspace, onError: errorLine })
     if (!r.ok) { errorLine(r.reason); return }

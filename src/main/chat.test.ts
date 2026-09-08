@@ -421,7 +421,7 @@ describe('ChatController', () => {
   })
   it('/cli opens a fresh CLI in the workspace, confirms, and changes nothing else', () => {
     const out = fakeOut(); const h = fakeHandoff(); const changes: unknown[] = []
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h, onSettingsChange: s => changes.push(s) })
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: { ...settings(), sessionId: 'old' }, handoff: h, onSettingsChange: s => changes.push(s) })
     c.prompt('/cli')
     expect(h.opens[0]).toMatchObject({ workspace: 'C:\\repo' })
     expect(out.systems.at(-1)).toBe('Opened Claude Code in a terminal.')
@@ -432,7 +432,7 @@ describe('ChatController', () => {
     const out = fakeOut(); const h = fakeHandoff()
     let release!: () => void
     const brain: Brain = { async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } }, stop() {} }
-    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings(), handoff: h })
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, fs: permissiveFs, settings: settings(), handoff: h })
     c.prompt('one')
     await new Promise(r => setTimeout(r, 5))
     c.prompt('/cli'); c.prompt('/cli')
@@ -440,20 +440,38 @@ describe('ChatController', () => {
     release()
     await new Promise(r => setTimeout(r, 5))
   })
-  it('a refusal and a spawn error post the error line', () => {
+  it('a refusal to build the launch command posts the error line, sadness, and no confirmation', () => {
     const out = fakeOut()
-    const h: HandoffPort = { open: (o) => { o.onError('boom'); return { ok: false, reason: 'no console' } } }
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), handoff: h })
+    const h: HandoffPort = { open: () => ({ ok: false, reason: 'no console' }) }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: settings(), handoff: h })
     c.prompt('/cli')
-    expect(out.systems.some(s => s.includes('boom'))).toBe(true)
     expect(out.systems.at(-1)).toContain('no console')
+    expect(out.faces.at(-1)).toBe('sadness')
+    expect(out.systems.some(s => s === 'Opened Claude Code in a terminal.')).toBe(false)
+  })
+  it('a spawn error reported through onError after a successful open posts the confirmation first, then the error line', async () => {
+    const out = fakeOut()
+    const h: HandoffPort = { open: (o) => { setTimeout(() => o.onError('boom'), 0); return { ok: true } } }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: settings(), handoff: h })
+    c.prompt('/cli')
+    expect(out.systems.at(-1)).toBe('Opened Claude Code in a terminal.')
+    await new Promise(r => setTimeout(r, 5))
+    expect(out.systems.at(-1)).toContain('boom')
     expect(out.faces.at(-1)).toBe('sadness')
   })
   it('openCli is the same path the menu uses', () => {
     const out = fakeOut(); const h = fakeHandoff()
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), handoff: h })
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs: permissiveFs, settings: settings(), handoff: h })
     c.openCli()
     expect(h.opens).toHaveLength(1)
+  })
+  it('refuses a vanished workspace before opening, without calling handoff', () => {
+    const out = fakeOut(); const h = fakeHandoff()
+    const fs = { isDirectory: () => false, list: () => [] as { name: string; dir: boolean }[] }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, fs, settings: settings(), handoff: h })
+    c.prompt('/cli')
+    expect(out.systems.at(-1)).toBe('no such directory: C:\\repo')
+    expect(h.opens).toHaveLength(0)
   })
 })
 
