@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hologramBounds, overlayBounds, originToWindow, shouldReplaceHologramX, unionRect, travelBounds, PANEL_SIZE, OVERLAY_HEIGHT, TRAVEL_MARGIN } from './geometry'
+import { hologramBounds, overlayBounds, originToWindow, shouldReplaceHologramX, unionRect, travelBounds, PANEL_SIZE, CLI_PANEL_SIZE, OVERLAY_HEIGHT, TRAVEL_MARGIN } from './geometry'
 
 // The real rig: an ultrawide above two 1080p panels, overhanging both.
 const ULTRA = { x: -575, y: -1440, width: 5120, height: 1392 }
@@ -59,6 +59,28 @@ describe('geometry', () => {
         expect(p.y).toBeGreaterThanOrEqual(0); expect(p.y).toBeLessThanOrEqual(b.height)
       }
     }
+  })
+
+  it('sized for the CLI panel, the window is wider and its top moves up by the extra height', () => {
+    const charW = 352, charH = 326
+    const chat = hologramBounds(wa, 0.5, charW, charH)
+    const cli = hologramBounds(wa, 0.5, charW, charH, CLI_PANEL_SIZE)
+    expect(cli.width).toBe(CLI_PANEL_SIZE.width + 2 * 120)
+    expect(cli.width).toBe(940)
+    expect(cli.y).toBe(chat.y - (CLI_PANEL_SIZE.height - PANEL_SIZE.height))
+    expect(cli.height).toBeGreaterThanOrEqual(CLI_PANEL_SIZE.height)
+    expect(cli.x).toBeGreaterThanOrEqual(wa.x)
+    expect(cli.x + cli.width).toBeLessThanOrEqual(wa.x + wa.width)
+  })
+  it('the CLI panel still clamps to a small work area', () => {
+    const small = { x: 100, y: 50, width: 1000, height: 600 }
+    const b = hologramBounds(small, 0.5, 200, 200, CLI_PANEL_SIZE)
+    expect(b.x).toBeGreaterThanOrEqual(100)
+    expect(b.x + b.width).toBeLessThanOrEqual(1100)
+    expect(b.y).toBe(50)
+  })
+  it('the default panel size keeps every chat-tab placement unchanged', () => {
+    expect(hologramBounds(wa, 0.3, 352, 326)).toEqual(hologramBounds(wa, 0.3, 352, 326, PANEL_SIZE))
   })
 
   it('originToWindow subtracts the window position', () => {
