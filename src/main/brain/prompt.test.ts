@@ -9,5 +9,7 @@ describe('toolsNote', () => {
     }
     expect(n).toContain('love')
     expect(n.toLowerCase()).not.toContain('omnissiah')
+    expect(n).toContain('[Image #N: name]')
+    expect(n).toContain('do not read them from disk')
   })
 })
