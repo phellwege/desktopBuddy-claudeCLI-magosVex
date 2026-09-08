@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { MAX_BYTES, normalizeImage, sniffMediaType, type DecodedImage, type ImageCodec } from './images'
+import { resolve } from 'node:path'
+import { AttachmentStore, loadImagePath, MAX_BYTES, MAX_STAGED, normalizeImage, sniffMediaType, type DecodedImage, type ImageCodec, type ImageFs } from './images'
+import type { ImageAttachment } from '../shared/images'
 
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
@@ -102,5 +104,65 @@ describe('normalizeImage', () => {
   it('refuses a gif over the cap', () => {
     const codec = fakeCodec({ width: 1, height: 1, decodes: false })
     expect(normalizeImage({ bytes: Buffer.concat([GIF_HEAD, Buffer.alloc(MAX_BYTES)]), name: 'a.gif' }, codec)).toEqual({ ok: false, reason: 'too large' })
+  })
+})
+
+function fakeFs(files: Record<string, Buffer>): ImageFs {
+  return { readFile: (p) => { const b = files[p]; if (!b) throw new Error('ENOENT'); return b } }
+}
+
+describe('loadImagePath', () => {
+  it('resolves a relative path against the workspace and names the file by its basename', () => {
+    const key = resolve('C:\\repo', 'shots/a.png')
+    const r = loadImagePath('shots/a.png', 'C:\\repo', fakeFs({ [key]: png(10) }), fakeCodec({ width: 10, height: 10 }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.attachment.name).toBe('a.png')
+    expect(r.attachment.mediaType).toBe('image/png')
+  })
+  it('takes an absolute path as it is', () => {
+    const key = resolve('D:\\pics\\b.JPG')
+    const r = loadImagePath('D:\\pics\\b.JPG', 'C:\\repo', fakeFs({ [key]: JPEG_HEAD }), fakeCodec({ width: 10, height: 10 }))
+    expect(r.ok && r.attachment.mediaType).toBe('image/jpeg')
+    expect(r.ok && r.attachment.name).toBe('b.JPG')
+  })
+  it('gates on the extension before reading', () => {
+    let reads = 0
+    const fs: ImageFs = { readFile: () => { reads++; return png() } }
+    expect(loadImagePath('C:\\x\\notes.txt', 'C:\\repo', fs, fakeCodec({ width: 1, height: 1 }))).toEqual({ ok: false, reason: 'not an image file' })
+    expect(reads).toBe(0)
+  })
+  it('reports a missing file', () => {
+    expect(loadImagePath('C:\\x\\gone.png', 'C:\\repo', fakeFs({}), fakeCodec({ width: 1, height: 1 }))).toEqual({ ok: false, reason: 'no such file' })
+  })
+})
+
+describe('AttachmentStore', () => {
+  const att = (id: string): ImageAttachment => ({ id, name: `${id}.png`, mediaType: 'image/png', data: 'QUJD', width: 1, height: 1, bytes: 3 })
+  it('takes staged attachments in the order asked and removes them', () => {
+    const s = new AttachmentStore()
+    s.stage(att('a')); s.stage(att('b')); s.stage(att('c'))
+    expect(s.take(['c', 'a']).map(x => x.id)).toEqual(['c', 'a'])
+    expect(s.size).toBe(1)
+    expect(s.take(['c'])).toEqual([])
+  })
+  it('skips unknown ids', () => {
+    const s = new AttachmentStore()
+    s.stage(att('a'))
+    expect(s.take(['zzz', 'a']).map(x => x.id)).toEqual(['a'])
+  })
+  it('discards one and clears all', () => {
+    const s = new AttachmentStore()
+    s.stage(att('a')); s.stage(att('b'))
+    s.discard('a')
+    expect(s.size).toBe(1)
+    s.clear()
+    expect(s.size).toBe(0)
+  })
+  it('refuses beyond MAX_STAGED', () => {
+    const s = new AttachmentStore()
+    for (let i = 0; i < MAX_STAGED; i++) expect(s.stage(att(`i${i}`))).toEqual({ ok: true })
+    expect(s.stage(att('one-more'))).toEqual({ ok: false, reason: 'too many images' })
+    expect(s.size).toBe(MAX_STAGED)
   })
 })

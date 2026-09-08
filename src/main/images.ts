@@ -2,6 +2,8 @@
 // apart from the codec, which wraps Electron's nativeImage in production
 // (images-electron.ts) and is faked in tests, so this file runs under plain Node.
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { basename, extname, isAbsolute, resolve } from 'node:path'
 import { isImageMediaType, type ImageAttachment, type ImageMediaType, type StagedImage } from '../shared/images'
 
 // The long edge above which the API downscales on the current high-resolution models;
@@ -70,4 +72,44 @@ export function normalizeImage(src: ImageSource, codec: ImageCodec): NormalizeRe
   if (encoded.length > MAX_BYTES) { encoded = scaled.jpeg(85); outType = 'image/jpeg' }
   if (encoded.length > MAX_BYTES) return { ok: false, reason: 'too large' }
   return finish(src, outType, encoded, scaled.width, scaled.height, scaled.thumbnail(THUMB_HEIGHT))
+}
+
+// Disk access for a pasted path, injectable so tests never touch the real disk.
+export interface ImageFs { readFile(path: string): Buffer }
+export const nodeImageFs: ImageFs = { readFile: (p) => readFileSync(p) }
+
+// A relative path resolves against the workspace, as the CLI's own Read would. The
+// extension gate runs before the read so a stray .txt never hits the disk (spec 5).
+export function loadImagePath(path: string, workspace: string, fs: ImageFs, codec: ImageCodec): NormalizeResult {
+  const target = isAbsolute(path) ? resolve(path) : resolve(workspace, path)
+  const type = IMAGE_EXTENSIONS[extname(target).toLowerCase()]
+  if (!type) return { ok: false, reason: 'not an image file' }
+  let bytes: Buffer
+  try { bytes = fs.readFile(target) } catch { return { ok: false, reason: 'no such file' } }
+  return normalizeImage({ bytes, mediaType: type, name: basename(target) }, codec)
+}
+
+// Attachments staged in the panel and not yet sent, by id. Main owns it (spec 5): the
+// renderer holds ids and thumbnails only, and the bytes cross IPC once.
+export class AttachmentStore {
+  private readonly items = new Map<string, ImageAttachment>()
+  get size(): number { return this.items.size }
+  stage(attachment: ImageAttachment): { ok: true } | { ok: false; reason: string } {
+    if (this.items.size >= MAX_STAGED) return { ok: false, reason: 'too many images' }
+    this.items.set(attachment.id, attachment)
+    return { ok: true }
+  }
+  // In the order asked, which is the order of the chips; unknown ids are skipped.
+  take(ids: readonly string[]): ImageAttachment[] {
+    const out: ImageAttachment[] = []
+    for (const id of ids) {
+      const a = this.items.get(id)
+      if (!a) continue
+      out.push(a)
+      this.items.delete(id)
+    }
+    return out
+  }
+  discard(id: string): void { this.items.delete(id) }
+  clear(): void { this.items.clear() }
 }
