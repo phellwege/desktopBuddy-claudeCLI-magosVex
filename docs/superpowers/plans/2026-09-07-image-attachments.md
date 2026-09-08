@@ -25,6 +25,8 @@ Spec: `docs/superpowers/specs/2026-09-07-image-attachments-design.md`. Section n
 
 ## File Structure
 
+Task 0 first: it makes the e2e suite safe to run beside a running buddy (four specs launch on the live profile today), which every later task relies on.
+
 Create:
 - `src/shared/images.ts`: `ImageMediaType`, `ImageAttachment`, `StagedImage` types shared by main and the renderer.
 - `src/main/brain/content.ts`: `UserContent`, `UserBlock`, `buildUserContent`, `describeContent`, `caption`.
@@ -50,6 +52,55 @@ Modify:
 - `src/shared/ipc.ts`, `src/preload/index.ts`, `src/main/ipc.ts`, `src/main/index.ts`: channels, bridge, handlers, store wiring.
 - `src/renderer/hologram/index.html`, `styles.css`, `main.ts`: the chip strip, paste, drop, send.
 - `README.md`, `package.json` (the `smoke:image` script).
+
+---
+
+### Task 0: Every e2e spec runs on its own profile
+
+**Files:**
+- Modify: `e2e/body.spec.ts`, `e2e/brain.spec.ts`, `e2e/mutter.spec.ts`, `e2e/travel.spec.ts`
+
+**Interfaces:**
+- Consumes: the `BUDDY_USER_DATA` hook in `src/main/index.ts` (an isolated profile directory). `e2e/dictation.spec.ts` already uses it and is the pattern to copy.
+
+Why first: an app launched without `BUDDY_USER_DATA` shares the live profile (config, state, logs, renderer storage, GPU cache) with a buddy already running from `npm run dev`; two instances on one profile fail the GPU cache and the live instance's hologram crashes. Every later task runs the e2e suite beside a running buddy, so the suite must be safe first.
+
+- [ ] **Step 1: Give each launch a temp profile**
+
+In each of the four specs, find the `electron.launch({ args: ['.'], env: cleanEnv({ ... }) })` call (in `brain.spec.ts` it is inside `launch(scenario, extraEnv)`; the other three have their own launch helper or a `beforeEach`). Add, keeping every existing env entry as it is:
+
+```ts
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+
+let userDataDir: string | undefined
+
+// Inside the launch helper, before electron.launch:
+userDataDir = mkdtempSync(join(tmpdir(), 'buddy-e2e-'))
+// In the env object passed to cleanEnv:
+      BUDDY_USER_DATA: userDataDir,
+// In the existing afterEach (or afterAll where one app is shared across tests), after the app is closed:
+  if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
+```
+
+Where a spec launches more than once inside one test, mint a fresh directory per launch and remove the previous one at the same point the previous app is closed. `join` is already imported from `node:path` in every spec; add it if not.
+
+- [ ] **Step 2: Verify no spec is left out**
+
+Run: `grep -L BUDDY_USER_DATA e2e/*.spec.ts`
+Expected: no output.
+
+- [ ] **Step 3: Run the suite beside a running buddy**
+
+Run: `npm run test:e2e`
+Expected: every spec passes as before. A buddy running from the main tree's dev server must still be alive afterwards: `Get-Process electron` in PowerShell shows the same process count as before the run, and its panel still opens on a click.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add e2e/body.spec.ts e2e/brain.spec.ts e2e/mutter.spec.ts e2e/travel.spec.ts
+git commit -m "e2e: every spec launches on its own temp profile, never the live one" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
 
 ---
 
