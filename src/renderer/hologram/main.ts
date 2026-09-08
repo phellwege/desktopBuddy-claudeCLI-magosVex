@@ -27,6 +27,9 @@ let activeTab: Tab = 'chat'
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let ptyStarted = false
+// Set for the duration of the in-flight ptyStart() round trip, so a second tab click (or
+// Enter-to-restart) during that window doesn't fire a second concurrent ptyStart().
+let ptyStarting = false
 let ptyExited = false
 const cone = new ProjectionCone(coneCanvas)
 const LINE_PX = parseFloat(getComputedStyle(input).lineHeight) || 18
@@ -198,9 +201,17 @@ function ensureTerminal(): Terminal {
   t.onSelectionChange(() => { const s = t.getSelection(); if (s) window.buddy.writeClipboard(s) })
   // Enter on a dead terminal restarts it (spec T-7).
   t.onKey(({ key }) => { if (ptyExited && key === '\r') void startPty() })
-  // Ctrl+Tab leaves for the chat tab; every other key is the CLI's, Escape included.
+  // Ctrl+Tab leaves for the chat tab; every other key is the CLI's, Escape included. Returning
+  // false only stops xterm from treating the key as terminal input, it does not stop the native
+  // event from bubbling to document's own Ctrl+Tab listener - so on keydown we stop it ourselves
+  // (preventDefault + stopPropagation) before switching, or that listener would see its guard
+  // (activeTab === 'chat', set synchronously by switchTab above) satisfied on the same event and
+  // immediately switch back to the CLI tab.
   t.attachCustomKeyEventHandler((e) => {
-    if (e.ctrlKey && e.key === 'Tab') { if (e.type === 'keydown') switchTab('chat'); return false }
+    if (e.ctrlKey && e.key === 'Tab') {
+      if (e.type === 'keydown') { e.preventDefault(); e.stopPropagation(); switchTab('chat') }
+      return false
+    }
     return true
   })
   window.buddy.onPtyData(({ data }) => t.write(data))
@@ -215,12 +226,21 @@ async function startPty(): Promise<void> {
   const t = ensureTerminal()
   fit?.fit()
   ptyExited = false
-  const r = await window.buddy.ptyStart(t.cols, t.rows)
-  if ('error' in r) { ptyExited = true; t.writeln(`${r.error}\r\n  Enter to retry`); return }
-  ptyStarted = true
+  ptyStarting = true
+  try {
+    const r = await window.buddy.ptyStart(t.cols, t.rows)
+    if ('error' in r) { ptyExited = true; t.writeln(`${r.error}\r\n  Enter to retry`); return }
+    ptyStarted = true
+  } finally {
+    ptyStarting = false
+  }
 }
 function focusActive(): void { if (activeTab === 'cli') term?.focus(); else input.focus() }
 function switchTab(tab: Tab): void {
+  // Already there: just refocus the active control. Without this, a second click (or a second
+  // Ctrl+Tab) on the current tab would re-run the CLI branch below and, on a slow first pty
+  // start, race a second concurrent startPty() before ptyStarted flips true.
+  if (tab === activeTab) { focusActive(); return }
   activeTab = tab
   for (const b of tabButtons) b.classList.toggle('active', b.dataset.tab === tab)
   panel.classList.toggle('cli', tab === 'cli')
@@ -229,7 +249,7 @@ function switchTab(tab: Tab): void {
   if (tab === 'cli') {
     const t = ensureTerminal()
     // Fit after the panel has taken its CLI size, then start the session the first time.
-    requestAnimationFrame(() => { fit?.fit(); t.focus(); if (!ptyStarted && !ptyExited) void startPty() })
+    requestAnimationFrame(() => { fit?.fit(); t.focus(); if (!ptyStarted && !ptyStarting && !ptyExited) void startPty() })
   } else {
     input.focus()
   }
