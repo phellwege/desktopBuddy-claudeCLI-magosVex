@@ -440,6 +440,28 @@ describe('ChatController', () => {
     expect(h.starts[0]).toMatchObject({ sessionId: 'old', fresh: false })
     expect(changes).toEqual([])
   })
+  it('/cli against an existing id with no transcript on disk launches the same id fresh, untouched settings', () => {
+    const out = fakeOut(); const h = fakeHandoff(); const changes: unknown[] = []
+    const calls: unknown[] = []
+    const c = new ChatController({
+      brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h,
+      onSettingsChange: s => changes.push(s),
+      transcriptExists: (workspace, id) => { calls.push([workspace, id]); return false },
+    })
+    c.prompt('/cli')
+    expect(h.starts[0]).toMatchObject({ sessionId: 'old', fresh: true })
+    expect(changes).toEqual([])
+    expect(calls).toEqual([['C:\\repo', 'old']])
+  })
+  it('/cli against an existing id whose transcript exists still resumes, as with no checker at all', () => {
+    const out = fakeOut(); const h = fakeHandoff()
+    const c = new ChatController({
+      brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h,
+      transcriptExists: () => true,
+    })
+    c.prompt('/cli')
+    expect(h.starts[0]).toMatchObject({ sessionId: 'old', fresh: false })
+  })
   it('/cli while a turn runs is refused', async () => {
     const out = fakeOut(); const h = fakeHandoff()
     let release!: () => void

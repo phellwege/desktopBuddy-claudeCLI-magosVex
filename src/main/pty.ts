@@ -15,7 +15,7 @@ export interface PtyLike {
 export interface PtySpawnOptions { name: string; cols: number; rows: number; cwd: string; env: Record<string, string> }
 export type PtyFactory = (file: string, args: string[], opts: PtySpawnOptions) => PtyLike
 export interface PtyStart { file: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv; cols: number; rows: number }
-export type PtyStartResult = { ok: true } | { ok: false; reason: string }
+export type PtySpawnResult = { ok: true } | { ok: false; reason: string }
 
 // The brain's scrubbed environment (no CLAUDECODE, no API key), only string values (node-pty
 // refuses undefined), and the terminal type xterm.js emulates.
@@ -34,7 +34,7 @@ export class PtySession {
   constructor(private readonly deps: { factory: PtyFactory; kill?: (pid: number) => void }) {}
   get running(): boolean { return this.pty !== null }
 
-  start(s: PtyStart): PtyStartResult {
+  start(s: PtyStart): PtySpawnResult {
     if (this.pty) return { ok: false, reason: 'already running' }
     let p: PtyLike
     try {

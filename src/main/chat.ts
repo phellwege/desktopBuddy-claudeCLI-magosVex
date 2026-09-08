@@ -59,7 +59,11 @@ export class ChatController implements ChatPort {
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut; fs?: WorkspaceFs;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void;
     readback?: { run(text: string): Promise<ReadbackResult> }; log?: (line: string) => void;
-    handoff?: HandoffPort; uuid?: () => string }) {
+    handoff?: HandoffPort; uuid?: () => string;
+    // Whether a session id already has a transcript on disk (src/main/state.ts's
+    // sessionTranscriptExists, injected from main/index.ts). Defaults to always true, so a
+    // caller that never injects it sees exactly today's behaviour.
+    transcriptExists?: (workspace: string, sessionId: string) => boolean }) {
     this.settings = { ...deps.settings }
   }
   get busy(): boolean { return this.running }
@@ -73,6 +77,9 @@ export class ChatController implements ChatPort {
   private resolvePath(p: string): string {
     return isAbsolute(p) ? resolve(p) : resolve(this.settings.workspace, p)
   }
+  // The real CLI holds this session in a terminal window (spec H-5) while this is true; every
+  // refusal below posts the same lines, so this is the one thing they all check.
+  private inTerminal(): boolean { return Boolean(this.deps.handoff?.active) }
 
   // images are attachments already normalized and taken out of main's store, in chip order;
   // the renderer never sends any with a slash command, so chips survive one.
@@ -82,7 +89,7 @@ export class ChatController implements ChatPort {
     if ('error' in parsed) { this.deps.out.system(parsed.error); return }
     // The real CLI holds this session in a terminal window (spec H-5): nothing is sent or
     // steered until it closes.
-    if (this.deps.handoff?.active) { this.deps.out.system(`${STAND_DOWN}${droppedImagesSuffix(images)}`); return }
+    if (this.inTerminal()) { this.deps.out.system(`${STAND_DOWN}${droppedImagesSuffix(images)}`); return }
     const content = buildUserContent(text.trim(), images)
     if (this.running) {
       // A message typed mid-rite goes into the running turn: the CLI hands it to the model at
@@ -135,19 +142,19 @@ export class ChatController implements ChatPort {
         this.deps.out.system('awake')
         break
       case 'stop':
-        if (this.deps.handoff?.active) { this.deps.handoff.stop(); this.deps.out.system(pickLine(this.deps.pack, 'stopped') ?? 'stopped'); break }
+        if (this.inTerminal()) { this.deps.handoff?.stop(); this.deps.out.system(pickLine(this.deps.pack, 'stopped') ?? 'stopped'); break }
         this.stop()
         this.deps.out.system(pickLine(this.deps.pack, 'stopped') ?? 'stopped')
         break
       case 'help': this.deps.out.system(HELP_TEXT); break
       case 'cli': this.openCli(); break
       case 'new':
-        if (this.deps.handoff?.active) { this.deps.out.system(NOT_NOW); break }
+        if (this.inTerminal()) { this.deps.out.system(NOT_NOW); break }
         this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
         this.deps.out.system('new session')
         break
       case 'clear':
-        if (this.deps.handoff?.active) { this.deps.out.system(NOT_NOW); break }
+        if (this.inTerminal()) { this.deps.out.system(NOT_NOW); break }
         // Everything /new does (a fresh session, which also drops the session allow-list via
         // settingsChanged), plus wiping the panel's own log.
         this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
@@ -156,7 +163,7 @@ export class ChatController implements ChatPort {
         break
       case 'cd': {
         if (cmd.path === null) { this.deps.out.system(`workspace: ${this.settings.workspace}`); break }
-        if (this.deps.handoff?.active) { this.deps.out.system(NOT_NOW); break }
+        if (this.inTerminal()) { this.deps.out.system(NOT_NOW); break }
         const target = this.resolvePath(cmd.path)
         if (!(this.deps.fs ?? nodeWorkspaceFs).isDirectory(target)) { this.deps.out.system(`no such directory: ${target}`); break }
         // A session belongs to the directory it started in, so a new workspace means a new
@@ -190,11 +197,17 @@ export class ChatController implements ChatPort {
   openCli(): void {
     const h = this.deps.handoff
     if (!h) { this.deps.out.system(pickLine(this.deps.pack, 'cliMissing') ?? 'No Claude Code is installed here.'); return }
-    if (h.active) { this.deps.out.system('Already in the terminal.'); return }
+    if (this.inTerminal()) { this.deps.out.system('Already in the terminal.'); return }
     if (this.running) { this.deps.out.system('Finish or /stop the current rite first.'); return }
-    const fresh = this.settings.sessionId === null
+    const mintNew = this.settings.sessionId === null
     const sessionId = this.settings.sessionId ?? (this.deps.uuid ?? randomUUID)()
-    if (fresh) { this.settings.sessionId = sessionId; this.settingsChanged() }
+    // A minted id whose window closed before any turn ran leaves no transcript behind it; the
+    // next /cli must still launch that same id fresh (--session-id) rather than resume it, or
+    // the CLI exits at once against a transcript that was never written and the stand-down and
+    // return lines fire for nothing. The id itself is kept either way, never re-minted here.
+    const transcriptExists = this.deps.transcriptExists ?? (() => true)
+    const fresh = mintNew || !transcriptExists(this.settings.workspace, sessionId)
+    if (mintNew) { this.settings.sessionId = sessionId; this.settingsChanged() }
     const r = h.start({
       sessionId, fresh, workspace: this.settings.workspace,
       onExit: (error) => {

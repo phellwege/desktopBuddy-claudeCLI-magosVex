@@ -21,29 +21,32 @@ function fakeSpawn() {
   }) as unknown as NonNullable<HandoffDeps['spawn']>
   return { spawn, calls, children }
 }
-const start = (h: Handoff, onExit: (e?: string) => void = () => {}, sessionId = 'sess-1', fresh = false) =>
+const start = (h: Handoff, onExit: (e?: string) => void = () => {}, sessionId = 'aaaa1111', fresh = false) =>
   h.start({ sessionId, fresh, workspace: 'C:\\repo', onExit })
 
 describe('buildHandoffCommand', () => {
   it('is cmd /c start "Claude Code" /wait with the workspace, the cli and --resume', () => {
-    expect(buildHandoffCommand(CLI, 'C:\\repo', 'sess-1', false)).toEqual({
+    expect(buildHandoffCommand(CLI, 'C:\\repo', 'aaaa1111', false)).toEqual({
       ok: true, file: 'cmd.exe', verbatim: true,
-      args: ['/c', `start "Claude Code" /wait /d "C:\\repo" "${CLI}" --resume sess-1`],
+      args: ['/c', `start "Claude Code" /wait /d "C:\\repo" "${CLI}" --resume aaaa1111`],
     })
   })
   it('uses --session-id for a minted session', () => {
-    const r = buildHandoffCommand(CLI, 'C:\\repo', 'new-1', true)
-    expect(r.ok && r.args[1]).toContain('--session-id new-1')
+    const r = buildHandoffCommand(CLI, 'C:\\repo', 'bbbb2222', true)
+    expect(r.ok && r.args[1]).toContain('--session-id bbbb2222')
   })
   it('quotes carry spaces, a trailing backslash is stripped, a drive root keeps its backslash', () => {
-    const spaced = buildHandoffCommand('C:\\Program Files\\claude.exe', 'D:\\my work\\', 's', false)
-    expect(spaced.ok && spaced.args[1]).toBe('start "Claude Code" /wait /d "D:\\my work" "C:\\Program Files\\claude.exe" --resume s')
-    const root = buildHandoffCommand(CLI, 'C:\\', 's', false)
+    const spaced = buildHandoffCommand('C:\\Program Files\\claude.exe', 'D:\\my work\\', 'a', false)
+    expect(spaced.ok && spaced.args[1]).toBe('start "Claude Code" /wait /d "D:\\my work" "C:\\Program Files\\claude.exe" --resume a')
+    const root = buildHandoffCommand(CLI, 'C:\\', 'a', false)
     expect(root.ok && root.args[1]).toContain('/d "C:\\"')
   })
   it('refuses a path containing a double quote', () => {
-    expect(buildHandoffCommand('C:\\odd"name\\claude.exe', 'C:\\repo', 's', false)).toEqual({ ok: false, reason: 'a path with a double quote cannot be handed to start' })
-    expect(buildHandoffCommand(CLI, 'C:\\odd"dir', 's', false).ok).toBe(false)
+    expect(buildHandoffCommand('C:\\odd"name\\claude.exe', 'C:\\repo', 'a', false)).toEqual({ ok: false, reason: 'a path with a double quote cannot be handed to start' })
+    expect(buildHandoffCommand(CLI, 'C:\\odd"dir', 'a', false).ok).toBe(false)
+  })
+  it('refuses a session id with characters outside a UUID', () => {
+    expect(buildHandoffCommand(CLI, 'C:\\repo', 'sess 1; calc', false)).toEqual({ ok: false, reason: 'a session id with unexpected characters cannot be handed to start' })
   })
 })
 
@@ -54,7 +57,7 @@ describe('Handoff', () => {
     expect(start(h)).toEqual({ ok: true })
     expect(h.active).toBe(true)
     expect(f.calls[0]?.file).toBe('cmd.exe')
-    expect(f.calls[0]?.args[1]).toContain('--resume sess-1')
+    expect(f.calls[0]?.args[1]).toContain('--resume aaaa1111')
     expect(f.calls[0]?.options).toMatchObject({ cwd: 'C:\\repo', stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true, env: { PATH: 'p' } })
     expect((f.calls[0]?.options.env as Record<string, unknown>).CLAUDECODE).toBeUndefined()
   })

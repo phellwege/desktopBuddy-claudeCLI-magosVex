@@ -27,6 +27,9 @@ export type LaunchCommand = { ok: true; file: string; args: string[]; verbatim: 
 // except on a drive root, where "C:\" is the form start expects.
 export function buildHandoffCommand(cliPath: string, workspace: string, sessionId: string, fresh: boolean): LaunchCommand {
   if (cliPath.includes('"') || workspace.includes('"')) return { ok: false, reason: 'a path with a double quote cannot be handed to start' }
+  // The session id is the one unquoted token on the cmd /c line; anything outside a UUID's
+  // character set could otherwise be read as extra tokens or shell syntax by start.
+  if (!/^[0-9a-f-]+$/i.test(sessionId)) return { ok: false, reason: 'a session id with unexpected characters cannot be handed to start' }
   const dir = /^[A-Za-z]:\\$/.test(workspace) ? workspace : workspace.replace(/[\\/]+$/, '')
   const flag = fresh ? '--session-id' : '--resume'
   return { ok: true, file: 'cmd.exe', args: ['/c', `start "Claude Code" /wait /d "${dir}" "${cliPath}" ${flag} ${sessionId}`], verbatim: true }

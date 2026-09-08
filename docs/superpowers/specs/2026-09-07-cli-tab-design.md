@@ -61,6 +61,9 @@ restart is kill then start. `app.on('before-quit')` kills it. The test hook
 node-pty is a runtime dependency (not dev), so electron-vite externalizes it the way it
 does the MCP SDK; the plan checks the built `out/main/index.js` requires it rather than
 inlining it. Its prebuilds ship in the package; nothing runs at install beyond `npm ci`.
+The `require('node-pty')` itself lives inside `nodePtyFactory` and runs on the first pty
+start, not at app launch, so a missing or broken native module cannot take down the whole
+buddy for a feature that is optional.
 
 ## 5. IPC (`src/shared/ipc.ts`, `src/preload/index.ts`, `src/main/ipc.ts`)
 

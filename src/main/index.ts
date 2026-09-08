@@ -316,6 +316,7 @@ async function main(): Promise<void> {
       if (s.sessionId === null) sessionAllows.clear()
     },
     readback, handoff, log: (line) => appendLog(logDir, 'main', line),
+    transcriptExists: (workspace, id) => sessionTranscriptExists(homedir(), workspace, id),
   })
   chatRef = chat
 
