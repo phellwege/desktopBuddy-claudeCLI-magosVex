@@ -1,4 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { cleanEnv } from './env'
 
 async function windowByUrl(app: ElectronApplication, part: string): Promise<Page> {
@@ -9,6 +12,7 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
 }
 
 let app: ElectronApplication | undefined
+let userDataDir: string | undefined
 
 test.afterEach(async () => {
   if (app) {
@@ -16,13 +20,15 @@ test.afterEach(async () => {
     app = undefined
     await toClose.close()
   }
+  if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
 })
 
 test('an idle thought bubble appears near him and hides itself again', async () => {
   // BUDDY_MUTTER_MS is a test-only override (a config override is not available to this
   // harness): it collapses the default 2-minute interval down to something a spec can wait
   // out. The echo brain keeps this independent of the real CLI.
-  app = await electron.launch({ args: ['.'], env: cleanEnv({ BUDDY_TEST: '1', BUDDY_BRAIN: 'echo', BUDDY_MUTTER_MS: '1500' }) })
+  userDataDir = mkdtempSync(join(tmpdir(), 'buddy-e2e-'))
+  app = await electron.launch({ args: ['.'], env: cleanEnv({ BUDDY_TEST: '1', BUDDY_BRAIN: 'echo', BUDDY_MUTTER_MS: '1500', BUDDY_USER_DATA: userDataDir }) })
   const overlay = await windowByUrl(app, 'overlay')
   await expect.poll(
     () => overlay.evaluate(() => (document.getElementById('buddy') as HTMLCanvasElement).width),

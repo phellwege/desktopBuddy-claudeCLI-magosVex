@@ -1,4 +1,6 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { cleanEnv } from './env'
 import { loadPack } from '../src/main/pack'
@@ -22,8 +24,10 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
 }
 
 let app: ElectronApplication | undefined
+let userDataDir: string | undefined
 
 async function launch(scenario: string, extraEnv: Record<string, string> = {}): Promise<{ app: ElectronApplication; hologram: Page }> {
+  userDataDir = mkdtempSync(join(tmpdir(), 'buddy-e2e-'))
   app = await electron.launch({
     args: ['.'],
     env: cleanEnv({
@@ -31,6 +35,7 @@ async function launch(scenario: string, extraEnv: Record<string, string> = {}): 
       BUDDY_CLI_PATH: process.execPath,
       BUDDY_CLI_ARGS: JSON.stringify([fakeCliScript]),
       FAKE_CLAUDE_SCENARIO: scenario,
+      BUDDY_USER_DATA: userDataDir,
       ...extraEnv,
     }),
   })
@@ -52,6 +57,7 @@ test.afterEach(async () => {
     app = undefined
     await toClose.close()
   }
+  if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
 })
 
 test('a streamed reply carries an expression face', async () => {
