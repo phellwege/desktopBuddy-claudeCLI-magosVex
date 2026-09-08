@@ -10,6 +10,8 @@ import { HELP_TEXT, parseCommand, type Command } from './commands'
 import { pickLine } from './pack'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import type { HandoffResult, HandoffStart } from './handoff'
 
 export interface ChatOut {
   delta(text: string): void
@@ -21,6 +23,12 @@ export interface ChatOut {
   clear(): void
 }
 export interface ChatSettings { workspace: string; model: string | null; sessionId: string | null }
+
+// What the chat controller needs from the terminal hand-off (src/main/handoff.ts).
+export interface HandoffPort { readonly active: boolean; start(s: HandoffStart): HandoffResult; stop(): void }
+export type { HandoffStart } from './handoff'
+const STAND_DOWN = 'He is in the terminal. Close it to continue here.'
+const NOT_NOW = 'Not while he is in the terminal.'
 
 // Directory access for /cd and /ls, injectable so tests never touch the real disk.
 export interface WorkspaceFs {
@@ -44,7 +52,8 @@ export class ChatController implements ChatPort {
   private readonly settings: ChatSettings
   constructor(private readonly deps: { brain: Brain; actions: BuddyActions; pack: PackData; out: ChatOut; fs?: WorkspaceFs;
     settings: ChatSettings; onSettingsChange?: (s: ChatSettings) => void;
-    readback?: { run(text: string): Promise<ReadbackResult> }; log?: (line: string) => void }) {
+    readback?: { run(text: string): Promise<ReadbackResult> }; log?: (line: string) => void;
+    handoff?: HandoffPort; uuid?: () => string }) {
     this.settings = { ...deps.settings }
   }
   get busy(): boolean { return this.running }
@@ -65,6 +74,9 @@ export class ChatController implements ChatPort {
     const parsed = parseCommand(text)
     if (parsed.ok) { this.run(parsed.command); return }
     if ('error' in parsed) { this.deps.out.system(parsed.error); return }
+    // The real CLI holds this session in a terminal window (spec H-5): nothing is sent or
+    // steered until it closes.
+    if (this.deps.handoff?.active) { this.deps.out.system(STAND_DOWN); return }
     const content = buildUserContent(text.trim(), images)
     if (this.running) {
       // A message typed mid-rite goes into the running turn: the CLI hands it to the model at
@@ -118,15 +130,19 @@ export class ChatController implements ChatPort {
         this.deps.out.system('awake')
         break
       case 'stop':
+        if (this.deps.handoff?.active) { this.deps.handoff.stop(); this.deps.out.system(pickLine(this.deps.pack, 'stopped') ?? 'stopped'); break }
         this.stop()
         this.deps.out.system(pickLine(this.deps.pack, 'stopped') ?? 'stopped')
         break
       case 'help': this.deps.out.system(HELP_TEXT); break
+      case 'cli': this.openCli(); break
       case 'new':
+        if (this.deps.handoff?.active) { this.deps.out.system(NOT_NOW); break }
         this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
         this.deps.out.system('new session')
         break
       case 'clear':
+        if (this.deps.handoff?.active) { this.deps.out.system(NOT_NOW); break }
         // Everything /new does (a fresh session, which also drops the session allow-list via
         // settingsChanged), plus wiping the panel's own log.
         this.turnSerial++; this.settings.sessionId = null; this.settingsChanged()
@@ -135,6 +151,7 @@ export class ChatController implements ChatPort {
         break
       case 'cd': {
         if (cmd.path === null) { this.deps.out.system(`workspace: ${this.settings.workspace}`); break }
+        if (this.deps.handoff?.active) { this.deps.out.system(NOT_NOW); break }
         const target = this.resolvePath(cmd.path)
         if (!(this.deps.fs ?? nodeWorkspaceFs).isDirectory(target)) { this.deps.out.system(`no such directory: ${target}`); break }
         // A session belongs to the directory it started in, so a new workspace means a new
@@ -160,6 +177,29 @@ export class ChatController implements ChatPort {
         this.deps.out.system(`model: ${cmd.model ?? 'default'}`)
         break
     }
+  }
+
+  // /cli and the menu item: the real CLI in a terminal on this session (spec H-5). A
+  // session id is minted here when there is none yet, so the terminal and the panel share
+  // the conversation from its first word; it is persisted like any other id.
+  openCli(): void {
+    const h = this.deps.handoff
+    if (!h) { this.deps.out.system(pickLine(this.deps.pack, 'cliMissing') ?? 'No Claude Code is installed here.'); return }
+    if (h.active) { this.deps.out.system('Already in the terminal.'); return }
+    if (this.running) { this.deps.out.system('Finish or /stop the current rite first.'); return }
+    const fresh = this.settings.sessionId === null
+    const sessionId = this.settings.sessionId ?? (this.deps.uuid ?? randomUUID)()
+    if (fresh) { this.settings.sessionId = sessionId; this.settingsChanged() }
+    const r = h.start({
+      sessionId, fresh, workspace: this.settings.workspace,
+      onExit: (error) => {
+        if (error) this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${error}`, 'sadness')
+        else this.deps.out.system('Back from the terminal.')
+        this.deps.out.status(this.status())
+      },
+    })
+    if (!r.ok) { this.deps.out.system(`${pickLine(this.deps.pack, 'error') ?? 'Error.'} ${r.reason}`, 'sadness'); return }
+    this.deps.out.system(STAND_DOWN)
   }
 
   private async ask(content: UserContent): Promise<void> {
