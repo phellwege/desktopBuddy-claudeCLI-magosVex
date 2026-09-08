@@ -1,4 +1,5 @@
 import type { AnimationKey, Animations, BuddyState, Expression, PackTheme, Point, Rect } from './types'
+import type { StagedImage } from './images'
 
 export const CH = {
   packLoaded: 'pack:loaded',
@@ -30,6 +31,9 @@ export const CH = {
   chatPermissionAnswer: 'chat:permissionAnswer',
   chatClose: 'chat:close',
   chatStop: 'chat:stop',
+  imageStageBytes: 'image:stageBytes',
+  imageStagePath: 'image:stagePath',
+  imageDiscard: 'image:discard',
 } as const
 
 export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; animations: Animations; scale: number; name: string; faces: Record<Expression, string> | null }
@@ -56,6 +60,11 @@ export interface ChatStatusPayload { model: string | null; workspace: string; se
 export interface ChatSystemPayload { text: string; expression?: Expression }
 export interface ThemePayload extends PackTheme { name: string }
 export interface OriginPayload { x: number; y: number; xFraction: number }
+export interface ChatPromptPayload { text: string; images?: string[] }
+// A pasted bitmap: the file's bytes, its type when the clipboard knew it, a display name.
+export interface StageBytesPayload { bytes: Uint8Array; mediaType?: string; name: string }
+export interface StagePathPayload { path: string }
+export type StageResult = StagedImage | { error: string }
 
 export interface BuddyBridge {
   onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
@@ -94,7 +103,13 @@ export interface BuddyBridge {
   onChatClear(cb: () => void): () => void
   hologramReady(): void
   hologramHover(over: boolean): void
-  prompt(text: string): void
+  prompt(text: string, imageIds?: string[]): void
+  stageImageBytes(bytes: Uint8Array, mediaType: string | undefined, name: string): Promise<StageResult>
+  stageImagePath(path: string): Promise<StageResult>
+  discardImage(id: string): void
+  /** The OS path behind a File from a paste or a drop; empty for a File with no path (a
+   * synthetic one, or bytes an app handed over), which then goes the bytes route. */
+  pathForFile(file: File): string
   permissionAnswer(id: string, allow: boolean, remember?: boolean): void
   closePanel(): void
   stop(): void

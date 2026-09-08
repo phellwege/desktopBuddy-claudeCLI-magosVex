@@ -13,9 +13,11 @@ import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, expandForFlight, loadPage, rebound, setHologramInteractive, setOverlayDragging } from './windows'
 import { hologramBounds, originToWindow } from './geometry'
 import { byOrd, desktopBounds, floorY, fromFraction, planDrop, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
-import { wireIpc } from './ipc'
+import { wireIpc, type ImagePort } from './ipc'
 import { SessionAllows } from './permissions'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type StagePayload } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type StagePayload, type StageResult } from '../shared/ipc'
+import { AttachmentStore, loadImagePath, nodeImageFs, normalizeImage, type NormalizeResult } from './images'
+import { electronCodec } from './images-electron'
 import { EchoBrain } from './brain/echo'
 import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import { Readback } from './brain/readback'
@@ -145,6 +147,8 @@ async function main(): Promise<void> {
   const toOverlay = (channel: string, payload?: unknown): void => {
     if (!overlay.isDestroyed()) overlay.webContents.send(channel, payload)
   }
+  // Attachments staged in the panel and not yet sent (spec 5). Cleared with the panel.
+  const store = new AttachmentStore()
   const out = {
     delta: (text: string) => toHologram(CH.chatDelta, { text }),
     activity: (a: ChatActivityPayload) => toHologram(CH.chatActivity, a),
@@ -152,7 +156,7 @@ async function main(): Promise<void> {
     system: (text: string, expression: Expression = 'neutral') => toHologram(CH.chatSystem, { text, expression }),
     status: (s: ChatStatusPayload) => toHologram(CH.chatStatus, s),
     readback: (p: ChatReadbackPayload) => toHologram(CH.chatReadback, p),
-    clear: () => toHologram(CH.chatClear),
+    clear: () => { store.clear(); toHologram(CH.chatClear) },
   }
   let greeted = false
   const host: ActionHost = {
@@ -303,6 +307,22 @@ async function main(): Promise<void> {
   })
   chatRef = chat
 
+  // The panel's chips: normalize with the real codec, stage, and answer with the chip or the
+  // reason. A pasted path resolves against the workspace the chat controller holds now.
+  const stageResult = (r: NormalizeResult): StageResult => {
+    if (!r.ok) return { error: r.reason }
+    const staged = store.stage(r.attachment)
+    return staged.ok ? r.staged : { error: staged.reason }
+  }
+  const images: ImagePort = {
+    stageBytes: (p) => stageResult(normalizeImage({
+      bytes: Buffer.from(p.bytes.buffer, p.bytes.byteOffset, p.bytes.byteLength), mediaType: p.mediaType, name: p.name,
+    }, electronCodec)),
+    stagePath: (p) => stageResult(loadImagePath(p.path, chat.status().workspace, nodeImageFs, electronCodec)),
+    discard: (id) => store.discard(id),
+    take: (ids) => store.take(ids),
+  }
+
   // Runs `<cli> auth status` once, five seconds to answer, and never blocks startup on it:
   // its only effect is one line appended to the status row once (or never) it resolves.
   function checkCliAuth(path: string): void {
@@ -359,6 +379,7 @@ async function main(): Promise<void> {
     placeHologram, lastPlacedX,
     sendStage,
     chat, status: () => chat.status(),
+    images,
     showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
   })
 
