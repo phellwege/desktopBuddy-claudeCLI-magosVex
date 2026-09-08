@@ -1,5 +1,5 @@
 import { ipcMain, type BrowserWindow } from 'electron'
-import { CH, type ChatPromptPayload, type ChatStatusPayload, type OriginPayload, type PackLoadedPayload, type StageBytesPayload, type StagePathPayload, type StageResult, type ThemePayload } from '../shared/ipc'
+import { CH, type ChatPromptPayload, type ChatStatusPayload, type HologramModePayload, type OriginPayload, type PackLoadedPayload, type PtyStartPayload, type PtyStartResult, type StageBytesPayload, type StagePathPayload, type StageResult, type ThemePayload } from '../shared/ipc'
 import type { ImageAttachment } from '../shared/images'
 import type { Buddy } from './buddy'
 import type { Actions } from './actions'
@@ -16,9 +16,16 @@ export interface ImagePort {
   take(ids: readonly string[]): ImageAttachment[]
   clear(): void
 }
+// Main's side of the CLI tab's terminal (spec T-5).
+export interface PtyPort {
+  start(cols: number, rows: number): PtyStartResult
+  write(data: string): void
+  resize(cols: number, rows: number): void
+  kill(): void
+}
 export interface IpcDeps {
   buddy: Buddy; actions: Actions; overlay: BrowserWindow; hologram: BrowserWindow
-  packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort; images: ImagePort
+  packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort; images: ImagePort; pty: PtyPort
   /** Last screen-coordinate origin the overlay reported, shared with main/index.ts so it
    * can re-send the origin (translated into the new window's coordinates) whenever the
    * hologram window is repositioned or shown. */
@@ -37,6 +44,10 @@ export interface IpcDeps {
   beginDrag(): void
   /** Released at this floor-center point, in virtual pixels. */
   endDrag(drop: { x: number; y: number }): void
+  /** The panel switched tabs: place the window for that tab's panel size. */
+  setMode(cli: boolean): void
+  /** Copy on select in the terminal. */
+  writeClipboard(text: string): void
 }
 
 // Windows can be gone by the time a late IPC message wants them (app quitting, e2e teardown):
@@ -96,4 +107,10 @@ export function wireIpc(d: IpcDeps): void {
   ipcMain.on(CH.chatPermissionAnswer, (_e, p: { id: string; allow: boolean; remember?: boolean }) => d.chat.permissionAnswer(p.id, p.allow, p.remember))
   ipcMain.on(CH.chatClose, () => d.actions.closePanel())
   ipcMain.on(CH.chatStop, () => d.chat.stop())
+  ipcMain.handle(CH.ptyStart, (_e, p: PtyStartPayload) => d.pty.start(p.cols, p.rows))
+  ipcMain.on(CH.ptyInput, (_e, p: { data: string }) => d.pty.write(p.data))
+  ipcMain.on(CH.ptyResize, (_e, p: PtyStartPayload) => d.pty.resize(p.cols, p.rows))
+  ipcMain.on(CH.ptyKill, () => d.pty.kill())
+  ipcMain.on(CH.hologramMode, (_e, p: HologramModePayload) => d.setMode(p.cli))
+  ipcMain.on(CH.clipboardWrite, (_e, p: { text: string }) => d.writeClipboard(p.text))
 }

@@ -1,4 +1,4 @@
-import { app, dialog, screen } from 'electron'
+import { app, clipboard, dialog, screen } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -11,11 +11,13 @@ import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, expandForFlight, loadPage, rebound, setHologramInteractive, setOverlayDragging } from './windows'
-import { hologramBounds, originToWindow } from './geometry'
+import { CLI_PANEL_SIZE, PANEL_SIZE, hologramBounds, originToWindow } from './geometry'
 import { byOrd, desktopBounds, floorY, fromFraction, planDrop, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
-import { wireIpc, type ImagePort } from './ipc'
+import { wireIpc, type ImagePort, type PtyPort } from './ipc'
 import { SessionAllows } from './permissions'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type StagePayload, type StageResult } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type PtyDataPayload, type PtyExitPayload, type StagePayload, type StageResult } from '../shared/ipc'
+import { PtySession } from './pty'
+import { nodePtyFactory } from './pty-node'
 import { AttachmentStore, loadImagePath, nodeImageFs, normalizeImage, type NormalizeResult } from './images'
 import { electronCodec } from './images-electron'
 import { EchoBrain } from './brain/echo'
@@ -23,6 +25,7 @@ import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import { Readback } from './brain/readback'
 import type { Brain } from './brain/types'
 import { ChatController } from './chat'
+import { Handoff } from './handoff'
 import { startLocalServer, type PermissionRequest } from './server'
 import { createTray } from './tray'
 import { showContextMenu } from './menu'
@@ -125,10 +128,13 @@ async function main(): Promise<void> {
   // live x (xFraction) instead - the ipc origin handler compares against this to decide
   // whether to re-place the hologram mid-walk rather than waiting for arrival.
   const lastPlacedX: { current: number } = { current: buddy.getState().x }
+  // The panel size the window is placed for: the chat tab's, or the CLI tab's while that
+  // tab is active (spec T-6). Set by hologram:mode; read on every placement.
+  const panelSize = { current: PANEL_SIZE }
   const placeHologram = (xFraction?: number) => {
     const x = xFraction ?? buddy.getState().x
     lastPlacedX.current = x
-    hologram.setBounds(hologramBounds(current.wa, x, charW, charH))
+    hologram.setBounds(hologramBounds(current.wa, x, charW, charH, panelSize.current))
     if (originRef.current) hologram.webContents.send(CH.hologramOrigin, originToWindow(originRef.current, hologram.getBounds()))
   }
   // Tells the overlay where its window sits and which display's floor he rests on. Sent on
@@ -211,6 +217,12 @@ async function main(): Promise<void> {
   const cliMissing = !existsSync(cliPath)
   const useEcho = process.env.BUDDY_BRAIN === 'echo' || cliMissing
 
+  // The terminal hand-off (/cli, and the menu item). Under the echo brain there is no CLI
+  // to hand to, so /cli posts the cliMissing line; the e2e suite substitutes a short-lived
+  // process through BUDDY_HANDOFF_CMD and never opens a console.
+  const handoffCmd = parseArgsPrefix(process.env.BUDDY_HANDOFF_CMD)
+  const handoff = handoffCmd.length > 0 ? new Handoff({ cliPath, command: handoffCmd }) : (!useEcho ? new Handoff({ cliPath }) : undefined)
+
   // BUDDY_READBACK=0 is a test override, like BUDDY_BRAIN=echo.
   const readbackEnabled = config.readback && process.env.BUDDY_READBACK !== '0' && !useEcho
   const readback = readbackEnabled ? new Readback({
@@ -283,7 +295,7 @@ async function main(): Promise<void> {
   // Quitting mid-turn must not orphan a running claude.exe: chatRef is still undefined only
   // during the brief startup window before the ChatController below is constructed, hence
   // the guard (by the time a real quit happens, it is always set).
-  app.on('before-quit', () => { chatRef?.stop(); readback?.stopAll(); void server.close() })
+  app.on('before-quit', () => { chatRef?.stop(); handoff?.stop(); readback?.stopAll(); void server.close() })
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
@@ -303,7 +315,8 @@ async function main(): Promise<void> {
       // one about to start.
       if (s.sessionId === null) sessionAllows.clear()
     },
-    readback, log: (line) => appendLog(logDir, 'main', line),
+    readback, handoff, log: (line) => appendLog(logDir, 'main', line),
+    transcriptExists: (workspace, id) => sessionTranscriptExists(homedir(), workspace, id),
   })
   chatRef = chat
 
@@ -322,6 +335,29 @@ async function main(): Promise<void> {
     discard: (id) => store.discard(id),
     take: (ids) => store.take(ids),
     clear: () => store.clear(),
+  }
+
+  // The CLI tab's terminal (spec T-4): the real CLI in a ConPTY on its own session, or the
+  // BUDDY_PTY_CMD program under test; the pack's cliMissing line when there is neither.
+  const ptyCmd = parseArgsPrefix(process.env.BUDDY_PTY_CMD)
+  const ptyProgram: string[] | null = ptyCmd.length > 0 ? ptyCmd : (!useEcho ? [cliPath] : null)
+  const ptySession = new PtySession({ factory: nodePtyFactory })
+  ptySession.onData((data) => toHologram(CH.ptyData, { data } satisfies PtyDataPayload))
+  ptySession.onExit((code) => toHologram(CH.ptyExit, { code } satisfies PtyExitPayload))
+  const pty: PtyPort = {
+    start: (cols, rows) => {
+      if (!ptyProgram) return { error: pickLine(pack, 'cliMissing') ?? `No Claude Code at ${cliPath}` }
+      const [file, ...args] = ptyProgram
+      const r = ptySession.start({ file: file ?? '', args, cwd: chat.status().workspace, env: process.env, cols, rows })
+      return r.ok ? { ok: true } : { error: r.reason }
+    },
+    write: (data) => ptySession.write(data),
+    resize: (cols, rows) => ptySession.resize(cols, rows),
+    kill: () => ptySession.kill(),
+  }
+  const setMode = (cli: boolean): void => {
+    panelSize.current = cli ? CLI_PANEL_SIZE : PANEL_SIZE
+    if (hologram.isVisible()) placeHologram()
   }
 
   // Runs `<cli> auth status` once, five seconds to answer, and never blocks startup on it:
@@ -381,12 +417,13 @@ async function main(): Promise<void> {
     sendStage,
     chat, status: () => chat.status(),
     images,
-    showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
+    pty, setMode, writeClipboard: (text) => clipboard.writeText(text),
+    showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay, openCli: () => { actions.openPanel(); chat.openCli() } }, x, y),
   })
 
   const tray = createTray({ packDir: pack.dir, name: pack.name, actions, buddy, overlay, hologram, placeHologram })
   void tray
-  app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
+  app.on('before-quit', () => { ptySession.kill(); overlay.destroy(); hologram.destroy() })
 
   buddy.onChange((v) => {
     if (overlay.isDestroyed()) return

@@ -101,8 +101,12 @@ the refusals above explain themselves in the panel.
 - `/clear` or a new session started inside the terminal leaves the panel's id pointing at
   the old conversation.
 - `/cd` inside the terminal does not move the panel's workspace.
-- A minted id whose window is closed before any turn points at no transcript; the panel's
-  existing stale-resume retry starts fresh on the next turn.
+- A minted id whose window is closed before any turn has no transcript on disk. The next
+  `/cli` checks for that transcript (`state.ts`'s `sessionTranscriptExists`, injected as
+  `ChatController`'s `transcriptExists`) and, finding none, launches the same id fresh
+  (`--session-id`) instead of resuming it; the id is kept, not re-minted, and settings are
+  untouched. Without an injected checker the default treats every id as having a
+  transcript, so nothing changes for a caller that never wires one in.
 
 ## 8. Tests
 

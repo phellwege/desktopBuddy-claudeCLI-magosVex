@@ -32,20 +32,23 @@ export function travelBounds(from: Rect, to: Rect): Rect {
 }
 
 export const PANEL_SIZE = { width: 480, height: 360 }
+// The panel while the CLI tab is active (spec 2026-09-07-cli-tab-design, 6): about 95
+// columns by 26 rows at the pack's 12 px monospace font.
+export const CLI_PANEL_SIZE = { width: 700, height: 480 }
 export const CONE_SIDE_MARGIN = 120     // room either side of the panel for the cone
 export const PANEL_GAP = 16             // gap between the panel bottom and the character's top
 export const SKULL_REACH = 0.75         // window bottom reaches this far down the character
 
-export function hologramBounds(wa: Rect, xFraction: number, charW: number, charH: number): Rect {
-  const width = PANEL_SIZE.width + 2 * CONE_SIDE_MARGIN
+export function hologramBounds(wa: Rect, xFraction: number, charW: number, charH: number, panel = PANEL_SIZE): Rect {
+  const width = panel.width + 2 * CONE_SIDE_MARGIN
   const cx = wa.x + xFraction * Math.max(0, wa.width - charW) + charW / 2
   const bias = cx < wa.x + wa.width / 2 ? 1 : -1
-  let x = Math.round(cx - width / 2 + bias * PANEL_SIZE.width * 0.25)
+  let x = Math.round(cx - width / 2 + bias * panel.width * 0.25)
   x = Math.max(wa.x, Math.min(wa.x + wa.width - width, x))
   const charTop = wa.y + wa.height - charH
-  const y = Math.max(wa.y, charTop - PANEL_SIZE.height - PANEL_GAP)
+  const y = Math.max(wa.y, charTop - panel.height - PANEL_GAP)
   const bottom = Math.min(wa.y + wa.height, charTop + charH * SKULL_REACH)
-  return { x, y, width, height: Math.max(PANEL_SIZE.height, Math.round(bottom - y)) }
+  return { x, y, width, height: Math.max(panel.height, Math.round(bottom - y)) }
 }
 
 export function originToWindow(origin: { x: number; y: number }, b: Rect): { x: number; y: number } {

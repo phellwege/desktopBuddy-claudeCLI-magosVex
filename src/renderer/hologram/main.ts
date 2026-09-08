@@ -7,6 +7,9 @@ import type { Atlas, Expression } from '../../shared/types'
 import { stageablePaths } from '../../shared/imagePaths'
 import type { StageResult } from '../../shared/ipc'
 import { MAX_RAW_BYTES, type StagedImage } from '../../shared/images'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), status = $<HTMLSpanElement>('status')
@@ -15,6 +18,19 @@ const panel = $<HTMLDivElement>('panel'), coneCanvas = $<HTMLCanvasElement>('con
 const strip = $<HTMLDivElement>('attachments')
 // Chips waiting under the log, in send order. Main holds the bytes; this is ids and thumbs.
 let staged: StagedImage[] = []
+const cliEl = $<HTMLDivElement>('cli')
+const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('#tabs .tab'))
+type Tab = 'chat' | 'cli'
+let activeTab: Tab = 'chat'
+// The embedded terminal (spec T-7): created on the first switch to the tab, kept for the
+// life of the window; the session behind it lives in main, so the buffer survives hides.
+let term: Terminal | null = null
+let fit: FitAddon | null = null
+let ptyStarted = false
+// Set for the duration of the in-flight ptyStart() round trip, so a second tab click (or
+// Enter-to-restart) during that window doesn't fire a second concurrent ptyStart().
+let ptyStarting = false
+let ptyExited = false
 const cone = new ProjectionCone(coneCanvas)
 const LINE_PX = parseFloat(getComputedStyle(input).lineHeight) || 18
 function growInput(): void { input.style.height = 'auto'; input.style.height = `${grownHeight(input.scrollHeight, LINE_PX)}px` }
@@ -26,6 +42,8 @@ function sizeCone(): void {
 }
 sizeCone()
 window.addEventListener('resize', sizeCone)
+// The panel changes size when the tab changes; the cone retargets and the terminal refits.
+new ResizeObserver(() => { sizeCone(); if (activeTab === 'cli') fit?.fit() }).observe(panel)
 
 document.addEventListener('visibilitychange', () => { if (document.hidden) cone.stop(); else cone.start() })
 if (!document.hidden) cone.start()
@@ -160,6 +178,97 @@ function addUser(text: string, thumbs: string[]): void {
   }
   log.scrollTop = log.scrollHeight
 }
+function terminalTheme(): { background: string; foreground: string; cursor: string } {
+  const s = getComputedStyle(document.documentElement)
+  return {
+    background: s.getPropertyValue('--bg').trim() || 'rgba(6, 20, 32, 0.82)',
+    foreground: s.getPropertyValue('--text').trim() || '#d8f4ff',
+    cursor: accent,
+  }
+}
+function ensureTerminal(): Terminal {
+  if (term) return term
+  const t = new Terminal({
+    fontFamily: getComputedStyle(input).fontFamily, fontSize: 12, scrollback: 5000,
+    cursorBlink: true, allowTransparency: true, theme: terminalTheme(),
+  })
+  fit = new FitAddon()
+  t.loadAddon(fit)
+  t.open(cliEl)
+  t.onData((d) => window.buddy.ptyInput(d))
+  t.onResize(({ cols, rows }) => window.buddy.ptyResize(cols, rows))
+  // Copy when a selection ends, as Windows Terminal does; paste is xterm's own Ctrl+V and
+  // Shift+Insert. A mouseup rather than onSelectionChange, which fires on every change during
+  // a drag and would otherwise overwrite a snip the operator just took with each intermediate,
+  // partial selection.
+  cliEl.addEventListener('mouseup', () => { const s = t.getSelection(); if (s) window.buddy.writeClipboard(s) })
+  // Ctrl+Tab leaves for the chat tab; every other key is the CLI's, Escape included. Returning
+  // false only stops xterm from treating the key as terminal input, it does not stop the native
+  // event from bubbling to document's own Ctrl+Tab listener - so on keydown we stop it ourselves
+  // (preventDefault + stopPropagation) before switching, or that listener would see its guard
+  // (activeTab === 'chat', set synchronously by switchTab above) satisfied on the same event and
+  // immediately switch back to the CLI tab.
+  //
+  // Enter on a dead terminal restarts it (spec T-7), handled here rather than through onKey:
+  // xterm fires onKey before onData for the same keydown, so an onKey restart would still let
+  // the '\r' reach the fresh session as onData's own emission (an empty submit, or an accept on
+  // the CLI's folder trust dialog). Returning false for every event type of that key while
+  // exited swallows it completely; startPty runs once, on keydown only.
+  t.attachCustomKeyEventHandler((e) => {
+    if (e.key === 'Enter' && ptyExited) {
+      if (e.type === 'keydown') void startPty()
+      return false
+    }
+    if (e.ctrlKey && e.key === 'Tab') {
+      if (e.type === 'keydown') { e.preventDefault(); e.stopPropagation(); switchTab('chat') }
+      return false
+    }
+    return true
+  })
+  window.buddy.onPtyData(({ data }) => t.write(data))
+  window.buddy.onPtyExit(({ code }) => {
+    ptyStarted = false; ptyExited = true
+    t.writeln(`\r\n[Claude Code exited, code ${code}]  Enter to restart`)
+  })
+  term = t
+  return t
+}
+async function startPty(): Promise<void> {
+  const t = ensureTerminal()
+  fit?.fit()
+  ptyExited = false
+  ptyStarting = true
+  try {
+    const r = await window.buddy.ptyStart(t.cols, t.rows)
+    if ('error' in r) { ptyExited = true; t.writeln(`${r.error}\r\n  Enter to retry`); return }
+    ptyStarted = true
+  } finally {
+    ptyStarting = false
+  }
+}
+function focusActive(): void { if (activeTab === 'cli') term?.focus(); else input.focus() }
+function switchTab(tab: Tab): void {
+  // Already there: just refocus the active control. Without this, a second click (or a second
+  // Ctrl+Tab) on the current tab would re-run the CLI branch below and, on a slow first pty
+  // start, race a second concurrent startPty() before ptyStarted flips true.
+  if (tab === activeTab) { focusActive(); return }
+  activeTab = tab
+  for (const b of tabButtons) b.classList.toggle('active', b.dataset.tab === tab)
+  panel.classList.toggle('cli', tab === 'cli')
+  cliEl.hidden = tab !== 'cli'
+  window.buddy.setMode(tab === 'cli')
+  if (tab === 'cli') {
+    const t = ensureTerminal()
+    // Fit after the panel has taken its CLI size, then start the session the first time.
+    requestAnimationFrame(() => { fit?.fit(); t.focus(); if (!ptyStarted && !ptyStarting && !ptyExited) void startPty() })
+  } else {
+    input.focus()
+  }
+}
+for (const b of tabButtons) b.addEventListener('click', () => switchTab(b.dataset.tab === 'cli' ? 'cli' : 'chat'))
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'Tab' && activeTab === 'chat') { e.preventDefault(); switchTab('cli') }
+})
 // A reply bubble, started in the waiting state (dots, hidden .plain) when main told us
 // (chat:status) that this reply will be followed by a readback.
 function newReply(): HTMLDivElement {
@@ -246,6 +355,7 @@ window.buddy.onTheme((t: ThemePayload) => {
   cone.setColor(t.accent)
   accent = t.accent
   rebuildFace()
+  if (term) term.options.theme = terminalTheme()
 })
 window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
   facesMap = p.faces
@@ -325,6 +435,9 @@ window.buddy.onChatPermission((p) => {
   // the card if it is still showing that same (now stale) request. Ignore it otherwise - the
   // user may already have answered and a new, unrelated request could be showing by now.
   if (p.dismiss) { if (pending?.id === p.id) { pending = null; perm.hidden = true }; return }
+  // #permission is one of the chat tab's own children, hidden by #panel.cli's CSS while the
+  // CLI tab is showing; a card that arrived there would be invisible and silently time out.
+  if (activeTab === 'cli') switchTab('chat')
   pending = p; permLine.textContent = p.line ?? ''; permDetail.textContent = `${p.toolName ?? ''}: ${p.summary ?? ''}`; perm.hidden = false
 })
 const answer = (allow: boolean, remember = false) => { if (!pending) return; window.buddy.permissionAnswer(pending.id, allow, remember); pending = null; perm.hidden = true }
@@ -380,13 +493,20 @@ input.addEventListener('paste', (e) => {
   }
   for (const p of stageablePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept, (e) => accept({ error: String(e) }))
 })
-panel.addEventListener('dragover', (e) => e.preventDefault())
+// Staging a drop as an invisible chat chip only makes sense on the chat tab; on the CLI
+// tab leave the default browser behaviour alone rather than swallowing a drop onto the
+// terminal.
+panel.addEventListener('dragover', (e) => {
+  if (activeTab === 'cli') return
+  e.preventDefault()
+})
 panel.addEventListener('drop', (e) => {
+  if (activeTab === 'cli') return
   e.preventDefault()
   for (const f of Array.from(e.dataTransfer?.files ?? [])) void stageFile(f)
 })
 input.addEventListener('input', growInput)
-window.addEventListener('focus', () => input.focus())
+window.addEventListener('focus', focusActive)
 window.buddy.hologramReady()
 // One-time hint that the OS dictation shortcut types into this box. Once per machine:
 // local storage is per Chromium profile, which is per userData dir.

@@ -11,7 +11,7 @@
   <div id="root">
     <canvas id="cone"></canvas>
     <div id="panel">
-      <div id="title"><span id="name"></span><span id="status"></span></div>
+      <div id="title"><div id="tabs"><button type="button" class="tab active" data-tab="chat">Chat</button><button type="button" class="tab" data-tab="cli">CLI</button></div><span id="name"></span><span id="status"></span></div>
       <div id="log"></div>
       <div id="permission" hidden>
         <div id="perm-line"></div>
@@ -20,6 +20,7 @@
       </div>
       <div id="attachments" hidden></div>
       <textarea id="input" rows="1" placeholder="Speak, operator. /help for rites."></textarea>
+      <div id="cli" hidden></div>
     </div>
   </div>
   <script type="module" src="./main.ts"></script>

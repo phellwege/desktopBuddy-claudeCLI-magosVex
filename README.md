@@ -25,6 +25,7 @@ Non-commercial, and it must stay that way.
   to think. The buddy spawns `claude.exe` per turn on your subscription; no API key is
   used or supported. Without it he still wanders, sleeps, mutters, travels between
   monitors and takes every slash command, and the panel answers with canned echo lines.
+  The CLI tab and `/cli` use the same login.
 
 ## Install on a machine without dev tools
 
@@ -64,6 +65,7 @@ Ctrl+Q in the panel quits. Drag him to another monitor; he hovers there and land
 | `/new`, `/clear` | fresh session; `/clear` also empties the panel |
 | `/cd [path]`, `/ls [path]` | change or inspect the workspace (new session on change) |
 | `/model [name]` | set or clear the model for the next session |
+| `/cli` | open the real Claude Code in a terminal on this session; the panel waits until it closes (also in his right-click menu) |
 | `/help` | this list |
 
 Typing while a rite runs hands the message to the running turn: he answers at his next
@@ -73,6 +75,13 @@ Images: paste a screenshot (Win+Shift+S, then Ctrl+V in the panel), a file copie
 Explorer, or an image path, or drop a file on the panel. Each shows a chip under the log
 and reaches him inline as `[Image #N]`, mid-rite too; the × or Backspace in an empty box
 removes one. For small text snip the region rather than the whole screen.
+
+Tabs: the panel's `CLI` tab is the real, interactive Claude Code running in an embedded
+terminal in the workspace, on its own session; the panel widens while it is showing.
+Alt+V pastes an image there, Ctrl+Tab switches tabs, and Enter on an exited terminal
+restarts it. Selecting text copies it to the clipboard once the selection ends, as
+Windows Terminal does. `/cli` is different: it opens the real CLI in a terminal window on
+the panel's own session, and the panel waits until that window closes.
 
 Dictation: Windows voice typing (Win+H) or your Mac's dictation key types straight into
 the panel's text box. Nothing in the app listens to the microphone.

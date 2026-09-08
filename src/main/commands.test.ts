@@ -61,4 +61,8 @@ describe('parseCommand', () => {
   it('is case-insensitive on the command word and trims whitespace', () => {
     expect(parseCommand('  /GOTO 10 ')).toEqual({ ok: true, command: { kind: 'goto', x: 0.1, run: false } })
   })
+  it('parses /cli and refuses arguments', () => {
+    expect(parseCommand('/cli')).toEqual({ ok: true, command: { kind: 'cli' } })
+    expect(parseCommand('/cli now')).toEqual({ ok: false, error: 'usage: /cli' })
+  })
 })

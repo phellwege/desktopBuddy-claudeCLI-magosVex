@@ -61,6 +61,9 @@ restart is kill then start. `app.on('before-quit')` kills it. The test hook
 node-pty is a runtime dependency (not dev), so electron-vite externalizes it the way it
 does the MCP SDK; the plan checks the built `out/main/index.js` requires it rather than
 inlining it. Its prebuilds ship in the package; nothing runs at install beyond `npm ci`.
+The `require('node-pty')` itself lives inside `nodePtyFactory` and runs on the first pty
+start, not at app launch, so a missing or broken native module cannot take down the whole
+buddy for a feature that is optional.
 
 ## 5. IPC (`src/shared/ipc.ts`, `src/preload/index.ts`, `src/main/ipc.ts`)
 
@@ -78,7 +81,10 @@ Bridge: `ptyStart`, `ptyInput`, `ptyResize`, `ptyKill`, `onPtyData`, `onPtyExit`
 `hologramBounds(wa, xFraction, charW, charH, panel = PANEL_SIZE)`; `CLI_PANEL_SIZE` is
 `{ width: 700, height: 480 }`. The window width is the panel width plus the two cone
 margins (940 in CLI mode), its top is `charTop - panel.height - PANEL_GAP`, clamped to the
-work area exactly as today. `placeHologram` reads the current mode, which `hologram:mode`
+work area exactly as today; on a display narrower than 940 the window still clamps to the
+work area rather than shrinking the panel, so the CLI tab can crop against the screen edge
+on a small or heavily scaled display, left as a known limitation. `placeHologram` reads
+the current mode, which `hologram:mode`
 sets; the mode also re-places at once. The overlay's origin translation is unchanged
 because it works from the window's actual bounds.
 
@@ -93,15 +99,23 @@ because it works from the window's actual bounds.
   started, fit, `ptyResize`, focus. A resize observer on `#panel` refits and retargets
   the cone (`sizeCone`), which today only listens to window resizes.
 - Wiring: `onPtyData` writes to the terminal; `terminal.onData` sends `ptyInput`;
-  `terminal.onResize` sends `ptyResize`; `onSelectionChange` with a non-empty selection
-  sends `writeClipboard`.
+  `terminal.onResize` sends `ptyResize`; a `mouseup` on `#cli` with a non-empty selection
+  sends `writeClipboard` once the selection has ended, rather than on every change during
+  the drag.
 - Keys in the tab go to the CLI, Escape included, so the panel closes by clicking him or
   from the chat tab; Ctrl+Q still quits at the window level. Text paste is xterm's own
   Ctrl+V and Shift+Insert. Alt+V reaches the CLI as ESC v for its image paste.
 - Exit: the terminal shows `[Claude Code exited, code N]  Enter to restart`; Enter or a
-  click on that line restarts. A start refusal shows its reason the same way.
+  click on that line restarts. The custom key handler swallows that Enter keystroke
+  entirely (it never reaches the fresh session as input), since xterm fires its key event
+  before the data event for the same keydown and the CR would otherwise land on the new
+  CLI as an empty submit or an accept on its folder trust dialog. A start refusal shows
+  its reason the same way.
 - No CLI installed, or the echo brain: the tab shows the pack's `cliMissing` line and no
   terminal.
+- A permission card arriving while the CLI tab is active switches the panel to the chat
+  tab first, since `#permission` is hidden along with the rest of the chat tab's children
+  while the CLI tab shows.
 - `#panel.cli` sets 700 by 480; `setMode` is sent on every switch.
 
 ## 8. Tests
