@@ -1,9 +1,11 @@
 import type { ChatActivityPayload, ChatDonePayload, ChatReadbackPayload, ChatStatusPayload } from '../shared/ipc'
 import type { Expression, PackData } from '../shared/types'
+import type { ImageAttachment } from '../shared/images'
 import type { BuddyActions } from './actions'
 import type { ReadbackResult } from './brain/readback'
 import type { Brain } from './brain/types'
 import type { ChatPort } from './ipc'
+import { buildUserContent, type UserContent } from './brain/content'
 import { HELP_TEXT, parseCommand, type Command } from './commands'
 import { pickLine } from './pack'
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -57,21 +59,24 @@ export class ChatController implements ChatPort {
     return isAbsolute(p) ? resolve(p) : resolve(this.settings.workspace, p)
   }
 
-  prompt(text: string): void {
+  // images are attachments already normalized and taken out of main's store, in chip order;
+  // the renderer never sends any with a slash command, so chips survive one.
+  prompt(text: string, images: readonly ImageAttachment[] = []): void {
     const parsed = parseCommand(text)
     if (parsed.ok) { this.run(parsed.command); return }
     if ('error' in parsed) { this.deps.out.system(parsed.error); return }
+    const content = buildUserContent(text.trim(), images)
     if (this.running) {
       // A message typed mid-rite goes into the running turn: the CLI hands it to the model at
       // its next tool boundary, or runs it as the next turn if none is left (spec
       // 2026-09-07-mid-turn-steering-design). The panel already shows the operator's bubble,
       // so nothing is posted. Only a brain that cannot take it (the echo brain, or a turn
       // that is already draining) gets the refusal.
-      if (this.deps.brain.steer?.(text.trim())) return
+      if (this.deps.brain.steer?.(content)) return
       this.deps.out.system('Still working. Use /stop to abort the current rite.')
       return
     }
-    void this.ask(text.trim())
+    void this.ask(content)
   }
 
   private run(cmd: Command): void {
@@ -156,7 +161,7 @@ export class ChatController implements ChatPort {
     }
   }
 
-  private async ask(text: string): Promise<void> {
+  private async ask(content: UserContent): Promise<void> {
     this.running = true
     const serial = this.turnSerial
     const id = ++this.messageSerial
@@ -173,7 +178,7 @@ export class ChatController implements ChatPort {
         const ctx = { state: this.deps.actions.getState(), workspace: this.settings.workspace,
           model: this.settings.model, sessionId: this.settings.sessionId }
         let retry = false
-        for await (const ev of this.deps.brain.respond(text, ctx)) {
+        for await (const ev of this.deps.brain.respond(content, ctx)) {
           if (ev.type === 'text') { this.deps.out.delta(ev.delta); reply += ev.delta }
           else if (ev.type === 'activity') this.deps.out.activity({ id: ev.id, label: ev.label, done: ev.done ?? false })
           else if (ev.type === 'status') this.deps.out.system(ev.text, ev.expression)

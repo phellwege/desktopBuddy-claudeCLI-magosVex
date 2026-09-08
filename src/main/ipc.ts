@@ -1,11 +1,12 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import { CH, type ChatStatusPayload, type OriginPayload, type PackLoadedPayload, type ThemePayload } from '../shared/ipc'
+import type { ImageAttachment } from '../shared/images'
 import type { Buddy } from './buddy'
 import type { Actions } from './actions'
 import { setHologramInteractive, setOverlayInteractive } from './windows'
 import { originToWindow, shouldReplaceHologramX } from './geometry'
 
-export interface ChatPort { prompt(text: string): void; permissionAnswer(id: string, allow: boolean, remember?: boolean): void; stop(): void }
+export interface ChatPort { prompt(text: string, images?: readonly ImageAttachment[]): void; permissionAnswer(id: string, allow: boolean, remember?: boolean): void; stop(): void }
 export interface IpcDeps {
   buddy: Buddy; actions: Actions; overlay: BrowserWindow; hologram: BrowserWindow
   packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort

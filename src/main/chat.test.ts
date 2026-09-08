@@ -5,6 +5,7 @@ import { loadPack } from './pack'
 import { HELP_TEXT } from './commands'
 import type { Brain, BrainEvent } from './brain/types'
 import type { BuddyActions } from './actions'
+import type { ImageAttachment } from '../shared/images'
 
 const pack = (() => { const r = loadPack(join(__dirname, '../../test/fixtures/pack-min')); if (!r.ok) throw new Error(r.errors.join()); return r.pack })()
 
@@ -332,6 +333,64 @@ describe('ChatController', () => {
     await ctrl.prompt('/cd C:\\x'); expect(out.systems.at(-1)).toBe('workspace: C:\\x')
     await ctrl.prompt('/model sonnet'); expect(out.systems.at(-1)).toBe('model: sonnet')
     await ctrl.prompt('/stop'); expect(out.systems.at(-1)).toBe('stopped')
+  })
+  const shot: ImageAttachment = { id: 'a', name: 'shot.png', mediaType: 'image/png', data: 'QUJD', width: 1, height: 1, bytes: 3 }
+  const shotBlocks = (text: string) => [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'QUJD' } },
+    { type: 'text', text: '[Image #1: shot.png]' },
+    ...(text ? [{ type: 'text', text }] : []),
+  ]
+  it('hands the brain content blocks when images ride along: images first, captions, trimmed text last', async () => {
+    const out = fakeOut(); const prompts: unknown[] = []
+    const brain: Brain = { async *respond(p) { prompts.push(p); yield { type: 'done' } }, stop() {} }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('  what is it  ', [shot])
+    await new Promise(r => setTimeout(r, 10))
+    expect(prompts).toEqual([shotBlocks('what is it')])
+  })
+  it('sends an images-only message with no trailing text block', async () => {
+    const out = fakeOut(); const prompts: unknown[] = []
+    const brain: Brain = { async *respond(p) { prompts.push(p); yield { type: 'done' } }, stop() {} }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('', [shot])
+    await new Promise(r => setTimeout(r, 10))
+    expect(prompts).toEqual([shotBlocks('')])
+  })
+  it('steers images into a running turn as content blocks', async () => {
+    const out = fakeOut()
+    let release!: () => void
+    const steers: unknown[] = []
+    const brain: Brain = {
+      async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } },
+      stop() {},
+      steer(content) { steers.push(content); return true },
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('one')
+    await new Promise(r => setTimeout(r, 5))
+    c.prompt('and this?', [shot])
+    expect(steers).toEqual([shotBlocks('and this?')])
+    expect(out.systems).toEqual([])
+    release()
+    await new Promise(r => setTimeout(r, 5))
+  })
+  it('resends the same content on the stale-resume retry', async () => {
+    const out = fakeOut(); const prompts: unknown[] = []
+    let calls = 0
+    const brain: Brain = {
+      async *respond(p) {
+        prompts.push(p)
+        if (calls++ === 0) yield { type: 'done', error: 'No conversation found with session id old' }
+        else yield { type: 'done', sessionId: 'fresh' }
+      },
+      stop() {},
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' } })
+    c.prompt('again', [shot])
+    await new Promise(r => setTimeout(r, 10))
+    expect(prompts).toHaveLength(2)
+    expect(prompts[1]).toEqual(prompts[0])
+    expect(c.status().session).toBe('fresh')
   })
 })
 
