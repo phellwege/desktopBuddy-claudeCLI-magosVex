@@ -1,14 +1,24 @@
 import { ipcMain, type BrowserWindow } from 'electron'
-import { CH, type ChatStatusPayload, type OriginPayload, type PackLoadedPayload, type ThemePayload } from '../shared/ipc'
+import { CH, type ChatPromptPayload, type ChatStatusPayload, type OriginPayload, type PackLoadedPayload, type StageBytesPayload, type StagePathPayload, type StageResult, type ThemePayload } from '../shared/ipc'
+import type { ImageAttachment } from '../shared/images'
 import type { Buddy } from './buddy'
 import type { Actions } from './actions'
 import { setHologramInteractive, setOverlayInteractive } from './windows'
 import { originToWindow, shouldReplaceHologramX } from './geometry'
 
-export interface ChatPort { prompt(text: string): void; permissionAnswer(id: string, allow: boolean, remember?: boolean): void; stop(): void }
+export interface ChatPort { prompt(text: string, images?: readonly ImageAttachment[]): void; permissionAnswer(id: string, allow: boolean, remember?: boolean): void; stop(): void }
+// Main's side of the panel's attachment chips (spec 7): stage returns what the chip shows
+// or the refusal reason; take hands the attachments to the chat controller in chip order.
+export interface ImagePort {
+  stageBytes(p: StageBytesPayload): StageResult
+  stagePath(p: StagePathPayload): StageResult
+  discard(id: string): void
+  take(ids: readonly string[]): ImageAttachment[]
+  clear(): void
+}
 export interface IpcDeps {
   buddy: Buddy; actions: Actions; overlay: BrowserWindow; hologram: BrowserWindow
-  packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort
+  packPayload: PackLoadedPayload; theme: ThemePayload; chat: ChatPort; images: ImagePort
   /** Last screen-coordinate origin the overlay reported, shared with main/index.ts so it
    * can re-send the origin (translated into the new window's coordinates) whenever the
    * hologram window is repositioned or shown. */
@@ -71,11 +81,18 @@ export function wireIpc(d: IpcDeps): void {
   })
   ipcMain.on(CH.hologramHover, (_e, p: { over: boolean }) => setHologramInteractive(d.hologram, p.over))
   ipcMain.on(CH.hologramReady, () => {
+    // The renderer's chip list is always empty when this fires (a fresh load or a reload),
+    // so anything still staged in main from before is an orphan.
+    d.images.clear()
     send(d.hologram, CH.packLoaded, d.packPayload)
     send(d.hologram, CH.theme, d.theme)
     send(d.hologram, CH.chatStatus, d.status())
   })
-  ipcMain.on(CH.chatPrompt, (_e, p: { text: string }) => d.chat.prompt(p.text))
+  ipcMain.on(CH.chatPrompt, (_e, p: ChatPromptPayload) => d.chat.prompt(p.text, d.images.take(p.images ?? [])))
+  // invoke, not send: the renderer awaits the chip it should show, or the reason.
+  ipcMain.handle(CH.imageStageBytes, (_e, p: StageBytesPayload) => d.images.stageBytes(p))
+  ipcMain.handle(CH.imageStagePath, (_e, p: StagePathPayload) => d.images.stagePath(p))
+  ipcMain.on(CH.imageDiscard, (_e, p: { id: string }) => d.images.discard(p.id))
   ipcMain.on(CH.chatPermissionAnswer, (_e, p: { id: string; allow: boolean; remember?: boolean }) => d.chat.permissionAnswer(p.id, p.allow, p.remember))
   ipcMain.on(CH.chatClose, () => d.actions.closePanel())
   ipcMain.on(CH.chatStop, () => d.chat.stop())

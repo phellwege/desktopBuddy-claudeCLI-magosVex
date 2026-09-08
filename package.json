@@ -12,7 +12,8 @@
     "pretest:e2e": "npm run build",
     "test:e2e": "electron-vite build && playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "smoke:claude": "node scripts/smoke-claude.mjs"
+    "smoke:claude": "node scripts/smoke-claude.mjs",
+    "smoke:image": "node scripts/smoke-image.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

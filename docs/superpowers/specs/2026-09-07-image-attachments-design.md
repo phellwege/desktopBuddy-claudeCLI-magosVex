@@ -91,8 +91,10 @@ Types:
 `normalizeImage({ bytes, mediaType?, name }, codec)` returns
 `{ ok: true, attachment, staged }` or `{ ok: false, reason }`:
 
-1. Media type: the caller's when given, else sniffed from the magic bytes (png, jpeg, gif,
-   webp). Anything else: `not an image`.
+1. Media type: the sniffed type when the magic bytes are recognised, else the caller's when
+   it is one of the four, else `not an image`. The sniff wins over the caller's claim so a
+   misnamed file (a PNG saved with a `.jpg` extension) never reaches the API labelled with
+   the wrong type and fails the turn.
 2. Decode. Null for png or jpeg: `cannot decode`. Null for gif or webp: pass-through, the
    bytes unchanged when at most `MAX_BYTES`, else `too large`; width and height 0, thumb
    the raw bytes as a data URL.
@@ -106,7 +108,8 @@ Types:
    use, and a full-screen 4K capture of small text still loses detail after the API's
    own downscale, so the README recommends snipping the region. `MAX_BYTES` is 3 MB of
    encoded data (4 MB after base64, under every documented cap). Thumb is
-   `thumbnail(40)`. The id is a `randomUUID`.
+   `thumbnail(40)`. The id is a `randomUUID`. `MAX_RAW_BYTES` (64 MB) is checked before the
+   sniff or the decode even run, so a hostile or oversized paste never reaches the codec.
 
 `loadImagePath(path, workspace, fs, codec)`: a relative path resolves against the
 workspace; the extension must be `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`, case
@@ -125,9 +128,18 @@ No config field: the caps are constants.
 `findImagePaths(text)` returns the unique image paths in order of appearance. Forms:
 quoted or bare Windows drive paths (`"C:\shots\a.png"` is what Explorer's Copy as path
 puts on the clipboard); UNC paths; POSIX absolute paths; `file://` URLs, decoded, with the
-drive form restored. A bare path ends at whitespace or a quote. The extension test is the
-same list as section 5, case insensitive. The renderer runs it on pasted text only, never
-on typed text.
+drive form restored. A bare path ends at whitespace, a quote, or one of a short list of
+punctuation marks. The extension test is the same list as section 5, case insensitive. The
+renderer runs it on pasted text only, never on typed text.
+
+`stageablePaths(text)` is what the renderer actually stages: `findImagePaths(text)` with
+every UNC path dropped, unless the whole paste, trimmed and with one pair of surrounding
+quotes stripped, is exactly that single path. A UNC path (`\\server\share\a.png`) found
+inside pasted prose would otherwise be read by main the instant it is pasted, making an
+outbound SMB connection to whatever host the pasted text names and offering the user's
+NTLM credential hash to it; a local drive path carries no such risk. Staging only a
+deliberate paste of just the UNC path keeps the detector complete (`findImagePaths` still
+finds every UNC path) while closing the drive-by read.
 
 ## 7. IPC and preload (`src/shared/ipc.ts`, `src/preload/index.ts`, `src/main/ipc.ts`)
 
@@ -195,7 +207,9 @@ is a small bordered tile in the accent colour, the label bottom-left in the titl
 Staging refusals (`not an image`, `not an image file`, `cannot decode`, `too large`,
 `no such file`, `too many images`) surface as local system lines. If the CLI rejects an
 image, the result line carries the error and the existing error path posts it; nothing
-new. A file deleted after staging is irrelevant: the bytes were captured at staging.
+new. A file deleted after staging is irrelevant: the bytes were captured at staging. When
+the brain declines a mid-rite steer with images attached, the refusal line names the count
+so the operator knows to paste again rather than assume they rode along silently.
 
 ## 11. Tests
 

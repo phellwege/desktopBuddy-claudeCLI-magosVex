@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron'
-import { CH, type BuddyBridge } from '../shared/ipc'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { CH, type BuddyBridge, type ChatPromptPayload, type StageBytesPayload, type StagePathPayload } from '../shared/ipc'
 import { makeOn } from './bridge'
 
 const on = makeOn(ipcRenderer)
@@ -36,7 +36,13 @@ const bridge: BuddyBridge = {
   },
   hologramReady: () => ipcRenderer.send(CH.hologramReady),
   hologramHover: (over) => ipcRenderer.send(CH.hologramHover, { over }),
-  prompt: (text) => ipcRenderer.send(CH.chatPrompt, { text }),
+  prompt: (text, imageIds) => ipcRenderer.send(CH.chatPrompt, { text, images: imageIds } satisfies ChatPromptPayload),
+  stageImageBytes: (bytes, mediaType, name) => ipcRenderer.invoke(CH.imageStageBytes, { bytes, mediaType, name } satisfies StageBytesPayload),
+  stageImagePath: (path) => ipcRenderer.invoke(CH.imageStagePath, { path } satisfies StagePathPayload),
+  discardImage: (id) => ipcRenderer.send(CH.imageDiscard, { id }),
+  // webUtils works in a sandboxed preload; the File must be the renderer's own object,
+  // which contextBridge passes through for this call.
+  pathForFile: (file) => webUtils.getPathForFile(file),
   permissionAnswer: (id, allow, remember) => ipcRenderer.send(CH.chatPermissionAnswer, { id, allow, remember }),
   closePanel: () => ipcRenderer.send(CH.chatClose),
   stop: () => ipcRenderer.send(CH.chatStop),

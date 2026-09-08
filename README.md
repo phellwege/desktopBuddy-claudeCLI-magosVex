@@ -69,6 +69,11 @@ Ctrl+Q in the panel quits. Drag him to another monitor; he hovers there and land
 Typing while a rite runs hands the message to the running turn: he answers at his next
 tool boundary and carries on. `/stop` still aborts.
 
+Images: paste a screenshot (Win+Shift+S, then Ctrl+V in the panel), a file copied in
+Explorer, or an image path, or drop a file on the panel. Each shows a chip under the log
+and reaches him inline as `[Image #N]`, mid-rite too; the × or Backspace in an empty box
+removes one. For small text snip the region rather than the whole screen.
+
 Dictation: Windows voice typing (Win+H) or your Mac's dictation key types straight into
 the panel's text box. Nothing in the app listens to the microphone.
 

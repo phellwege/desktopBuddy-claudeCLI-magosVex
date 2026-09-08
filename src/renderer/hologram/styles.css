@@ -37,3 +37,12 @@ html, body { margin: 0; width: 100%; height: 100%; background: transparent; over
 .plain-toggle:hover { opacity: 1; }
 .plain { margin-top: 4px; padding-top: 4px; border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
 .msg.buddy.waiting .plain { border-top: none; padding-top: 0; margin-top: 0; }
+#attachments { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px; border-top: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+#attachments[hidden] { display: none; }
+.chip { position: relative; border: 1px solid var(--accent); border-radius: 3px; padding: 2px; background: rgba(0,0,0,0.3); }
+.chip img { display: block; height: 40px; }
+.chip .label, .msg.user .thumbs .label { position: absolute; left: 3px; bottom: 3px; font-size: 11px; line-height: 1; padding: 1px 3px; background: rgba(0,0,0,0.6); color: var(--accent); letter-spacing: 0.06em; }
+.chip .remove { position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--accent); background: var(--bg); color: var(--text); font: inherit; font-size: 11px; line-height: 1; padding: 0; cursor: pointer; }
+.msg.user .thumbs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.msg.user .thumbs .thumb { position: relative; }
+.msg.user .thumbs img { display: block; height: 60px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); border-radius: 3px; }

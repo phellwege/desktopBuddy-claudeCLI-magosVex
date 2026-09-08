@@ -1,6 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { cleanEnv } from './env'
-import { readFileSync } from 'node:fs'
+import { readFileSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OVERLAY_HEIGHT } from '../src/main/geometry'
 
@@ -19,13 +20,15 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
 }
 
 let app: ElectronApplication | undefined
+let userDataDir: string | undefined
 
 test.beforeEach(async () => {
   // Pin the echo brain explicitly: this test's own "hello" reply assumes the echo brain's
   // behavior, and without this override the app falls back to it only when it cannot find a
   // real CLI at config.cliPath - on a machine where the real Claude Code CLI is installed at
   // the default path, this test would otherwise spawn it for real, spending quota.
-  app = await electron.launch({ args: ['.'], env: cleanEnv({ BUDDY_TEST: '1', BUDDY_BRAIN: 'echo' }) })
+  userDataDir = mkdtempSync(join(tmpdir(), 'buddy-e2e-'))
+  app = await electron.launch({ args: ['.'], env: cleanEnv({ BUDDY_TEST: '1', BUDDY_BRAIN: 'echo', BUDDY_USER_DATA: userDataDir }) })
 })
 
 test.afterEach(async () => {
@@ -34,6 +37,7 @@ test.afterEach(async () => {
     app = undefined
     await toClose.close()
   }
+  if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
 })
 
 test('overlay sits on the work area bottom, panel opens, /goto moves him, Escape closes', async () => {

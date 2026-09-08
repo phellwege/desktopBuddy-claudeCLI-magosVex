@@ -11,5 +11,8 @@ export function toolsNote(): string {
     'its display argument; set_mood changes its body language ' +
     '(calm, happy, thinking, confused, alarmed); emote plays a one-off reaction; sleep and wake; ' +
     'get_state reads its state and lists the attached displays; ' +
-    `${EXPRESSION_NOTE} Do not narrate tool use. Keep replies concise unless asked.`
+    `${EXPRESSION_NOTE} ` +
+    'Images the operator attaches arrive inline in the message, each followed by a caption ' +
+    '[Image #N: name]; do not read them from disk again. ' +
+    'Do not narrate tool use. Keep replies concise unless asked.'
 }

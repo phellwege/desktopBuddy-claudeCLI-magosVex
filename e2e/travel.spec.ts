@@ -1,4 +1,7 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { cleanEnv } from './env'
 
 // Playwright cannot fake a second display, so this adapts to whatever the machine running
@@ -32,12 +35,15 @@ const overlayBoundsOf = (app: ElectronApplication) => app.evaluate(({ BrowserWin
 })
 
 let app: ElectronApplication | undefined
+let userDataDir: string | undefined
 
 test.beforeEach(async () => {
-  app = await electron.launch({ args: ['.'], env: cleanEnv({ BUDDY_TEST: '1', BUDDY_BRAIN: 'echo' }) })
+  userDataDir = mkdtempSync(join(tmpdir(), 'buddy-e2e-'))
+  app = await electron.launch({ args: ['.'], env: cleanEnv({ BUDDY_TEST: '1', BUDDY_BRAIN: 'echo', BUDDY_USER_DATA: userDataDir }) })
 })
 test.afterEach(async () => {
   if (app) { const toClose = app; app = undefined; await toClose.close() }
+  if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
 })
 
 async function openPanel(electronApp: ElectronApplication): Promise<Page> {
