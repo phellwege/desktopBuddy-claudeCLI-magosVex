@@ -382,4 +382,22 @@ describe('ClaudeCliBrain', () => {
       await server.close()
     }
   }, 10000)
+
+  it('writes content blocks to the fake as the prompt, and steers blocks into the running turn', async () => {
+    const brain = new ClaudeCliBrain(baseDeps({ spawn: fakeSpawn('images') }))
+    const image = { type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/png' as const, data: 'QUJD' } }
+    const prompt = [image, { type: 'text' as const, text: '[Image #1: a.png]' }, { type: 'text' as const, text: 'what is it' }]
+    const iterator = brain.respond(prompt, { state: {} as never, workspace: 'C:\\repo', model: null, sessionId: null })[Symbol.asyncIterator]()
+    const events: BrainEvent[] = []
+    // The first yielded event is the fake's first text delta; its result line is still
+    // 20 ms away, so stdin is open and the steer goes down before it.
+    const first = await iterator.next()
+    if (!first.done) events.push(first.value)
+    expect(brain.steer([image, { type: 'text', text: '[Image #1: b.png]' }])).toBe(true)
+    for (let r = await iterator.next(); !r.done; r = await iterator.next()) events.push(r.value)
+    const text = events.filter(e => e.type === 'text').map(e => (e as { delta: string }).delta).join('')
+    expect(text).toContain('images=1 media=image/png text=[Image #1: a.png] what is it')
+    expect(text).toContain('steerImages=1 steerText=[Image #1: b.png]')
+    expect(events.at(-1)).toEqual({ type: 'done', sessionId: 's2', error: undefined })
+  }, 10000)
 })

@@ -16,22 +16,39 @@ function argValue(name) {
 }
 
 // stdin is line-delimited. The brain writes stream-json user lines, {"type":"user",
-// "message":{"role":"user","content":"..."}}, and keeps the pipe open so it can steer a
+// "message":{"role":"user","content":...}}, and keeps the pipe open so it can steer a
 // running turn with further lines (docs/superpowers/specs/2026-09-07-mid-turn-steering-design.md).
-// The first line is the prompt and starts the scenario; later lines land in `steers`; EOF
-// flips `stdinEnded`. A first line that is not JSON is taken as a plain-text prompt, which
-// is what an older caller (or a test fake) writes.
+// content is a string, or an array of Messages API blocks when images ride along
+// (docs/superpowers/specs/2026-09-07-image-attachments-design.md): text blocks are joined
+// with a space, captions included; image blocks are counted and their media types kept.
+// The first line is the prompt and starts the scenario; later lines land in `steers`
+// (their text) and `steerMessages` (the whole reading); EOF flips `stdinEnded`. A first
+// line that is not JSON is taken as a plain-text prompt, which is what an older caller (or
+// a test fake) writes.
 const steers = []
+const steerMessages = []
+let promptMessage = null
 let stdinEnded = false
 let onStdinEnd = () => {}
 
-function userText(line) {
+function userMessage(line) {
   try {
     const msg = JSON.parse(line)
     const content = msg && msg.message && msg.message.content
-    return typeof content === 'string' ? content : line
+    if (typeof content === 'string') return { text: content, images: 0, media: [] }
+    if (Array.isArray(content)) {
+      const texts = []
+      const media = []
+      for (const block of content) {
+        if (!block) continue
+        if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text)
+        if (block.type === 'image' && block.source && typeof block.source.media_type === 'string') media.push(block.source.media_type)
+      }
+      return { text: texts.join(' '), images: media.length, media }
+    }
+    return { text: line, images: 0, media: [] }
   } catch {
-    return line
+    return { text: line, images: 0, media: [] }
   }
 }
 
@@ -40,7 +57,8 @@ function readPrompt() {
     let buf = ''
     let first = null
     const take = (line) => {
-      if (first === null) { first = userText(line); resolve(first) } else steers.push(userText(line))
+      const m = userMessage(line)
+      if (first === null) { first = m; promptMessage = m; resolve(m.text) } else { steers.push(m.text); steerMessages.push(m) }
     }
     process.stdin.setEncoding('utf8')
     process.stdin.on('data', (chunk) => {
@@ -59,7 +77,7 @@ function readPrompt() {
       // EOF with nothing taken (empty or whitespace-only stdin): run the scenario with an
       // empty prompt, as the old EOF-only reader did, rather than leaving main() awaiting
       // a promise that never settles and the process exiting with no output.
-      if (first === null) { first = ''; resolve(first) }
+      if (first === null) { first = { text: '', images: 0, media: [] }; promptMessage = first; resolve('') }
       stdinEnded = true
       onStdinEnd()
     })
@@ -151,6 +169,26 @@ async function runLinger() {
     { type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: 'Hello' },
   ])
   await sleep(Number(process.env.FAKE_CLAUDE_LINGER_MS) || 1500)
+}
+
+// Reports what the prompt carried (image count, media types, joined text), then, once
+// stdin has closed and only if steers arrived, a second turn reporting what they carried.
+// Lets the brain tests pin the wire shape without reading the child's stdin directly.
+async function runImages() {
+  const p = promptMessage || { text: '', images: 0, media: [] }
+  await emit([
+    { type: 'system', subtype: 'init', session_id: 's1', model: 'm' },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: `images=${p.images} media=${p.media.join(',')} text=${p.text}` } } },
+    { type: 'result', subtype: 'success', is_error: false, session_id: 's1', result: 'ok' },
+  ])
+  await waitStdinEnd()
+  if (steerMessages.length === 0) return
+  const steerImages = steerMessages.reduce((n, m) => n + m.images, 0)
+  await emit([
+    { type: 'system', subtype: 'init', session_id: 's2', model: 'm' },
+    { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: ` steerImages=${steerImages} steerText=${steerMessages.map((m) => m.text).join('|')}` } } },
+    { type: 'result', subtype: 'success', is_error: false, session_id: 's2', result: 'ok' },
+  ])
 }
 
 async function runMcp() {
@@ -263,6 +301,7 @@ async function main() {
       case 'permission': await runPermission(); break
       case 'steer-drain': await runSteerDrain(prompt); break
       case 'linger': await runLinger(); break
+      case 'images': await runImages(); break
       case 'text':
       default: await runText()
     }
