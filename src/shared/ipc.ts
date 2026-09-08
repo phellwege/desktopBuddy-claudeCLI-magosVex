@@ -34,6 +34,14 @@ export const CH = {
   imageStageBytes: 'image:stageBytes',
   imageStagePath: 'image:stagePath',
   imageDiscard: 'image:discard',
+  ptyStart: 'pty:start',
+  ptyInput: 'pty:input',
+  ptyResize: 'pty:resize',
+  ptyKill: 'pty:kill',
+  ptyData: 'pty:data',
+  ptyExit: 'pty:exit',
+  hologramMode: 'hologram:mode',
+  clipboardWrite: 'clipboard:write',
 } as const
 
 export interface PackLoadedPayload { atlasUrl: string; atlasJsonUrl: string; animations: Animations; scale: number; name: string; faces: Record<Expression, string> | null }
@@ -65,6 +73,12 @@ export interface ChatPromptPayload { text: string; images?: string[] }
 export interface StageBytesPayload { bytes: Uint8Array; mediaType?: string; name: string }
 export interface StagePathPayload { path: string }
 export type StageResult = StagedImage | { error: string }
+export interface PtyStartPayload { cols: number; rows: number }
+export type PtyStartResult = { ok: true } | { error: string }
+export interface PtyDataPayload { data: string }
+export interface PtyExitPayload { code: number }
+// Which tab the panel shows; main places the window for that tab's panel size.
+export interface HologramModePayload { cli: boolean }
 
 export interface BuddyBridge {
   onPackLoaded(cb: (p: PackLoadedPayload) => void): () => void
@@ -110,6 +124,16 @@ export interface BuddyBridge {
   /** The OS path behind a File from a paste or a drop; empty for a File with no path (a
    * synthetic one, or bytes an app handed over), which then goes the bytes route. */
   pathForFile(file: File): string
+  /** The embedded terminal (the CLI tab). start spawns the CLI in the workspace at the
+   * given size, or answers with the reason it cannot; data and exit come back as events. */
+  ptyStart(cols: number, rows: number): Promise<PtyStartResult>
+  ptyInput(data: string): void
+  ptyResize(cols: number, rows: number): void
+  ptyKill(): void
+  onPtyData(cb: (p: PtyDataPayload) => void): () => void
+  onPtyExit(cb: (p: PtyExitPayload) => void): () => void
+  setMode(cli: boolean): void
+  writeClipboard(text: string): void
   permissionAnswer(id: string, allow: boolean, remember?: boolean): void
   closePanel(): void
   stop(): void

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { CH, type BuddyBridge, type ChatPromptPayload, type StageBytesPayload, type StagePathPayload } from '../shared/ipc'
+import { CH, type BuddyBridge, type ChatPromptPayload, type HologramModePayload, type PtyStartPayload, type StageBytesPayload, type StagePathPayload } from '../shared/ipc'
 import { makeOn } from './bridge'
 
 const on = makeOn(ipcRenderer)
@@ -43,6 +43,14 @@ const bridge: BuddyBridge = {
   // webUtils works in a sandboxed preload; the File must be the renderer's own object,
   // which contextBridge passes through for this call.
   pathForFile: (file) => webUtils.getPathForFile(file),
+  ptyStart: (cols, rows) => ipcRenderer.invoke(CH.ptyStart, { cols, rows } satisfies PtyStartPayload),
+  ptyInput: (data) => ipcRenderer.send(CH.ptyInput, { data }),
+  ptyResize: (cols, rows) => ipcRenderer.send(CH.ptyResize, { cols, rows }),
+  ptyKill: () => ipcRenderer.send(CH.ptyKill),
+  onPtyData: on(CH.ptyData),
+  onPtyExit: on(CH.ptyExit),
+  setMode: (cli) => ipcRenderer.send(CH.hologramMode, { cli } satisfies HologramModePayload),
+  writeClipboard: (text) => ipcRenderer.send(CH.clipboardWrite, { text }),
   permissionAnswer: (id, allow, remember) => ipcRenderer.send(CH.chatPermissionAnswer, { id, allow, remember }),
   closePanel: () => ipcRenderer.send(CH.chatClose),
   stop: () => ipcRenderer.send(CH.chatStop),

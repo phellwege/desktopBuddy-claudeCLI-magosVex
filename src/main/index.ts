@@ -1,4 +1,4 @@
-import { app, dialog, screen } from 'electron'
+import { app, clipboard, dialog, screen } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -11,11 +11,13 @@ import { registerPackScheme, handlePackProtocol } from './protocol'
 import { Buddy } from './buddy'
 import { Actions, type ActionHost } from './actions'
 import { createHologramWindow, createOverlayWindow, expandForFlight, loadPage, rebound, setHologramInteractive, setOverlayDragging } from './windows'
-import { hologramBounds, originToWindow } from './geometry'
+import { CLI_PANEL_SIZE, PANEL_SIZE, hologramBounds, originToWindow } from './geometry'
 import { byOrd, desktopBounds, floorY, fromFraction, planDrop, planTravel, primaryOf, roster, routeDurationMs, walkBand, type DisplayInfo } from './displays'
-import { wireIpc, type ImagePort } from './ipc'
+import { wireIpc, type ImagePort, type PtyPort } from './ipc'
 import { SessionAllows } from './permissions'
-import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type StagePayload, type StageResult } from '../shared/ipc'
+import { CH, type ChatActivityPayload, type ChatDonePayload, type ChatPermissionPayload, type ChatReadbackPayload, type ChatStatusPayload, type OriginPayload, type OverlayMutterPayload, type PtyDataPayload, type PtyExitPayload, type StagePayload, type StageResult } from '../shared/ipc'
+import { PtySession } from './pty'
+import { nodePtyFactory } from './pty-node'
 import { AttachmentStore, loadImagePath, nodeImageFs, normalizeImage, type NormalizeResult } from './images'
 import { electronCodec } from './images-electron'
 import { EchoBrain } from './brain/echo'
@@ -126,10 +128,13 @@ async function main(): Promise<void> {
   // live x (xFraction) instead - the ipc origin handler compares against this to decide
   // whether to re-place the hologram mid-walk rather than waiting for arrival.
   const lastPlacedX: { current: number } = { current: buddy.getState().x }
+  // The panel size the window is placed for: the chat tab's, or the CLI tab's while that
+  // tab is active (spec T-6). Set by hologram:mode; read on every placement.
+  const panelSize = { current: PANEL_SIZE }
   const placeHologram = (xFraction?: number) => {
     const x = xFraction ?? buddy.getState().x
     lastPlacedX.current = x
-    hologram.setBounds(hologramBounds(current.wa, x, charW, charH))
+    hologram.setBounds(hologramBounds(current.wa, x, charW, charH, panelSize.current))
     if (originRef.current) hologram.webContents.send(CH.hologramOrigin, originToWindow(originRef.current, hologram.getBounds()))
   }
   // Tells the overlay where its window sits and which display's floor he rests on. Sent on
@@ -331,6 +336,29 @@ async function main(): Promise<void> {
     clear: () => store.clear(),
   }
 
+  // The CLI tab's terminal (spec T-4): the real CLI in a ConPTY on its own session, or the
+  // BUDDY_PTY_CMD program under test; the pack's cliMissing line when there is neither.
+  const ptyCmd = parseArgsPrefix(process.env.BUDDY_PTY_CMD)
+  const ptyProgram: string[] | null = ptyCmd.length > 0 ? ptyCmd : (!useEcho ? [cliPath] : null)
+  const ptySession = new PtySession({ factory: nodePtyFactory })
+  ptySession.onData((data) => toHologram(CH.ptyData, { data } satisfies PtyDataPayload))
+  ptySession.onExit((code) => toHologram(CH.ptyExit, { code } satisfies PtyExitPayload))
+  const pty: PtyPort = {
+    start: (cols, rows) => {
+      if (!ptyProgram) return { error: pickLine(pack, 'cliMissing') ?? `No Claude Code at ${cliPath}` }
+      const [file, ...args] = ptyProgram
+      const r = ptySession.start({ file: file ?? '', args, cwd: chat.status().workspace, env: process.env, cols, rows })
+      return r.ok ? { ok: true } : { error: r.reason }
+    },
+    write: (data) => ptySession.write(data),
+    resize: (cols, rows) => ptySession.resize(cols, rows),
+    kill: () => ptySession.kill(),
+  }
+  const setMode = (cli: boolean): void => {
+    panelSize.current = cli ? CLI_PANEL_SIZE : PANEL_SIZE
+    if (hologram.isVisible()) placeHologram()
+  }
+
   // Runs `<cli> auth status` once, five seconds to answer, and never blocks startup on it:
   // its only effect is one line appended to the status row once (or never) it resolves.
   function checkCliAuth(path: string): void {
@@ -388,12 +416,13 @@ async function main(): Promise<void> {
     sendStage,
     chat, status: () => chat.status(),
     images,
+    pty, setMode, writeClipboard: (text) => clipboard.writeText(text),
     showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay, openCli: () => { actions.openPanel(); chat.openCli() } }, x, y),
   })
 
   const tray = createTray({ packDir: pack.dir, name: pack.name, actions, buddy, overlay, hologram, placeHologram })
   void tray
-  app.on('before-quit', () => { overlay.destroy(); hologram.destroy() })
+  app.on('before-quit', () => { ptySession.kill(); overlay.destroy(); hologram.destroy() })
 
   buddy.onChange((v) => {
     if (overlay.isDestroyed()) return
