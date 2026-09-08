@@ -7,6 +7,9 @@ import type { Atlas, Expression } from '../../shared/types'
 import { stageablePaths } from '../../shared/imagePaths'
 import type { StageResult } from '../../shared/ipc'
 import { MAX_RAW_BYTES, type StagedImage } from '../../shared/images'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), status = $<HTMLSpanElement>('status')
@@ -15,6 +18,16 @@ const panel = $<HTMLDivElement>('panel'), coneCanvas = $<HTMLCanvasElement>('con
 const strip = $<HTMLDivElement>('attachments')
 // Chips waiting under the log, in send order. Main holds the bytes; this is ids and thumbs.
 let staged: StagedImage[] = []
+const cliEl = $<HTMLDivElement>('cli')
+const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('#tabs .tab'))
+type Tab = 'chat' | 'cli'
+let activeTab: Tab = 'chat'
+// The embedded terminal (spec T-7): created on the first switch to the tab, kept for the
+// life of the window; the session behind it lives in main, so the buffer survives hides.
+let term: Terminal | null = null
+let fit: FitAddon | null = null
+let ptyStarted = false
+let ptyExited = false
 const cone = new ProjectionCone(coneCanvas)
 const LINE_PX = parseFloat(getComputedStyle(input).lineHeight) || 18
 function growInput(): void { input.style.height = 'auto'; input.style.height = `${grownHeight(input.scrollHeight, LINE_PX)}px` }
@@ -26,6 +39,8 @@ function sizeCone(): void {
 }
 sizeCone()
 window.addEventListener('resize', sizeCone)
+// The panel changes size when the tab changes; the cone retargets and the terminal refits.
+new ResizeObserver(() => { sizeCone(); if (activeTab === 'cli') fit?.fit() }).observe(panel)
 
 document.addEventListener('visibilitychange', () => { if (document.hidden) cone.stop(); else cone.start() })
 if (!document.hidden) cone.start()
@@ -160,6 +175,69 @@ function addUser(text: string, thumbs: string[]): void {
   }
   log.scrollTop = log.scrollHeight
 }
+function terminalTheme(): { background: string; foreground: string; cursor: string } {
+  const s = getComputedStyle(document.documentElement)
+  return {
+    background: s.getPropertyValue('--bg').trim() || 'rgba(6, 20, 32, 0.82)',
+    foreground: s.getPropertyValue('--text').trim() || '#d8f4ff',
+    cursor: accent,
+  }
+}
+function ensureTerminal(): Terminal {
+  if (term) return term
+  const t = new Terminal({
+    fontFamily: getComputedStyle(input).fontFamily, fontSize: 12, scrollback: 5000,
+    cursorBlink: true, allowTransparency: true, theme: terminalTheme(),
+  })
+  fit = new FitAddon()
+  t.loadAddon(fit)
+  t.open(cliEl)
+  t.onData((d) => window.buddy.ptyInput(d))
+  t.onResize(({ cols, rows }) => window.buddy.ptyResize(cols, rows))
+  // Copy on select, as Windows Terminal does; paste is xterm's own Ctrl+V and Shift+Insert.
+  t.onSelectionChange(() => { const s = t.getSelection(); if (s) window.buddy.writeClipboard(s) })
+  // Enter on a dead terminal restarts it (spec T-7).
+  t.onKey(({ key }) => { if (ptyExited && key === '\r') void startPty() })
+  // Ctrl+Tab leaves for the chat tab; every other key is the CLI's, Escape included.
+  t.attachCustomKeyEventHandler((e) => {
+    if (e.ctrlKey && e.key === 'Tab') { if (e.type === 'keydown') switchTab('chat'); return false }
+    return true
+  })
+  window.buddy.onPtyData(({ data }) => t.write(data))
+  window.buddy.onPtyExit(({ code }) => {
+    ptyStarted = false; ptyExited = true
+    t.writeln(`\r\n[Claude Code exited, code ${code}]  Enter to restart`)
+  })
+  term = t
+  return t
+}
+async function startPty(): Promise<void> {
+  const t = ensureTerminal()
+  fit?.fit()
+  ptyExited = false
+  const r = await window.buddy.ptyStart(t.cols, t.rows)
+  if ('error' in r) { ptyExited = true; t.writeln(`${r.error}\r\n  Enter to retry`); return }
+  ptyStarted = true
+}
+function focusActive(): void { if (activeTab === 'cli') term?.focus(); else input.focus() }
+function switchTab(tab: Tab): void {
+  activeTab = tab
+  for (const b of tabButtons) b.classList.toggle('active', b.dataset.tab === tab)
+  panel.classList.toggle('cli', tab === 'cli')
+  cliEl.hidden = tab !== 'cli'
+  window.buddy.setMode(tab === 'cli')
+  if (tab === 'cli') {
+    const t = ensureTerminal()
+    // Fit after the panel has taken its CLI size, then start the session the first time.
+    requestAnimationFrame(() => { fit?.fit(); t.focus(); if (!ptyStarted && !ptyExited) void startPty() })
+  } else {
+    input.focus()
+  }
+}
+for (const b of tabButtons) b.addEventListener('click', () => switchTab(b.dataset.tab === 'cli' ? 'cli' : 'chat'))
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'Tab' && activeTab === 'chat') { e.preventDefault(); switchTab('cli') }
+})
 // A reply bubble, started in the waiting state (dots, hidden .plain) when main told us
 // (chat:status) that this reply will be followed by a readback.
 function newReply(): HTMLDivElement {
@@ -246,6 +324,7 @@ window.buddy.onTheme((t: ThemePayload) => {
   cone.setColor(t.accent)
   accent = t.accent
   rebuildFace()
+  if (term) term.options.theme = terminalTheme()
 })
 window.buddy.onPackLoaded(async (p: PackLoadedPayload) => {
   facesMap = p.faces
@@ -386,7 +465,7 @@ panel.addEventListener('drop', (e) => {
   for (const f of Array.from(e.dataTransfer?.files ?? [])) void stageFile(f)
 })
 input.addEventListener('input', growInput)
-window.addEventListener('focus', () => input.focus())
+window.addEventListener('focus', focusActive)
 window.buddy.hologramReady()
 // One-time hint that the OS dictation shortcut types into this box. Once per machine:
 // local storage is per Chromium profile, which is per userData dir.
