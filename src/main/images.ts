@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
-import { isImageMediaType, type ImageAttachment, type ImageMediaType, type StagedImage } from '../shared/images'
+import { isImageMediaType, MAX_RAW_BYTES, type ImageAttachment, type ImageMediaType, type StagedImage } from '../shared/images'
 
 // The long edge above which the API downscales on the current high-resolution models;
 // nothing legible the API would have kept is thrown away.
@@ -49,12 +49,16 @@ function finish(src: ImageSource, mediaType: ImageMediaType, encoded: Buffer, wi
   }
 }
 
-// Spec 5, in order: type (caller's, else sniffed); decode; a gif or webp the codec cannot
+// Spec 5, in order: a raw-byte ceiling before anything else is even attempted; type
+// (sniffed when the magic bytes are recognised, else the caller's, so a misnamed file
+// never reaches the API under the wrong label); decode; a gif or webp the codec cannot
 // read passes through under the cap; within both caps the bytes pass through unchanged;
 // otherwise resize to MAX_EDGE when needed and encode png, jpeg 85 when the png is over
-// the cap, refuse when the jpeg still is.
+// the cap, refuse when the jpeg still is (or when it encodes to nothing).
 export function normalizeImage(src: ImageSource, codec: ImageCodec): NormalizeResult {
-  const type = isImageMediaType(src.mediaType) ? src.mediaType : sniffMediaType(src.bytes)
+  if (src.bytes.length > MAX_RAW_BYTES) return { ok: false, reason: 'too large' }
+  const sniffed = sniffMediaType(src.bytes)
+  const type = sniffed ?? (isImageMediaType(src.mediaType) ? src.mediaType : null)
   if (!type) return { ok: false, reason: 'not an image' }
   const decoded = codec.decode(src.bytes)
   if (!decoded) {
@@ -71,6 +75,7 @@ export function normalizeImage(src: ImageSource, codec: ImageCodec): NormalizeRe
   let outType: ImageMediaType = 'image/png'
   if (encoded.length > MAX_BYTES) { encoded = scaled.jpeg(85); outType = 'image/jpeg' }
   if (encoded.length > MAX_BYTES) return { ok: false, reason: 'too large' }
+  if (encoded.length === 0) return { ok: false, reason: 'cannot decode' }
   return finish(src, outType, encoded, scaled.width, scaled.height, scaled.thumbnail(THUMB_HEIGHT))
 }
 

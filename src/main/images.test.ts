@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { resolve } from 'node:path'
-import { AttachmentStore, loadImagePath, MAX_BYTES, MAX_STAGED, normalizeImage, sniffMediaType, type DecodedImage, type ImageCodec, type ImageFs } from './images'
-import type { ImageAttachment } from '../shared/images'
+import { AttachmentStore, loadImagePath, MAX_BYTES, MAX_EDGE, MAX_STAGED, normalizeImage, sniffMediaType, type DecodedImage, type ImageCodec, type ImageFs } from './images'
+import { MAX_RAW_BYTES, type ImageAttachment } from '../shared/images'
 
 const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const JPEG_HEAD = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
@@ -34,6 +34,9 @@ describe('sniffMediaType', () => {
     expect(sniffMediaType(Buffer.from('hello world'))).toBeNull()
     expect(sniffMediaType(Buffer.alloc(0))).toBeNull()
   })
+  it('returns null for a two-byte buffer, too short for any magic number', () => {
+    expect(sniffMediaType(Buffer.from([0x89, 0x50]))).toBeNull()
+  })
 })
 
 describe('normalizeImage', () => {
@@ -53,9 +56,46 @@ describe('normalizeImage', () => {
     const b = normalizeImage({ bytes: png(), name: 'a.png' }, codec)
     expect(a.ok && b.ok && a.attachment.id !== b.attachment.id).toBe(true)
   })
-  it('takes the caller media type over the sniff', () => {
+  it('prefers the sniffed type over the caller\'s', () => {
     const r = normalizeImage({ bytes: png(), mediaType: 'image/jpeg', name: 'a.jpg' }, fakeCodec({ width: 1, height: 1 }))
-    expect(r.ok && r.attachment.mediaType).toBe('image/jpeg')
+    expect(r.ok && r.attachment.mediaType).toBe('image/png')
+  })
+  it('falls back to the caller type when the bytes are not recognised', () => {
+    const codec = fakeCodec({ width: 1, height: 1, decodes: false })
+    expect(normalizeImage({ bytes: Buffer.from('hello'), mediaType: 'image/png', name: 'x.bin' }, codec)).toEqual({ ok: false, reason: 'cannot decode' })
+  })
+  it('refuses raw bytes over MAX_RAW_BYTES before ever sniffing or decoding', () => {
+    const codec = fakeCodec({ width: 1, height: 1 })
+    const bytes = Buffer.concat([PNG_HEAD, Buffer.alloc(MAX_RAW_BYTES + 1)])
+    expect(normalizeImage({ bytes, name: 'huge.png' }, codec)).toEqual({ ok: false, reason: 'too large' })
+    expect(codec.calls).toEqual([])
+  })
+  it('reports cannot decode when the codec encodes to an empty buffer', () => {
+    const codec = fakeCodec({ width: 5000, height: 2000, pngBytes: 0, jpegBytes: 0 })
+    expect(normalizeImage({ bytes: png(), name: 'wide.png' }, codec)).toEqual({ ok: false, reason: 'cannot decode' })
+  })
+  it('passes through at exactly MAX_EDGE without resizing', () => {
+    const codec = fakeCodec({ width: MAX_EDGE, height: 1000 })
+    const bytes = png(10)
+    const r = normalizeImage({ bytes, name: 'edge.png' }, codec)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.attachment).toMatchObject({ width: MAX_EDGE, height: 1000, bytes: bytes.length })
+    expect(codec.calls.some(c => c.startsWith('resize'))).toBe(false)
+  })
+  it('passes through at exactly MAX_BYTES', () => {
+    const codec = fakeCodec({ width: 100, height: 100 })
+    const bytes = png(MAX_BYTES - PNG_HEAD.length)
+    expect(bytes.length).toBe(MAX_BYTES)
+    const r = normalizeImage({ bytes, name: 'full.png' }, codec)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.attachment.bytes).toBe(MAX_BYTES)
+    expect(codec.calls.some(c => c === 'png' || c.startsWith('resize'))).toBe(false)
+  })
+  it('sniffs a png even when the caller mediaType is not one of the four', () => {
+    const r = normalizeImage({ bytes: png(), mediaType: 'text/plain', name: 'a.png' }, fakeCodec({ width: 1, height: 1 }))
+    expect(r.ok && r.attachment.mediaType).toBe('image/png')
   })
   it('resizes over MAX_EDGE and re-encodes as png', () => {
     const codec = fakeCodec({ width: 5000, height: 2000, pngBytes: 1000 })

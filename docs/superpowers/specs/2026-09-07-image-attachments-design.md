@@ -91,8 +91,10 @@ Types:
 `normalizeImage({ bytes, mediaType?, name }, codec)` returns
 `{ ok: true, attachment, staged }` or `{ ok: false, reason }`:
 
-1. Media type: the caller's when given, else sniffed from the magic bytes (png, jpeg, gif,
-   webp). Anything else: `not an image`.
+1. Media type: the sniffed type when the magic bytes are recognised, else the caller's when
+   it is one of the four, else `not an image`. The sniff wins over the caller's claim so a
+   misnamed file (a PNG saved with a `.jpg` extension) never reaches the API labelled with
+   the wrong type and fails the turn.
 2. Decode. Null for png or jpeg: `cannot decode`. Null for gif or webp: pass-through, the
    bytes unchanged when at most `MAX_BYTES`, else `too large`; width and height 0, thumb
    the raw bytes as a data URL.
@@ -106,7 +108,8 @@ Types:
    use, and a full-screen 4K capture of small text still loses detail after the API's
    own downscale, so the README recommends snipping the region. `MAX_BYTES` is 3 MB of
    encoded data (4 MB after base64, under every documented cap). Thumb is
-   `thumbnail(40)`. The id is a `randomUUID`.
+   `thumbnail(40)`. The id is a `randomUUID`. `MAX_RAW_BYTES` (64 MB) is checked before the
+   sniff or the decode even run, so a hostile or oversized paste never reaches the codec.
 
 `loadImagePath(path, workspace, fs, codec)`: a relative path resolves against the
 workspace; the extension must be `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`, case
