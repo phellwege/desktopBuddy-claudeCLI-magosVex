@@ -8,8 +8,9 @@ import { loadPack } from '../src/main/pack'
 // The tab's program is a node one-liner that prints a prompt and echoes each line back
 // (BUDDY_PTY_CMD), running in a real ConPTY owned by the app, so the whole pipeline is
 // exercised except the CLI itself. The echo brain runs, so the second test proves the tab
-// shows the cliMissing line where there is nothing to run.
-const ECHO_PROGRAM = "process.stdout.write('READY> '); process.stdin.setEncoding('utf8'); process.stdin.on('data', d => { for (const l of String(d).split(/\\r?\\n/)) if (l.trim()) process.stdout.write('echo:' + l.trim() + '\\r\\n') })"
+// shows the cliMissing line where there is nothing to run. `quit` exits with code 3, so a
+// test can drive the exit-and-restart flow without waiting on a real crash.
+const ECHO_PROGRAM = "process.stdout.write('READY> '); process.stdin.setEncoding('utf8'); process.stdin.on('data', d => { for (const l of String(d).split(/\\r?\\n/)) { const t = l.trim(); if (!t) continue; if (t === 'quit') process.exit(3); process.stdout.write('echo:' + t + '\\r\\n') } })"
 const loadedPack = loadPack(join(__dirname, '../packs/mechanicus'))
 if (!loadedPack.ok) throw new Error(loadedPack.errors.join('\n'))
 const CLI_MISSING_LINES = loadedPack.pack.persona.lines.cliMissing
@@ -73,6 +74,48 @@ test('the CLI tab widens the panel, runs the program, echoes typed input, and ke
 
   await hologram.locator('#tabs .tab[data-tab="cli"]').click()
   await expect(hologram.locator('#cli')).toContainText('echo:hi')
+})
+
+test('exiting via a typed command shows the exit line, and Enter restarts to a clean prompt', async () => {
+  const hologram = await launch({ BUDDY_PTY_CMD: JSON.stringify([process.execPath, '-e', ECHO_PROGRAM]) })
+  await hologram.locator('#tabs .tab[data-tab="cli"]').click()
+  await expect(hologram.locator('#cli')).toContainText('READY>', { timeout: 15000 })
+
+  await hologram.locator('#cli').click()
+  await hologram.keyboard.type('quit')
+  await hologram.keyboard.press('Enter')
+  await expect(hologram.locator('#cli')).toContainText('[Claude Code exited, code 3]', { timeout: 15000 })
+
+  // Enter restarts the session. Finding 4: xterm fires onKey before onData for the same
+  // keydown, so an unswallowed restart Enter would also submit as input on the fresh
+  // session; that would show up here as stray text (an empty echo: line, at least) between
+  // the second READY> and the next thing actually typed.
+  await hologram.keyboard.press('Enter')
+  await expect.poll(async () => {
+    const text = (await hologram.locator('#cli').textContent()) ?? ''
+    return (text.match(/READY>/g) ?? []).length
+  }, { timeout: 15000 }).toBe(2)
+  const sinceRestart = ((await hologram.locator('#cli').textContent()) ?? '').split('READY>').at(-1) ?? ''
+  expect(sinceRestart.trim()).toBe('')
+
+  await hologram.keyboard.type('again')
+  await hologram.keyboard.press('Enter')
+  await expect(hologram.locator('#cli')).toContainText('echo:again', { timeout: 15000 })
+})
+
+test('Ctrl+Tab from focus in the terminal switches tabs both ways', async () => {
+  const hologram = await launch({ BUDDY_PTY_CMD: JSON.stringify([process.execPath, '-e', ECHO_PROGRAM]) })
+  await hologram.locator('#tabs .tab[data-tab="cli"]').click()
+  await expect(hologram.locator('#cli')).toContainText('READY>', { timeout: 15000 })
+  await hologram.locator('#cli').click()
+
+  await hologram.keyboard.press('Control+Tab')
+  await expect.poll(async () => near(480)(await panelWidth(hologram))).toBe(true)
+  await expect(hologram.locator('#input')).toBeVisible()
+
+  await hologram.keyboard.press('Control+Tab')
+  await expect.poll(async () => near(700)(await panelWidth(hologram))).toBe(true)
+  await expect(hologram.locator('#cli')).toBeVisible()
 })
 
 test('with nothing to run, the CLI tab shows the cliMissing line', async () => {

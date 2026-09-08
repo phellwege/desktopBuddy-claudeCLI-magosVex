@@ -81,7 +81,10 @@ Bridge: `ptyStart`, `ptyInput`, `ptyResize`, `ptyKill`, `onPtyData`, `onPtyExit`
 `hologramBounds(wa, xFraction, charW, charH, panel = PANEL_SIZE)`; `CLI_PANEL_SIZE` is
 `{ width: 700, height: 480 }`. The window width is the panel width plus the two cone
 margins (940 in CLI mode), its top is `charTop - panel.height - PANEL_GAP`, clamped to the
-work area exactly as today. `placeHologram` reads the current mode, which `hologram:mode`
+work area exactly as today; on a display narrower than 940 the window still clamps to the
+work area rather than shrinking the panel, so the CLI tab can crop against the screen edge
+on a small or heavily scaled display, left as a known limitation. `placeHologram` reads
+the current mode, which `hologram:mode`
 sets; the mode also re-places at once. The overlay's origin translation is unchanged
 because it works from the window's actual bounds.
 
