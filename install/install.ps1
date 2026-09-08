@@ -100,9 +100,9 @@ try {
   Step 'Installing dependencies (the long part, a few minutes)'
   & $Npm ci --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
-  # npm only runs a package's install script when the lockfile says it has one, and that
-  # flag has gone missing for electron before (npm ci then finishes with no binary). Run the
-  # download step by hand in that case; it is what the postinstall does.
+  # Electron 44 ships no postinstall: the binary download is a separate bin, install-electron.
+  # package.json runs it from a root postinstall, so npm ci normally leaves the binary in
+  # place. Keep this fallback for the case where install scripts were skipped.
   if (-not (Test-Path $Electron)) {
     Step 'Fetching the Electron binary'
     & $NodeExe (Join-Path $Root 'node_modules\electron\install.js')
