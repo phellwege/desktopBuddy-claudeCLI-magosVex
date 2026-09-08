@@ -29,8 +29,8 @@ export const HELP_TEXT = [
   '/cd [path]      change workspace (next session); no path shows where you are',
   '/ls [path]      list a directory (relative to the workspace)',
   '/model [name]   set or clear the model (next session)',
-  '/cli            open the real Claude Code in a terminal on this session; the panel waits until it closes',
-  'Ctrl+Tab       switch between the Chat tab and the CLI tab (the real Claude Code on its own session)',
+  '/cli            open a fresh Claude Code in a terminal in the workspace (also in his right-click menu)',
+  'Ctrl+Tab       switch between the Chat tab and the CLI tab (the real Claude Code, embedded)',
   '/help',
   'Dictation: Win+H (Windows) or your dictation key (Mac) types into this box.',
 ].join('\n')

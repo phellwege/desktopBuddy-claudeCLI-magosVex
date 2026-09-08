@@ -295,7 +295,7 @@ async function main(): Promise<void> {
   // Quitting mid-turn must not orphan a running claude.exe: chatRef is still undefined only
   // during the brief startup window before the ChatController below is constructed, hence
   // the guard (by the time a real quit happens, it is always set).
-  app.on('before-quit', () => { chatRef?.stop(); handoff?.stop(); readback?.stopAll(); void server.close() })
+  app.on('before-quit', () => { chatRef?.stop(); readback?.stopAll(); void server.close() })
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
@@ -316,7 +316,6 @@ async function main(): Promise<void> {
       if (s.sessionId === null) sessionAllows.clear()
     },
     readback, handoff, log: (line) => appendLog(logDir, 'main', line),
-    transcriptExists: (workspace, id) => sessionTranscriptExists(homedir(), workspace, id),
   })
   chatRef = chat
 

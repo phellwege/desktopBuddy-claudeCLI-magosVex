@@ -1,87 +1,66 @@
-// The terminal hand-off (spec 2026-09-07-terminal-handoff-design): /cli opens the real
-// Claude Code in a console window on the panel's own session. Measured on Electron 44: a
-// console program spawned directly by the main process gets no console at all, and
-// `cmd /c start "" /wait <program>` opens a real one whose exit is the wrapper's exit, so
-// that is the launch shape. Windows Terminal takes the window when it is the default
-// terminal; conhost otherwise; nothing here depends on which.
+// /cli and the menu item open a brand-new, independent Claude Code in a console window in
+// the workspace (spec 2026-09-07-terminal-handoff-design, as revised 2026-09-08). Measured
+// on Electron 44: a console program spawned directly by the main process gets no console
+// at all, so the launch goes through `cmd /c start`, which opens a real one; and a window
+// opened that way survives the app's exit, so nothing here tracks or stops it.
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { childEnv } from './brain/claude-cli'
-import { killTree } from './brain/process'
 
 export interface HandoffDeps {
   cliPath: string
   spawn?: typeof nodeSpawn
   env?: NodeJS.ProcessEnv
   // Test hook (BUDDY_HANDOFF_CMD): a full argv that replaces the launcher, so the e2e
-  // suite runs a short-lived node process instead of opening a console.
+  // suite runs a short node process instead of opening a console.
   command?: string[]
-  kill?: (child: ChildProcess) => void
+  // Checked before the non-hook launch is built: a missing cliPath makes `cmd /c start`
+  // pop a "Windows cannot find ..." dialog that windowsHide buries, leaving a detached
+  // wrapper alive behind it after the panel has already posted the confirmation.
+  exists?: (path: string) => boolean
 }
-export interface HandoffStart { sessionId: string; fresh: boolean; workspace: string; onExit: (error?: string) => void }
+export interface HandoffOpen { workspace: string; onError: (message: string) => void }
 export type HandoffResult = { ok: true } | { ok: false; reason: string }
 export type LaunchCommand = { ok: true; file: string; args: string[]; verbatim: boolean } | { ok: false; reason: string }
 
-// cmd /c start "<title>" /wait /d "<dir>" "<program>" <flag> <id>. The quotes carry paths
-// with spaces; a double quote inside a path cannot be passed to start and is refused. A
-// trailing backslash right before a closing quote would escape it, so it is stripped,
-// except on a drive root, where "C:\" is the form start expects.
-export function buildHandoffCommand(cliPath: string, workspace: string, sessionId: string, fresh: boolean): LaunchCommand {
+// cmd /c start "<title>" /d "<dir>" "<program>". The quotes carry paths with spaces; a
+// double quote inside a path cannot be passed to start and is refused. A trailing separator
+// right before a closing quote would escape it, so it is stripped, except on a drive root,
+// where "C:\" is the form start expects.
+export function buildHandoffCommand(cliPath: string, workspace: string): LaunchCommand {
   if (cliPath.includes('"') || workspace.includes('"')) return { ok: false, reason: 'a path with a double quote cannot be handed to start' }
-  // The session id is the one unquoted token on the cmd /c line; anything outside a UUID's
-  // character set could otherwise be read as extra tokens or shell syntax by start.
-  if (!/^[0-9a-f-]+$/i.test(sessionId)) return { ok: false, reason: 'a session id with unexpected characters cannot be handed to start' }
   const dir = /^[A-Za-z]:\\$/.test(workspace) ? workspace : workspace.replace(/[\\/]+$/, '')
-  const flag = fresh ? '--session-id' : '--resume'
-  return { ok: true, file: 'cmd.exe', args: ['/c', `start "Claude Code" /wait /d "${dir}" "${cliPath}" ${flag} ${sessionId}`], verbatim: true }
+  return { ok: true, file: 'cmd.exe', args: ['/c', `start "Claude Code" /d "${dir}" "${cliPath}"`], verbatim: true }
 }
 
 export class Handoff {
-  private child: ChildProcess | null = null
-  // Guards stop() against a second call on the same child: the injected killer (tests, and
-  // any future non-Windows kill) has no exitCode check of its own the way killTree does, so
-  // idempotency has to live here rather than be assumed from the child.
-  private stopping = false
   constructor(private readonly deps: HandoffDeps) {}
-  get active(): boolean { return this.child !== null }
 
-  start(s: HandoffStart): HandoffResult {
-    if (this.child) return { ok: false, reason: 'already in the terminal' }
+  // Fire and forget: the wrapper is detached and unreferenced, so the window is its own
+  // process from the first moment and the buddy can quit under it.
+  open(o: HandoffOpen): HandoffResult {
     const hook = this.deps.command
-    const cmd: LaunchCommand = hook && hook.length > 0
+    const hasHook = Boolean(hook && hook.length > 0)
+    if (!hasHook) {
+      const exists = this.deps.exists ?? existsSync
+      if (!exists(this.deps.cliPath)) return { ok: false, reason: `no Claude Code at ${this.deps.cliPath}` }
+    }
+    const cmd: LaunchCommand = hasHook && hook
       ? { ok: true, file: hook[0] ?? '', args: hook.slice(1), verbatim: false }
-      : buildHandoffCommand(this.deps.cliPath, s.workspace, s.sessionId, s.fresh)
+      : buildHandoffCommand(this.deps.cliPath, o.workspace)
     if (!cmd.ok) return cmd
     const spawnFn = this.deps.spawn ?? nodeSpawn
     let child: ChildProcess
     try {
       child = spawnFn(cmd.file, cmd.args, {
-        cwd: s.workspace, env: childEnv(this.deps.env ?? process.env), stdio: 'ignore',
-        windowsHide: true, windowsVerbatimArguments: cmd.verbatim,
+        cwd: o.workspace, env: childEnv(this.deps.env ?? process.env), stdio: 'ignore',
+        windowsHide: true, windowsVerbatimArguments: cmd.verbatim, detached: true,
       })
     } catch (e) {
-      return { ok: false, reason: (e as Error).message }
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) }
     }
-    this.child = child
-    this.stopping = false
-    // One settle per start: a spawn error and a later close must not both report.
-    let settled = false
-    const settle = (error?: string): void => {
-      if (settled) return
-      settled = true
-      this.child = null
-      s.onExit(error)
-    }
-    child.on('error', (e: Error) => settle(e.message))
-    child.on('close', () => settle())
+    child.on('error', (e: Error) => o.onError(e.message))
+    child.unref()
     return { ok: true }
-  }
-
-  // Kills the wrapper's tree; the CLI is inside it. Idempotent, and a no-op once the
-  // wrapper has closed.
-  stop(): void {
-    const child = this.child
-    if (!child || this.stopping) return
-    this.stopping = true
-    ;(this.deps.kill ?? killTree)(child)
   }
 }

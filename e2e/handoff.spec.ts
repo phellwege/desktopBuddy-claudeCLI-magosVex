@@ -1,13 +1,14 @@
 import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { cleanEnv } from './env'
 import { loadPack } from '../src/main/pack'
 
-// The hand-off launcher is replaced by a node process that lives 1500 ms (BUDDY_HANDOFF_CMD),
-// so no console window opens and the stand-down and return are observable. The echo brain
-// runs, so the second test proves /cli is refused where there is no CLI to hand to.
+// The hand-off launcher is replaced by a short node process (BUDDY_HANDOFF_CMD), so no
+// console window opens and the launch itself is observable through a marker file it writes.
+// The echo brain runs, so the second test proves /cli is refused where there is no CLI to
+// hand to.
 const loadedPack = loadPack(join(__dirname, '../packs/mechanicus'))
 if (!loadedPack.ok) throw new Error(loadedPack.errors.join('\n'))
 const CLI_MISSING_LINES = loadedPack.pack.persona.lines.cliMissing
@@ -39,19 +40,17 @@ test.afterEach(async () => {
   if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
 })
 
-test('/cli stands the panel down until the terminal process exits', async () => {
-  const hologram = await launch({ BUDDY_HANDOFF_CMD: JSON.stringify([process.execPath, '-e', 'setTimeout(() => {}, 1500)']) })
+test('/cli launches the hook program in the workspace and the panel carries on', async () => {
+  const marker = join(tmpdir(), `buddy-e2e-cli-${process.pid}-${Date.now()}.txt`)
+  const hologram = await launch({ BUDDY_HANDOFF_CMD: JSON.stringify([process.execPath, '-e', 'require("fs").writeFileSync(process.argv[1], process.cwd())', marker]) })
   await hologram.locator('#input').fill('/cli')
   await hologram.locator('#input').press('Enter')
-  await expect(hologram.locator('.msg.system').last()).toHaveText('He is in the terminal. Close it to continue here.')
+  await expect(hologram.locator('.msg.system').last()).toHaveText('Opened Claude Code in a terminal.')
+  await expect.poll(() => existsSync(marker), { timeout: 10000 }).toBe(true)
+  expect(readFileSync(marker, 'utf8').toLowerCase()).toBe(resolve('C:\\repo').toLowerCase())
+  rmSync(marker, { force: true })
 
-  await hologram.locator('#input').fill('are you there')
-  await hologram.locator('#input').press('Enter')
-  await expect(hologram.locator('.msg.system').last()).toHaveText('He is in the terminal. Close it to continue here.')
-  await expect(hologram.locator('.msg.buddy')).toHaveCount(0)
-
-  await expect(hologram.locator('.msg.system').last()).toHaveText('Back from the terminal.', { timeout: 10000 })
-  await hologram.locator('#input').fill('now?')
+  await hologram.locator('#input').fill('still here?')
   await hologram.locator('#input').press('Enter')
   await expect(hologram.locator('.msg.buddy')).toHaveCount(1, { timeout: 15000 })
 })

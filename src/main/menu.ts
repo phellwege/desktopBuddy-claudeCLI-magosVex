@@ -11,7 +11,7 @@ export function buildTemplate(d: MenuDeps): Electron.MenuItemConstructorOptions[
     { label: 'Go center', click: () => void d.actions.goTo(0.5) },
     { label: 'Go right', click: () => void d.actions.goTo(1) },
     { type: 'separator' },
-    // The real CLI in a terminal on the panel's session; the panel explains any refusal.
+    // A fresh Claude Code in a terminal window in the workspace; the panel explains any refusal.
     { label: 'Open in Claude Code', click: d.openCli },
     { type: 'separator' },
     { label: asleep ? 'Wake' : 'Sleep', click: () => (asleep ? d.actions.wake() : d.actions.sleep()) },
