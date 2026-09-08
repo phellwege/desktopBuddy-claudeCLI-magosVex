@@ -29,6 +29,12 @@ export interface HandoffPort { readonly active: boolean; start(s: HandoffStart):
 export type { HandoffStart } from './handoff'
 const STAND_DOWN = 'He is in the terminal. Close it to continue here.'
 const NOT_NOW = 'Not while he is in the terminal.'
+// Images are already irreversibly taken out of main's store by the caller (src/main/ipc.ts,
+// d.images.take(...)) before prompt() ever sees them, so any refusal that swallows a prompt
+// with images must say so, or the operator loses the paste with no feedback.
+function droppedImagesSuffix(images: readonly ImageAttachment[]): string {
+  return images.length > 0 ? ` (${images.length} image(s) dropped; paste again.)` : ''
+}
 
 // Directory access for /cd and /ls, injectable so tests never touch the real disk.
 export interface WorkspaceFs {
@@ -76,7 +82,7 @@ export class ChatController implements ChatPort {
     if ('error' in parsed) { this.deps.out.system(parsed.error); return }
     // The real CLI holds this session in a terminal window (spec H-5): nothing is sent or
     // steered until it closes.
-    if (this.deps.handoff?.active) { this.deps.out.system(STAND_DOWN); return }
+    if (this.deps.handoff?.active) { this.deps.out.system(`${STAND_DOWN}${droppedImagesSuffix(images)}`); return }
     const content = buildUserContent(text.trim(), images)
     if (this.running) {
       // A message typed mid-rite goes into the running turn: the CLI hands it to the model at
@@ -85,8 +91,7 @@ export class ChatController implements ChatPort {
       // so nothing is posted. Only a brain that cannot take it (the echo brain, or a turn
       // that is already draining) gets the refusal.
       if (this.deps.brain.steer?.(content)) return
-      const dropped = images.length > 0 ? ` (${images.length} image(s) dropped; paste again.)` : ''
-      this.deps.out.system(`Still working. Use /stop to abort the current rite.${dropped}`)
+      this.deps.out.system(`Still working. Use /stop to abort the current rite.${droppedImagesSuffix(images)}`)
       return
     }
     void this.ask(content)

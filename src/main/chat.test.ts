@@ -473,6 +473,15 @@ describe('ChatController', () => {
     const stopped = pack.persona.lines.stopped ?? []
     expect(stopped.length ? stopped : ['stopped']).toContain(out.systems.at(-1))
   })
+  it('the stand-down mentions dropped images when a prompt carries them', () => {
+    const out = fakeOut(); const h = fakeHandoff(); const prompts: unknown[] = []
+    const brain: Brain = { async *respond(p) { prompts.push(p); yield { type: 'done' } }, stop() {} }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h })
+    c.prompt('/cli')
+    c.prompt('look', [shot])
+    expect(out.systems.at(-1)).toBe(`${STAND_DOWN} (1 image(s) dropped; paste again.)`)
+    expect(prompts).toEqual([])
+  })
   it('the return posts the back line and a status; an exit error posts the error line', () => {
     const out = fakeOut(); const h = fakeHandoff()
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h })
