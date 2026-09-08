@@ -86,17 +86,18 @@ test('exiting via a typed command shows the exit line, and Enter restarts to a c
   await hologram.keyboard.press('Enter')
   await expect(hologram.locator('#cli')).toContainText('[Claude Code exited, code 3]', { timeout: 15000 })
 
-  // Enter restarts the session. Finding 4: xterm fires onKey before onData for the same
-  // keydown, so an unswallowed restart Enter would also submit as input on the fresh
-  // session; that would show up here as stray text (an empty echo: line, at least) between
-  // the second READY> and the next thing actually typed.
+  // Enter restarts the session; a fresh ConPTY clears the screen, so the exit line gives
+  // way to a single new prompt rather than scrolling under it. Finding 4: xterm fires onKey
+  // before onData for the same keydown, so an unswallowed restart Enter would also submit
+  // as input on the fresh session - which would show up here as stray text between the new
+  // READY> and the next thing actually typed.
   await hologram.keyboard.press('Enter')
-  await expect.poll(async () => {
-    const text = (await hologram.locator('#cli').textContent()) ?? ''
-    return (text.match(/READY>/g) ?? []).length
-  }, { timeout: 15000 }).toBe(2)
-  const sinceRestart = ((await hologram.locator('#cli').textContent()) ?? '').split('READY>').at(-1) ?? ''
-  expect(sinceRestart.trim()).toBe('')
+  await expect(hologram.locator('#cli')).toContainText('READY>', { timeout: 15000 })
+  await expect(hologram.locator('#cli')).not.toContainText('exited')
+  // #cli's own textContent also carries xterm's injected stylesheet; read the rendered rows
+  // instead for a clean check that nothing followed the fresh prompt yet.
+  const rows = (await hologram.locator('#cli .xterm-rows').textContent()) ?? ''
+  expect(rows.split('READY>').at(-1)?.trim()).toBe('')
 
   await hologram.keyboard.type('again')
   await hologram.keyboard.press('Enter')
