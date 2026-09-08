@@ -64,6 +64,7 @@ Ctrl+Q in the panel quits. Drag him to another monitor; he hovers there and land
 | `/new`, `/clear` | fresh session; `/clear` also empties the panel |
 | `/cd [path]`, `/ls [path]` | change or inspect the workspace (new session on change) |
 | `/model [name]` | set or clear the model for the next session |
+| `/cli` | open the real Claude Code in a terminal on this session; the panel waits until it closes (also in his right-click menu) |
 | `/help` | this list |
 
 Typing while a rite runs hands the message to the running turn: he answers at his next

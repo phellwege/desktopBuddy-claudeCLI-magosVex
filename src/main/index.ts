@@ -23,6 +23,7 @@ import { childEnv, ClaudeCliBrain } from './brain/claude-cli'
 import { Readback } from './brain/readback'
 import type { Brain } from './brain/types'
 import { ChatController } from './chat'
+import { Handoff } from './handoff'
 import { startLocalServer, type PermissionRequest } from './server'
 import { createTray } from './tray'
 import { showContextMenu } from './menu'
@@ -211,6 +212,12 @@ async function main(): Promise<void> {
   const cliMissing = !existsSync(cliPath)
   const useEcho = process.env.BUDDY_BRAIN === 'echo' || cliMissing
 
+  // The terminal hand-off (/cli, and the menu item). Under the echo brain there is no CLI
+  // to hand to, so /cli posts the cliMissing line; the e2e suite substitutes a short-lived
+  // process through BUDDY_HANDOFF_CMD and never opens a console.
+  const handoffCmd = parseArgsPrefix(process.env.BUDDY_HANDOFF_CMD)
+  const handoff = handoffCmd.length > 0 ? new Handoff({ cliPath, command: handoffCmd }) : (!useEcho ? new Handoff({ cliPath }) : undefined)
+
   // BUDDY_READBACK=0 is a test override, like BUDDY_BRAIN=echo.
   const readbackEnabled = config.readback && process.env.BUDDY_READBACK !== '0' && !useEcho
   const readback = readbackEnabled ? new Readback({
@@ -283,7 +290,7 @@ async function main(): Promise<void> {
   // Quitting mid-turn must not orphan a running claude.exe: chatRef is still undefined only
   // during the brief startup window before the ChatController below is constructed, hence
   // the guard (by the time a real quit happens, it is always set).
-  app.on('before-quit', () => { chatRef?.stop(); readback?.stopAll(); void server.close() })
+  app.on('before-quit', () => { chatRef?.stop(); handoff?.stop(); readback?.stopAll(); void server.close() })
 
   const brain: Brain = useEcho ? new EchoBrain(pack, actions) : new ClaudeCliBrain({
     cliPath, argsPrefix, workspace: config.workspace, extraDirs: config.extraDirs, model: config.model,
@@ -303,7 +310,7 @@ async function main(): Promise<void> {
       // one about to start.
       if (s.sessionId === null) sessionAllows.clear()
     },
-    readback, log: (line) => appendLog(logDir, 'main', line),
+    readback, handoff, log: (line) => appendLog(logDir, 'main', line),
   })
   chatRef = chat
 
@@ -381,7 +388,7 @@ async function main(): Promise<void> {
     sendStage,
     chat, status: () => chat.status(),
     images,
-    showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay }, x, y),
+    showContextMenu: (x, y) => showContextMenu({ actions, buddy, overlay, openCli: () => { actions.openPanel(); chat.openCli() } }, x, y),
   })
 
   const tray = createTray({ packDir: pack.dir, name: pack.name, actions, buddy, overlay, hologram, placeHologram })
