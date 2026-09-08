@@ -321,6 +321,7 @@ async function main(): Promise<void> {
     stagePath: (p) => stageResult(loadImagePath(p.path, chat.status().workspace, nodeImageFs, electronCodec)),
     discard: (id) => store.discard(id),
     take: (ids) => store.take(ids),
+    clear: () => store.clear(),
   }
 
   // Runs `<cli> auth status` once, five seconds to answer, and never blocks startup on it:

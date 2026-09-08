@@ -374,6 +374,22 @@ describe('ChatController', () => {
     release()
     await new Promise(r => setTimeout(r, 5))
   })
+  it('the refusal line notes dropped images when the steer declines with images attached', async () => {
+    const out = fakeOut()
+    let release!: () => void
+    const brain: Brain = {
+      async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } },
+      stop() {},
+      steer() { return false },
+    }
+    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings() })
+    c.prompt('one')
+    await new Promise(r => setTimeout(r, 5))
+    c.prompt('two', [shot])
+    expect(out.systems.at(-1)).toBe('Still working. Use /stop to abort the current rite. (1 image(s) dropped; paste again.)')
+    release()
+    await new Promise(r => setTimeout(r, 5))
+  })
   it('resends the same content on the stale-resume retry', async () => {
     const out = fakeOut(); const prompts: unknown[] = []
     let calls = 0

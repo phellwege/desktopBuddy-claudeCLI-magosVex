@@ -14,6 +14,7 @@ export interface ImagePort {
   stagePath(p: StagePathPayload): StageResult
   discard(id: string): void
   take(ids: readonly string[]): ImageAttachment[]
+  clear(): void
 }
 export interface IpcDeps {
   buddy: Buddy; actions: Actions; overlay: BrowserWindow; hologram: BrowserWindow
@@ -80,6 +81,9 @@ export function wireIpc(d: IpcDeps): void {
   })
   ipcMain.on(CH.hologramHover, (_e, p: { over: boolean }) => setHologramInteractive(d.hologram, p.over))
   ipcMain.on(CH.hologramReady, () => {
+    // The renderer's chip list is always empty when this fires (a fresh load or a reload),
+    // so anything still staged in main from before is an orphan.
+    d.images.clear()
     send(d.hologram, CH.packLoaded, d.packPayload)
     send(d.hologram, CH.theme, d.theme)
     send(d.hologram, CH.chatStatus, d.status())

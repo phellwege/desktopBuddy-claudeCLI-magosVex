@@ -73,7 +73,8 @@ export class ChatController implements ChatPort {
       // so nothing is posted. Only a brain that cannot take it (the echo brain, or a turn
       // that is already draining) gets the refusal.
       if (this.deps.brain.steer?.(content)) return
-      this.deps.out.system('Still working. Use /stop to abort the current rite.')
+      const dropped = images.length > 0 ? ` (${images.length} image(s) dropped; paste again.)` : ''
+      this.deps.out.system(`Still working. Use /stop to abort the current rite.${dropped}`)
       return
     }
     void this.ask(content)

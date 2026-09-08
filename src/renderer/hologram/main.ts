@@ -6,7 +6,7 @@ import type { ChatDonePayload, ChatPermissionPayload, ChatReadbackPayload, ChatS
 import type { Atlas, Expression } from '../../shared/types'
 import { stageablePaths } from '../../shared/imagePaths'
 import type { StageResult } from '../../shared/ipc'
-import type { StagedImage } from '../../shared/images'
+import { MAX_RAW_BYTES, type StagedImage } from '../../shared/images'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), status = $<HTMLSpanElement>('status')
@@ -128,13 +128,20 @@ function accept(r: StageResult): void {
   renderChips()
 }
 // A File with a path (copied in Explorer, dropped) goes by path so main reads and names it;
-// one without (a snip on the clipboard, a synthetic File in tests) goes by bytes.
+// one without (a snip on the clipboard, a synthetic File in tests) goes by bytes. A thrown
+// handler here (a rejected invoke) must still resolve the paste instead of vanishing
+// silently after the paste event's preventDefault.
 async function stageFile(file: File): Promise<void> {
-  const path = window.buddy.pathForFile(file)
-  const r = path
-    ? await window.buddy.stageImagePath(path)
-    : await window.buddy.stageImageBytes(new Uint8Array(await file.arrayBuffer()), file.type || undefined, file.name || 'pasted.png')
-  accept(r)
+  try {
+    const path = window.buddy.pathForFile(file)
+    if (!path && file.size > MAX_RAW_BYTES) { accept({ error: 'too large' }); return }
+    const r = path
+      ? await window.buddy.stageImagePath(path)
+      : await window.buddy.stageImageBytes(new Uint8Array(await file.arrayBuffer()), file.type || undefined, file.name || 'pasted.png')
+    accept(r)
+  } catch (e) {
+    accept({ error: String(e) })
+  }
 }
 // The operator's bubble: thumbnails above the text, either part optional.
 function addUser(text: string, thumbs: string[]): void {
@@ -142,7 +149,13 @@ function addUser(text: string, thumbs: string[]): void {
   if (!text) el.querySelector('.text')?.remove()
   if (thumbs.length) {
     const row = document.createElement('div'); row.className = 'thumbs'
-    for (const t of thumbs) { const im = document.createElement('img'); im.src = t; row.appendChild(im) }
+    thumbs.forEach((t, i) => {
+      const thumb = document.createElement('div'); thumb.className = 'thumb'
+      const im = document.createElement('img'); im.src = t
+      const label = document.createElement('span'); label.className = 'label'; label.textContent = `#${i + 1}`
+      thumb.append(im, label)
+      row.appendChild(thumb)
+    })
     el.insertBefore(row, el.firstChild)
   }
   log.scrollTop = log.scrollHeight
@@ -365,7 +378,7 @@ input.addEventListener('paste', (e) => {
     for (const f of Array.from(dt.files)) void stageFile(f)
     return
   }
-  for (const p of stageablePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept)
+  for (const p of stageablePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept, (e) => accept({ error: String(e) }))
 })
 panel.addEventListener('dragover', (e) => e.preventDefault())
 panel.addEventListener('drop', (e) => {

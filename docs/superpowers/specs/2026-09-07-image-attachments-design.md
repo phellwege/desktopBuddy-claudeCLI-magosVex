@@ -207,7 +207,9 @@ is a small bordered tile in the accent colour, the label bottom-left in the titl
 Staging refusals (`not an image`, `not an image file`, `cannot decode`, `too large`,
 `no such file`, `too many images`) surface as local system lines. If the CLI rejects an
 image, the result line carries the error and the existing error path posts it; nothing
-new. A file deleted after staging is irrelevant: the bytes were captured at staging.
+new. A file deleted after staging is irrelevant: the bytes were captured at staging. When
+the brain declines a mid-rite steer with images attached, the refusal line names the count
+so the operator knows to paste again rather than assume they rode along silently.
 
 ## 11. Tests
 
