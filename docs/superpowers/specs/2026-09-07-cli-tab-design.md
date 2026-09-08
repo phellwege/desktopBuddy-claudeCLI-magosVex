@@ -91,7 +91,7 @@ because it works from the window's actual bounds.
 
 ## 7. Renderer (`src/renderer/hologram/`)
 
-- Title bar: two tab buttons, `Chat` and `CLI`, left of the name; the status text stays.
+- A tab row under the title line with two buttons, `Chat` and `CLI`; the title line keeps the name and status to itself.
   Ctrl+Tab switches. The active tab is renderer state; the panel reopens on the tab it was
   on (the window is hidden, not destroyed).
 - `#cli`: hidden unless active; holds the xterm `Terminal` (DOM renderer, font from the
