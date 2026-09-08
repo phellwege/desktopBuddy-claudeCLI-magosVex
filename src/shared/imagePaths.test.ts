@@ -27,6 +27,18 @@ describe('findImagePaths', () => {
   it('finds nothing in plain prose', () => {
     expect(findImagePaths('the png format is fine, C: drive is full')).toEqual([])
   })
+  it('finds a bare Windows path right after a colon with no space', () => {
+    expect(findImagePaths('see:C:\\a.png')).toEqual(['C:\\a.png'])
+  })
+  it('finds a bare Windows path in a colon-joined log line', () => {
+    expect(findImagePaths('error:C:\\Users\\x\\shot.png')).toEqual(['C:\\Users\\x\\shot.png'])
+  })
+  it('finds a bare Windows path immediately inside parentheses', () => {
+    expect(findImagePaths('(C:\\a.png)')).toEqual(['C:\\a.png'])
+  })
+  it('finds a bare Windows path at the very start of the text', () => {
+    expect(findImagePaths('C:\\a.png')).toEqual(['C:\\a.png'])
+  })
 })
 
 describe('fromFileUrl', () => {

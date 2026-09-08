@@ -3,15 +3,18 @@
 const EXT = String.raw`\.(?:png|jpe?g|gif|webp)`
 // In order: a quoted path (Explorer's Copy as path puts "C:\dir\a.png" on the clipboard,
 // quotes included), a file URL, a bare Windows drive or UNC path, a bare POSIX path. A
-// bare path runs to the next whitespace or quote. Both bare forms carry the same
-// lookbehind: without it on the Windows form, a lone letter right before ":/" inside a
-// URL reads as a drive letter, so the "s" in "https://x.y/z.png" would match as
-// "s://x.y/z.png"; without it on the POSIX form, that same URL's "/z.png" would match on
-// its own. The lookbehind rules out starting mid-word or right after ":", ".", "/", "\".
+// bare path runs to the next whitespace or quote. The Windows/UNC form carries a narrow
+// lookbehind: a drive letter is a single character, so without a guard a lone letter
+// right before ":/" inside a URL reads as a drive letter, and the "s" in
+// "https://x.y/z.png" would match as "s://x.y/z.png". Excluding only a letter or digit
+// right before the match blocks that (the preceding "p" in "http" is a letter) while
+// still matching a drive letter right after ":", ".", "/", "\", "(", a quote, or the
+// start of the text, e.g. "see:C:\a.png" or "(C:\a.png)". The POSIX form keeps its wider
+// lookbehind so that same URL's "/z.png" does not match on its own.
 const PATTERN = new RegExp(
   String.raw`"([^"\r\n]+?${EXT})"` +
   String.raw`|(file:///?[^\s"']+?${EXT})` +
-  String.raw`|(?<![\w:./\\])((?:[A-Za-z]:[\\/]|\\\\)[^\s"']+?${EXT})` +
+  String.raw`|(?<![A-Za-z0-9])((?:[A-Za-z]:[\\/]|\\\\)[^\s"']+?${EXT})` +
   String.raw`|(?<![\w:./\\])(/[^\s"']+?${EXT})`,
   'gi',
 )
