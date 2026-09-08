@@ -4,7 +4,7 @@ import { ProjectionCone } from './cone'
 import { HoloFace } from './face'
 import type { ChatDonePayload, ChatPermissionPayload, ChatReadbackPayload, ChatSystemPayload, PackLoadedPayload, ThemePayload } from '../../shared/ipc'
 import type { Atlas, Expression } from '../../shared/types'
-import { findImagePaths } from '../../shared/imagePaths'
+import { stageablePaths } from '../../shared/imagePaths'
 import type { StageResult } from '../../shared/ipc'
 import type { StagedImage } from '../../shared/images'
 
@@ -365,7 +365,7 @@ input.addEventListener('paste', (e) => {
     for (const f of Array.from(dt.files)) void stageFile(f)
     return
   }
-  for (const p of findImagePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept)
+  for (const p of stageablePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept)
 })
 panel.addEventListener('dragover', (e) => e.preventDefault())
 panel.addEventListener('drop', (e) => {

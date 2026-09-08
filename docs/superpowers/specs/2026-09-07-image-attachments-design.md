@@ -128,9 +128,18 @@ No config field: the caps are constants.
 `findImagePaths(text)` returns the unique image paths in order of appearance. Forms:
 quoted or bare Windows drive paths (`"C:\shots\a.png"` is what Explorer's Copy as path
 puts on the clipboard); UNC paths; POSIX absolute paths; `file://` URLs, decoded, with the
-drive form restored. A bare path ends at whitespace or a quote. The extension test is the
-same list as section 5, case insensitive. The renderer runs it on pasted text only, never
-on typed text.
+drive form restored. A bare path ends at whitespace, a quote, or one of a short list of
+punctuation marks. The extension test is the same list as section 5, case insensitive. The
+renderer runs it on pasted text only, never on typed text.
+
+`stageablePaths(text)` is what the renderer actually stages: `findImagePaths(text)` with
+every UNC path dropped, unless the whole paste, trimmed and with one pair of surrounding
+quotes stripped, is exactly that single path. A UNC path (`\\server\share\a.png`) found
+inside pasted prose would otherwise be read by main the instant it is pasted, making an
+outbound SMB connection to whatever host the pasted text names and offering the user's
+NTLM credential hash to it; a local drive path carries no such risk. Staging only a
+deliberate paste of just the UNC path keeps the detector complete (`findImagePaths` still
+finds every UNC path) while closing the drive-by read.
 
 ## 7. IPC and preload (`src/shared/ipc.ts`, `src/preload/index.ts`, `src/main/ipc.ts`)
 

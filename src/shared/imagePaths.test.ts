@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findImagePaths, fromFileUrl } from './imagePaths'
+import { findImagePaths, fromFileUrl, stageablePaths } from './imagePaths'
 
 describe('findImagePaths', () => {
   it('finds a quoted Windows path with spaces, as Explorer copies it', () => {
@@ -39,6 +39,12 @@ describe('findImagePaths', () => {
   it('finds a bare Windows path at the very start of the text', () => {
     expect(findImagePaths('C:\\a.png')).toEqual(['C:\\a.png'])
   })
+  it('stops a bare Windows path at a non-extension suffix', () => {
+    expect(findImagePaths('C:\\a.png.bak')).toEqual([])
+  })
+  it('rejects a quoted web url', () => {
+    expect(findImagePaths('"https://x/y.png"')).toEqual([])
+  })
 })
 
 describe('fromFileUrl', () => {
@@ -46,5 +52,26 @@ describe('fromFileUrl', () => {
     expect(fromFileUrl('file:///C:/a/b.png')).toBe('C:/a/b.png')
     expect(fromFileUrl('file:///a/b.png')).toBe('/a/b.png')
     expect(fromFileUrl('file://localhost/a/b.png')).toBe('/localhost/a/b.png')
+  })
+  it('keeps the raw form on a malformed percent escape', () => {
+    expect(fromFileUrl('file:///C:/dir/bad%2.png')).toBe('C:/dir/bad%2.png')
+  })
+})
+
+describe('stageablePaths', () => {
+  it('stages a bare UNC path that is the whole paste', () => {
+    expect(stageablePaths('\\\\nas\\share\\c.webp')).toEqual(['\\\\nas\\share\\c.webp'])
+  })
+  it('stages a quoted UNC path that is the whole paste', () => {
+    expect(stageablePaths('"\\\\nas\\share\\c.webp"')).toEqual(['\\\\nas\\share\\c.webp'])
+  })
+  it('drops a UNC path that appears inside other text', () => {
+    expect(stageablePaths('see \\\\nas\\share\\c.webp now')).toEqual([])
+  })
+  it('keeps a local path but drops a UNC path in the same paste', () => {
+    expect(stageablePaths('C:\\a.png and \\\\nas\\b.png')).toEqual(['C:\\a.png'])
+  })
+  it('still stages a plain local path in prose', () => {
+    expect(stageablePaths('see C:\\a.png please')).toEqual(['C:\\a.png'])
   })
 })
