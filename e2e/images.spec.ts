@@ -19,7 +19,7 @@ async function windowByUrl(app: ElectronApplication, part: string): Promise<Page
 }
 
 let app: ElectronApplication | undefined
-let userDataDir: string
+let userDataDir: string | undefined
 
 async function launch(): Promise<Page> {
   userDataDir = mkdtempSync(join(tmpdir(), 'buddy-e2e-images-'))
@@ -42,7 +42,7 @@ async function launch(): Promise<Page> {
 
 test.afterEach(async () => {
   if (app) { const toClose = app; app = undefined; await toClose.close() }
-  rmSync(userDataDir, { recursive: true, force: true })
+  if (userDataDir) { rmSync(userDataDir, { recursive: true, force: true }); userDataDir = undefined }
 })
 
 // A synthetic paste: a ClipboardEvent whose DataTransfer holds a File built from the
