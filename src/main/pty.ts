@@ -40,13 +40,14 @@ export class PtySession {
     try {
       p = this.deps.factory(s.file, s.args, { name: 'xterm-256color', cols: s.cols, rows: s.rows, cwd: s.cwd, env: ptyEnv(s.env) })
     } catch (e) {
-      return { ok: false, reason: (e as Error).message }
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) }
     }
     this.pty = p
     p.onData((d) => this.dataCb(d))
     p.onExit(({ exitCode }) => {
-      if (this.pty === p) this.pty = null
-      this.exitCb(exitCode)
+      // A stale or duplicate exit from a pty that is no longer the current one (a real
+      // ConPTY quirk on Windows) must not report a since-restarted session as dead.
+      if (this.pty === p) { this.pty = null; this.exitCb(exitCode) }
     })
     return { ok: true }
   }

@@ -79,4 +79,18 @@ describe('PtySession', () => {
     s.kill()
     expect(killed).toEqual([777])
   })
+  it('a stale or duplicate exit from a replaced pty does not notify the current session', () => {
+    const f = fakeFactory(); const exits: number[] = []
+    const s = new PtySession({ factory: f.factory })
+    s.onExit(c => exits.push(c))
+    start(s)
+    f.ptys[0]?.exit(1)
+    start(s)
+    f.ptys[0]?.exit(1)
+    expect(exits).toEqual([1])
+    expect(s.running).toBe(true)
+    s.write('ls\r')
+    expect(f.ptys[1]?.writes).toEqual(['ls\r'])
+    expect(f.ptys[0]?.writes).toEqual([])
+  })
 })
