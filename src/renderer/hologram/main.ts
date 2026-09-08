@@ -4,11 +4,17 @@ import { ProjectionCone } from './cone'
 import { HoloFace } from './face'
 import type { ChatDonePayload, ChatPermissionPayload, ChatReadbackPayload, ChatSystemPayload, PackLoadedPayload, ThemePayload } from '../../shared/ipc'
 import type { Atlas, Expression } from '../../shared/types'
+import { findImagePaths } from '../../shared/imagePaths'
+import type { StageResult } from '../../shared/ipc'
+import type { StagedImage } from '../../shared/images'
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const log = $<HTMLDivElement>('log'), input = $<HTMLTextAreaElement>('input'), status = $<HTMLSpanElement>('status')
 const perm = $<HTMLDivElement>('permission'), permLine = $<HTMLDivElement>('perm-line'), permDetail = $<HTMLDivElement>('perm-detail')
 const panel = $<HTMLDivElement>('panel'), coneCanvas = $<HTMLCanvasElement>('cone')
+const strip = $<HTMLDivElement>('attachments')
+// Chips waiting under the log, in send order. Main holds the bytes; this is ids and thumbs.
+let staged: StagedImage[] = []
 const cone = new ProjectionCone(coneCanvas)
 const LINE_PX = parseFloat(getComputedStyle(input).lineHeight) || 18
 function growInput(): void { input.style.height = 'auto'; input.style.height = `${grownHeight(input.scrollHeight, LINE_PX)}px` }
@@ -96,6 +102,50 @@ function add(cls: string, html: string): HTMLDivElement {
   const text = document.createElement('div'); text.className = 'text'; text.innerHTML = html
   el.appendChild(text)
   log.appendChild(el); log.scrollTop = log.scrollHeight; return el
+}
+function renderChips(): void {
+  strip.replaceChildren()
+  staged.forEach((s, i) => {
+    const chip = document.createElement('div'); chip.className = 'chip'; chip.title = s.name
+    const im = document.createElement('img'); im.src = s.thumb; im.alt = s.name
+    const label = document.createElement('span'); label.className = 'label'; label.textContent = `#${i + 1}`
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'remove'; remove.textContent = '×'; remove.title = 'remove'
+    remove.addEventListener('click', () => {
+      staged = staged.filter(x => x.id !== s.id)
+      window.buddy.discardImage(s.id)
+      renderChips(); input.focus()
+    })
+    chip.append(im, label, remove)
+    strip.appendChild(chip)
+  })
+  strip.hidden = staged.length === 0
+  log.scrollTop = log.scrollHeight
+}
+// A refusal is a local system line; it never blocks the text (spec 10).
+function accept(r: StageResult): void {
+  if ('error' in r) { current = null; add('system', renderMarkdown(`image: ${r.error}`)); return }
+  staged.push(r)
+  renderChips()
+}
+// A File with a path (copied in Explorer, dropped) goes by path so main reads and names it;
+// one without (a snip on the clipboard, a synthetic File in tests) goes by bytes.
+async function stageFile(file: File): Promise<void> {
+  const path = window.buddy.pathForFile(file)
+  const r = path
+    ? await window.buddy.stageImagePath(path)
+    : await window.buddy.stageImageBytes(new Uint8Array(await file.arrayBuffer()), file.type || undefined, file.name || 'pasted.png')
+  accept(r)
+}
+// The operator's bubble: thumbnails above the text, either part optional.
+function addUser(text: string, thumbs: string[]): void {
+  const el = add('user', text ? renderMarkdown(text) : '')
+  if (!text) el.querySelector('.text')?.remove()
+  if (thumbs.length) {
+    const row = document.createElement('div'); row.className = 'thumbs'
+    for (const t of thumbs) { const im = document.createElement('img'); im.src = t; row.appendChild(im) }
+    el.insertBefore(row, el.firstChild)
+  }
+  log.scrollTop = log.scrollHeight
 }
 // A reply bubble, started in the waiting state (dots, hidden .plain) when main told us
 // (chat:status) that this reply will be followed by a readback.
@@ -251,6 +301,8 @@ window.buddy.onChatClear(() => {
   awaitingReadback.clear()
   activities.clear()
   pendingFaces.length = 0
+  staged = []
+  renderChips()
   // Dismiss any pending permission card without answering it: the server's own timeout will
   // deny the request on the wire in due course, same as if the user had just ignored it.
   if (pending) { pending = null; perm.hidden = true }
@@ -270,15 +322,55 @@ $('perm-deny').addEventListener('click', () => answer(false))
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); if (pending) answer(false); else window.buddy.closePanel(); return }
   if (e.key === 'ArrowUp' && input.value === '') { input.value = lastInput; growInput(); return }
+  if (e.key === 'Backspace' && input.value === '' && staged.length) {
+    e.preventDefault()
+    const last = staged.pop()
+    if (last) window.buddy.discardImage(last.id)
+    renderChips()
+    return
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     const text = input.value.trim()
-    if (!text) return
-    lastInput = text; input.value = ''; growInput()
-    if (!text.startsWith('/')) add('user', renderMarkdown(text))
+    if (!text && staged.length === 0) return
+    if (text.startsWith('/')) {
+      // A command never consumes the chips.
+      lastInput = text; input.value = ''; growInput()
+      current = null
+      window.buddy.prompt(text)
+      return
+    }
+    if (text) lastInput = text
+    input.value = ''; growInput()
+    addUser(text, staged.map(s => s.thumb))
     current = null
-    window.buddy.prompt(text)
+    window.buddy.prompt(text, staged.map(s => s.id))
+    staged = []
+    renderChips()
   }
+})
+// Paste, in order of preference: bitmap items (a snip), files (copied in Explorer), then
+// image paths inside pasted text, which the browser still inserts into the box.
+input.addEventListener('paste', (e) => {
+  const dt = e.clipboardData
+  if (!dt) return
+  const imageItems = Array.from(dt.items).filter(i => i.kind === 'file' && i.type.startsWith('image/'))
+  if (imageItems.length) {
+    e.preventDefault()
+    for (const item of imageItems) { const f = item.getAsFile(); if (f) void stageFile(f) }
+    return
+  }
+  if (dt.files.length) {
+    e.preventDefault()
+    for (const f of Array.from(dt.files)) void stageFile(f)
+    return
+  }
+  for (const p of findImagePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept)
+})
+panel.addEventListener('dragover', (e) => e.preventDefault())
+panel.addEventListener('drop', (e) => {
+  e.preventDefault()
+  for (const f of Array.from(e.dataTransfer?.files ?? [])) void stageFile(f)
 })
 input.addEventListener('input', growInput)
 window.addEventListener('focus', () => input.focus())
