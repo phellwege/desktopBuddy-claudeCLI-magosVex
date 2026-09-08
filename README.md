@@ -79,8 +79,9 @@ removes one. For small text snip the region rather than the whole screen.
 Tabs: the panel's `CLI` tab is the real, interactive Claude Code running in an embedded
 terminal in the workspace, on its own session; the panel widens while it is showing.
 Alt+V pastes an image there, Ctrl+Tab switches tabs, and Enter on an exited terminal
-restarts it. `/cli` is different: it opens the real CLI in a terminal window on the
-panel's own session, and the panel waits until that window closes.
+restarts it. Selecting text copies it to the clipboard once the selection ends, as
+Windows Terminal does. `/cli` is different: it opens the real CLI in a terminal window on
+the panel's own session, and the panel waits until that window closes.
 
 Dictation: Windows voice typing (Win+H) or your Mac's dictation key types straight into
 the panel's text box. Nothing in the app listens to the microphone.

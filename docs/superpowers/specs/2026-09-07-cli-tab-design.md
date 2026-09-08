@@ -96,15 +96,23 @@ because it works from the window's actual bounds.
   started, fit, `ptyResize`, focus. A resize observer on `#panel` refits and retargets
   the cone (`sizeCone`), which today only listens to window resizes.
 - Wiring: `onPtyData` writes to the terminal; `terminal.onData` sends `ptyInput`;
-  `terminal.onResize` sends `ptyResize`; `onSelectionChange` with a non-empty selection
-  sends `writeClipboard`.
+  `terminal.onResize` sends `ptyResize`; a `mouseup` on `#cli` with a non-empty selection
+  sends `writeClipboard` once the selection has ended, rather than on every change during
+  the drag.
 - Keys in the tab go to the CLI, Escape included, so the panel closes by clicking him or
   from the chat tab; Ctrl+Q still quits at the window level. Text paste is xterm's own
   Ctrl+V and Shift+Insert. Alt+V reaches the CLI as ESC v for its image paste.
 - Exit: the terminal shows `[Claude Code exited, code N]  Enter to restart`; Enter or a
-  click on that line restarts. A start refusal shows its reason the same way.
+  click on that line restarts. The custom key handler swallows that Enter keystroke
+  entirely (it never reaches the fresh session as input), since xterm fires its key event
+  before the data event for the same keydown and the CR would otherwise land on the new
+  CLI as an empty submit or an accept on its folder trust dialog. A start refusal shows
+  its reason the same way.
 - No CLI installed, or the echo brain: the tab shows the pack's `cliMissing` line and no
   terminal.
+- A permission card arriving while the CLI tab is active switches the panel to the chat
+  tab first, since `#permission` is hidden along with the rest of the chat tab's children
+  while the CLI tab shows.
 - `#panel.cli` sets 700 by 480; `setMode` is sent on every switch.
 
 ## 8. Tests

@@ -197,17 +197,28 @@ function ensureTerminal(): Terminal {
   t.open(cliEl)
   t.onData((d) => window.buddy.ptyInput(d))
   t.onResize(({ cols, rows }) => window.buddy.ptyResize(cols, rows))
-  // Copy on select, as Windows Terminal does; paste is xterm's own Ctrl+V and Shift+Insert.
-  t.onSelectionChange(() => { const s = t.getSelection(); if (s) window.buddy.writeClipboard(s) })
-  // Enter on a dead terminal restarts it (spec T-7).
-  t.onKey(({ key }) => { if (ptyExited && key === '\r') void startPty() })
+  // Copy when a selection ends, as Windows Terminal does; paste is xterm's own Ctrl+V and
+  // Shift+Insert. A mouseup rather than onSelectionChange, which fires on every change during
+  // a drag and would otherwise overwrite a snip the operator just took with each intermediate,
+  // partial selection.
+  cliEl.addEventListener('mouseup', () => { const s = t.getSelection(); if (s) window.buddy.writeClipboard(s) })
   // Ctrl+Tab leaves for the chat tab; every other key is the CLI's, Escape included. Returning
   // false only stops xterm from treating the key as terminal input, it does not stop the native
   // event from bubbling to document's own Ctrl+Tab listener - so on keydown we stop it ourselves
   // (preventDefault + stopPropagation) before switching, or that listener would see its guard
   // (activeTab === 'chat', set synchronously by switchTab above) satisfied on the same event and
   // immediately switch back to the CLI tab.
+  //
+  // Enter on a dead terminal restarts it (spec T-7), handled here rather than through onKey:
+  // xterm fires onKey before onData for the same keydown, so an onKey restart would still let
+  // the '\r' reach the fresh session as onData's own emission (an empty submit, or an accept on
+  // the CLI's folder trust dialog). Returning false for every event type of that key while
+  // exited swallows it completely; startPty runs once, on keydown only.
   t.attachCustomKeyEventHandler((e) => {
+    if (e.key === 'Enter' && ptyExited) {
+      if (e.type === 'keydown') void startPty()
+      return false
+    }
     if (e.ctrlKey && e.key === 'Tab') {
       if (e.type === 'keydown') { e.preventDefault(); e.stopPropagation(); switchTab('chat') }
       return false
@@ -424,6 +435,9 @@ window.buddy.onChatPermission((p) => {
   // the card if it is still showing that same (now stale) request. Ignore it otherwise - the
   // user may already have answered and a new, unrelated request could be showing by now.
   if (p.dismiss) { if (pending?.id === p.id) { pending = null; perm.hidden = true }; return }
+  // #permission is one of the chat tab's own children, hidden by #panel.cli's CSS while the
+  // CLI tab is showing; a card that arrived there would be invisible and silently time out.
+  if (activeTab === 'cli') switchTab('chat')
   pending = p; permLine.textContent = p.line ?? ''; permDetail.textContent = `${p.toolName ?? ''}: ${p.summary ?? ''}`; perm.hidden = false
 })
 const answer = (allow: boolean, remember = false) => { if (!pending) return; window.buddy.permissionAnswer(pending.id, allow, remember); pending = null; perm.hidden = true }
@@ -479,8 +493,15 @@ input.addEventListener('paste', (e) => {
   }
   for (const p of stageablePaths(dt.getData('text/plain'))) void window.buddy.stageImagePath(p).then(accept, (e) => accept({ error: String(e) }))
 })
-panel.addEventListener('dragover', (e) => e.preventDefault())
+// Staging a drop as an invisible chat chip only makes sense on the chat tab; on the CLI
+// tab leave the default browser behaviour alone rather than swallowing a drop onto the
+// terminal.
+panel.addEventListener('dragover', (e) => {
+  if (activeTab === 'cli') return
+  e.preventDefault()
+})
 panel.addEventListener('drop', (e) => {
+  if (activeTab === 'cli') return
   e.preventDefault()
   for (const f of Array.from(e.dataTransfer?.files ?? [])) void stageFile(f)
 })
