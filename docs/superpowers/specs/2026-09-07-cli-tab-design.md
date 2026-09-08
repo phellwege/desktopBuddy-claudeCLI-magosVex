@@ -8,8 +8,9 @@ while the tab is active, build order attachments, then `/cli`, then this tab).
 The panel re-implements the CLI piece by piece and will always trail it. Peter's direction
 (2026-09-07): put the real, interactive Claude Code in the panel as a second tab, so every
 feature the CLI ships is available without a buddy change. The tab is strictly the CLI: no
-buddy tools, no readback, no faces. The hand-off spec (`/cli`) covers the real CLI on the
-panel's own session in a terminal window; this tab runs its own conversation.
+buddy tools, no readback, no faces. The hand-off spec (`/cli`) covers opening a fresh CLI
+in its own terminal window, independent of the panel; this tab runs its own conversation
+too, embedded in the panel instead.
 
 ## 2. Measured behaviour
 

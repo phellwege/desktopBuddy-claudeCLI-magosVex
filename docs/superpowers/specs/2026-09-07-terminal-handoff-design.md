@@ -1,17 +1,18 @@
 # Terminal hand-off design (`/cli`)
 
 Date: 2026-09-07. Status: approved by Peter (plain Claude Code in the terminal, no buddy
-tools; `/cli` plus a right-click menu item).
+tools; `/cli` plus a right-click menu item). Revised 2026-09-08 (Peter): a fresh,
+independent instance; no session sharing, no stand-down.
 
 ## 1. Problem
 
 The panel is a thin client over the CLI's print mode, so every CLI feature it does not
 re-implement is out of reach: image paste, plan mode, `@` mentions, the CLI's own
 permission prompts, and whatever ships next. Peter's direction (2026-09-07) is to ride
-the CLI's features instead of rebuilding them. The cheapest form is a hand-off: open the
-real CLI in a terminal window on the panel's own session, and pick the conversation back
-up when the window closes. The embedded CLI tab is the sibling sub-project with its own
-spec; the image attachments spec is the other.
+the CLI's features instead of rebuilding them. The cheapest form is a hand-off: open a
+brand-new, independent Claude Code in a terminal window in the workspace, leaving the
+panel free to keep working the whole time. The embedded CLI tab is the sibling
+sub-project with its own spec; the image attachments spec is the other.
 
 ## 2. Measured behaviour
 
@@ -36,58 +37,57 @@ Against claude.exe 2.1.261 and Electron 44.1.1 on Windows 11, 2026-09-07:
 
 ## 3. Decision
 
-`/cli`, and the menu item, run the CLI in a new console window through `start /wait` on
-the panel's session, and the panel stands down until the window closes.
+`/cli`, and the menu item, open a brand-new, independent Claude Code in a new console
+window in the workspace. The panel carries on the whole time: nothing here waits for the
+window, tracks it, or stands the panel down while it is open, and quitting the buddy
+leaves the window running.
 
 Rejected:
 
-- `wt.exe` as the launcher: it returns at once, so the CLI's exit is not observable.
-- The CLI as a direct child: measurement 2.
+- Sharing the panel's own session with the terminal, which the first version of this
+  design did (closing the window handed control back to the panel, and the panel stood
+  down while it was open). Peter's call (2026-09-08) is a fresh instance instead: a
+  terminal is normally its own thing, and the panel should never have to wait on it.
+- The CLI as a direct child of the main process: measurement 2 above still holds, so the
+  launch still goes through `cmd /c start`.
 - Passing the buddy MCP config so he could move and pull faces from the terminal:
   Peter's call is plain Claude Code, and the local server admits one client at a time
   today, so it would also have needed the multi-client change the tab may bring.
 
 ## 4. Launcher (`src/main/handoff.ts`)
 
-`buildHandoffCommand({ cliPath, workspace, sessionId, fresh })` returns the spawn
-triple: file `cmd.exe`, args
-`['/c', 'start "Claude Code" /wait /d "<workspace>" "<cliPath>" <flag> <id>']`, options
-`{ windowsVerbatimArguments: true, windowsHide: true, stdio: 'ignore', cwd: workspace, env }`,
-where `flag` is `--resume` for an existing id and `--session-id` for a minted one, and
-`env` is `childEnv` from `brain/claude-cli.ts` (no `CLAUDECODE`, no `ANTHROPIC_API_KEY`).
-The quotes carry paths with spaces; a path containing a double quote is refused with a
-reason rather than passed through. Nothing else goes on the command line: no MCP config,
-no tool or permission flags, no model.
+`buildHandoffCommand(cliPath, workspace)` returns the spawn triple: file `cmd.exe`, args
+`['/c', 'start "Claude Code" /d "<workspace>" "<cliPath>"']`, verbatim true. The quotes
+carry paths with spaces; a path containing a double quote is refused with a reason
+rather than passed through. Nothing else goes on the command line: no session id, no MCP
+config, no tool or permission flags, no model.
 
-`Handoff` holds the state: `start(d)` returns `{ ok: true }` or `{ ok: false, reason }`,
-`active`, `stop()` kills the wrapper's process tree (the CLI is inside it), and `onExit`
-fires once when the wrapper closes, which is the CLI's exit by measurement 3. A spawn
-error fires `onExit` with the error's message. `spawn` is injectable, as in the brain. A
-test hook `BUDDY_HANDOFF_CMD`, a JSON argv like `BUDDY_CLI_ARGS`, replaces the whole
-launcher so the e2e suite never opens a console.
+`Handoff.open(o)` spawns that command (or the `BUDDY_HANDOFF_CMD` test hook's argv in
+place of it, not verbatim) with `{ cwd: o.workspace, env: childEnv(...), stdio: 'ignore',
+windowsHide: true, windowsVerbatimArguments, detached: true }`, then calls `child.unref()`
+at once and returns `{ ok: true }` or `{ ok: false, reason }`. A spawn error calls
+`o.onError` with the error's message; nothing else is tracked, and every call to `open`
+spawns a fresh window, never refusing on account of an earlier one. Measured on this
+machine: a console `start` opens outlives the app whether or not the wrapper handed to
+`spawn` is itself detached, so `detached: true` plus `unref()` is belt and braces rather
+than load-bearing, and there is nothing left here to stop at quit.
 
 ## 5. Chat controller (`src/main/chat.ts`, `commands.ts`)
 
-`parseCommand` gains `cli`, no arguments. `run('cli')`:
+`parseCommand` gains `cli`, no arguments. `run('cli')` calls `ChatController.openCli()`,
+which works at any time: mid-turn, right after another `/cli`, regardless of the session
+id. There is no hand-off state left for it to be gated on.
 
 - With no handoff dep (no CLI installed, or the echo brain): the pack's `cliMissing` line.
-- While a turn is running: `Finish or /stop the current rite first.` Two CLI processes on
-  one transcript is the case this whole design avoids.
-- Otherwise: with no session id yet, mint one, store it through `settingsChanged` (which
-  persists it to state.json), and launch with `--session-id`; else launch with
-  `--resume`. Post `He is in the terminal. Close it to continue here.`
+- Otherwise: `handoff.open({ workspace, onError })`. A refusal to build the launch
+  command, or a spawn error reported through `onError`, posts the pack's `error` line
+  plus the reason, with the `sadness` face. Otherwise: `Opened Claude Code in a
+  terminal.`
 
-While the hand-off is active: a prompt gets the same stand-down line back and is neither
-sent nor steered; `/new`, `/cd` and `/clear` get `Not while he is in the terminal.`, since
-they would fork the session out from under the window; `/stop` ends the hand-off
-(`Handoff.stop`) and posts the pack's stopped line; a second `/cli` gets
-`Already in the terminal.`; body commands run as usual. On exit: `Back from the terminal.`
-and a status refresh. The next panel turn resumes the same id, so the terminal's turns are
-in his memory. Nothing from the terminal is replayed into the panel, and terminal turns get
-no readback and no face. The session allow-list is untouched.
-
-`ChatController.openCli()` exposes the same path for the menu; it opens the panel first
-so the lines are seen.
+Nothing here touches settings, the session id, or a running turn: `/stop`, `/new`, `/cd`
+and `/clear` behave exactly as they did before this design existed, since there is no
+shared session left for `/cli` to protect them from. `ChatController.openCli()` exposes
+the same path for the menu.
 
 ## 6. Menu (`src/main/index.ts`)
 
@@ -96,40 +96,34 @@ the refusals above explain themselves in the panel.
 
 ## 7. Edge cases, documented rather than handled
 
-- Closing the window mid-turn kills the CLI; the transcript keeps what was flushed and the
-  panel resumes it.
-- `/clear` or a new session started inside the terminal leaves the panel's id pointing at
-  the old conversation.
-- `/cd` inside the terminal does not move the panel's workspace.
-- A minted id whose window is closed before any turn has no transcript on disk. The next
-  `/cli` checks for that transcript (`state.ts`'s `sessionTranscriptExists`, injected as
-  `ChatController`'s `transcriptExists`) and, finding none, launches the same id fresh
-  (`--session-id`) instead of resuming it; the id is kept, not re-minted, and settings are
-  untouched. Without an injected checker the default treats every id as having a
-  transcript, so nothing changes for a caller that never wires one in.
+- `/cd` inside the terminal does not move the panel's workspace: the two are independent
+  conversations from the moment the window opens.
 
 ## 8. Tests
 
 - `handoff.test.ts`: the command line for a plain path and a path with spaces; the quote
-  refusal; `--resume` against `--session-id`; re-entry refusal; `onExit` from a fake child's
-  close and from a spawn error; `stop` kills the fake's tree.
+  refusal; the spawn call is detached, hidden, verbatim, stdio ignored, in the workspace,
+  with the scrubbed env, and unrefs its child; a hook command replaces the launcher and is
+  not verbatim; every `open` spawns a new window; a spawn error reaches `onError`; a
+  refusal to build the command spawns nothing.
 - `commands.test.ts`: `/cli` parses; `/cli anything` is an error.
-- `chat.test.ts`: no handoff dep posts the cliMissing line; busy refusal; a null id is
-  minted, persisted and passed as `--session-id`; an existing id is passed as `--resume`;
-  the stand-down refusals for a prompt, `/new`, `/cd`, `/clear`; `/stop` ends it; the
-  return line and status after exit; a second `/cli` is refused.
-- `e2e/handoff.spec.ts`: with `BUDDY_HANDOFF_CMD` pointing at a node one-liner that lives
-  800 ms, `/cli` posts the stand-down line, a prompt typed meanwhile gets it back, and the
-  return line follows.
-- Manual: `/cli` on this machine opens Windows Terminal with the CLI resumed on the panel's
-  session; a turn typed there is known to the panel afterwards.
+- `chat.test.ts`: no handoff dep posts the cliMissing line; a plain `/cli` opens in the
+  workspace, confirms, and changes nothing else; `/cli` works during a running turn and
+  every time it is called; a refusal and a spawn error both post the error line with the
+  reason and the `sadness` face; `openCli` is the same path the menu uses.
+- `e2e/handoff.spec.ts`: with `BUDDY_HANDOFF_CMD` pointing at a node one-liner that writes
+  a marker file holding its cwd, `/cli` posts the confirmation line, the marker proves the
+  workspace, and the panel answers a prompt sent right after.
+- Manual: `/cli` twice on this machine opens two Windows Terminal windows, each a fresh
+  Claude Code in the workspace; quitting the buddy leaves both running.
 
 ## 9. README
 
-The panel commands table gains `/cli`: open the real Claude Code in a terminal on this
-session; the panel waits until it closes. The menu item is mentioned beside it.
+The panel commands table gains `/cli`: open a fresh Claude Code in a terminal in the
+workspace, independent of the panel. The menu item is mentioned beside it.
 
 ## 10. Out of scope
 
-macOS (`open -a Terminal` and its own quoting), replaying terminal turns into the panel,
-the model override, buddy tools in the terminal, and `/cli` during a running turn.
+Sharing the panel's own session with the terminal (the first version's design); tracking
+or closing the windows `/cli` opens; macOS (`open -a Terminal` and its own quoting); the
+model override; and buddy tools in the terminal.

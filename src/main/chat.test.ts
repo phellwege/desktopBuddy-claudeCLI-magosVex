@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { join } from 'node:path'
-import { ChatController, type ChatOut, type HandoffPort, type HandoffStart } from './chat'
+import { ChatController, type ChatOut, type HandoffOpen, type HandoffPort } from './chat'
 import { loadPack } from './pack'
 import { HELP_TEXT } from './commands'
 import type { Brain, BrainEvent } from './brain/types'
@@ -409,14 +409,9 @@ describe('ChatController', () => {
     expect(c.status().session).toBe('fresh')
   })
   function fakeHandoff() {
-    const h = { active: false, starts: [] as HandoffStart[], stopped: 0,
-      start(s: HandoffStart) { h.starts.push(s); h.active = true; return { ok: true as const } },
-      stop() { h.stopped++ },
-      exit(error?: string) { h.active = false; h.starts.at(-1)?.onExit(error) } }
+    const h = { opens: [] as HandoffOpen[], open(o: HandoffOpen) { h.opens.push(o); return { ok: true as const } } }
     return h as typeof h & HandoffPort
   }
-  const STAND_DOWN = 'He is in the terminal. Close it to continue here.'
-
   it('/cli without a handoff posts the cliMissing line', () => {
     const out = fakeOut()
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings() })
@@ -424,115 +419,41 @@ describe('ChatController', () => {
     const missing = pack.persona.lines.cliMissing ?? []
     expect(missing.length ? missing : ['No Claude Code is installed here.']).toContain(out.systems.at(-1))
   })
-  it('/cli mints and persists a session id when there is none, and starts fresh', () => {
-    const out = fakeOut(); const h = fakeHandoff(); const changes: unknown[] = []
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), handoff: h, uuid: () => 'u1', onSettingsChange: s => changes.push({ ...s }) })
-    c.prompt('/cli')
-    expect(h.starts[0]).toMatchObject({ sessionId: 'u1', fresh: true, workspace: 'C:\\repo' })
-    expect(changes.at(-1)).toMatchObject({ sessionId: 'u1' })
-    expect(c.status().session).toBe('u1')
-    expect(out.systems.at(-1)).toBe(STAND_DOWN)
-  })
-  it('/cli resumes an existing session without touching settings', () => {
+  it('/cli opens a fresh CLI in the workspace, confirms, and changes nothing else', () => {
     const out = fakeOut(); const h = fakeHandoff(); const changes: unknown[] = []
     const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h, onSettingsChange: s => changes.push(s) })
     c.prompt('/cli')
-    expect(h.starts[0]).toMatchObject({ sessionId: 'old', fresh: false })
+    expect(h.opens[0]).toMatchObject({ workspace: 'C:\\repo' })
+    expect(out.systems.at(-1)).toBe('Opened Claude Code in a terminal.')
     expect(changes).toEqual([])
+    expect(c.status().session).toBe('old')
   })
-  it('/cli against an existing id with no transcript on disk launches the same id fresh, untouched settings', () => {
-    const out = fakeOut(); const h = fakeHandoff(); const changes: unknown[] = []
-    const calls: unknown[] = []
-    const c = new ChatController({
-      brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h,
-      onSettingsChange: s => changes.push(s),
-      transcriptExists: (workspace, id) => { calls.push([workspace, id]); return false },
-    })
-    c.prompt('/cli')
-    expect(h.starts[0]).toMatchObject({ sessionId: 'old', fresh: true })
-    expect(changes).toEqual([])
-    expect(calls).toEqual([['C:\\repo', 'old']])
-  })
-  it('/cli against an existing id whose transcript exists still resumes, as with no checker at all', () => {
-    const out = fakeOut(); const h = fakeHandoff()
-    const c = new ChatController({
-      brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h,
-      transcriptExists: () => true,
-    })
-    c.prompt('/cli')
-    expect(h.starts[0]).toMatchObject({ sessionId: 'old', fresh: false })
-  })
-  it('/cli while a turn runs is refused', async () => {
+  it('/cli works during a turn and every time', async () => {
     const out = fakeOut(); const h = fakeHandoff()
     let release!: () => void
     const brain: Brain = { async *respond() { yield { type: 'text', delta: 'x' }; await new Promise<void>(r => { release = r }); yield { type: 'done' } }, stop() {} }
     const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: settings(), handoff: h })
     c.prompt('one')
     await new Promise(r => setTimeout(r, 5))
-    c.prompt('/cli')
-    expect(out.systems.at(-1)).toBe('Finish or /stop the current rite first.')
-    expect(h.starts).toEqual([])
+    c.prompt('/cli'); c.prompt('/cli')
+    expect(h.opens).toHaveLength(2)
     release()
     await new Promise(r => setTimeout(r, 5))
   })
-  it('while in the terminal: prompts, /new, /cd, /clear are refused, body commands run, /cli is already, /stop ends it', () => {
-    const out = fakeOut(); const h = fakeHandoff(); const a = fakeActions(); const prompts: unknown[] = []
-    const brain: Brain = { async *respond(p) { prompts.push(p); yield { type: 'done' } }, stop() {} }
-    const c = new ChatController({ brain, actions: a, pack, out, fs: permissiveFs, settings: { ...settings(), sessionId: 'old' }, handoff: h })
+  it('a refusal and a spawn error post the error line', () => {
+    const out = fakeOut()
+    const h: HandoffPort = { open: (o) => { o.onError('boom'); return { ok: false, reason: 'no console' } } }
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), handoff: h })
     c.prompt('/cli')
-    c.prompt('hello there')
-    expect(out.systems.at(-1)).toBe(STAND_DOWN)
-    expect(prompts).toEqual([])
-    c.prompt('/new'); expect(out.systems.at(-1)).toBe('Not while he is in the terminal.')
-    c.prompt('/cd D:\\w'); expect(out.systems.at(-1)).toBe('Not while he is in the terminal.')
-    c.prompt('/clear'); expect(out.systems.at(-1)).toBe('Not while he is in the terminal.')
-    expect(c.status()).toMatchObject({ session: 'old', workspace: 'C:\\repo' })
-    expect(out.clears).toBe(0)
-    c.prompt('/mood happy'); expect(a.calls).toContain('mood happy')
-    c.prompt('/cli'); expect(out.systems.at(-1)).toBe('Already in the terminal.')
-    c.prompt('/stop')
-    expect(h.stopped).toBe(1)
-    const stopped = pack.persona.lines.stopped ?? []
-    expect(stopped.length ? stopped : ['stopped']).toContain(out.systems.at(-1))
-  })
-  it('the stand-down mentions dropped images when a prompt carries them', () => {
-    const out = fakeOut(); const h = fakeHandoff(); const prompts: unknown[] = []
-    const brain: Brain = { async *respond(p) { prompts.push(p); yield { type: 'done' } }, stop() {} }
-    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h })
-    c.prompt('/cli')
-    c.prompt('look', [shot])
-    expect(out.systems.at(-1)).toBe(`${STAND_DOWN} (1 image(s) dropped; paste again.)`)
-    expect(prompts).toEqual([])
-  })
-  it('the return posts the back line and a status; an exit error posts the error line', () => {
-    const out = fakeOut(); const h = fakeHandoff()
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h })
-    c.prompt('/cli')
-    const statuses = out.statuses.length
-    h.exit()
-    expect(out.systems.at(-1)).toBe('Back from the terminal.')
-    expect(out.statuses.length).toBe(statuses + 1)
-    c.prompt('/cli')
-    h.exit('spawn failed')
-    expect(out.systems.at(-1)).toContain('spawn failed')
+    expect(out.systems.some(s => s.includes('boom'))).toBe(true)
+    expect(out.systems.at(-1)).toContain('no console')
     expect(out.faces.at(-1)).toBe('sadness')
-  })
-  it('a start refusal posts the error line and leaves the panel usable', () => {
-    const out = fakeOut(); const prompts: unknown[] = []
-    const h: HandoffPort = { active: false, start: () => ({ ok: false, reason: 'no console' }), stop() {} }
-    const brain: Brain = { async *respond(p) { prompts.push(p); yield { type: 'done' } }, stop() {} }
-    const c = new ChatController({ brain, actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h })
-    c.prompt('/cli')
-    expect(out.systems.at(-1)).toContain('no console')
-    c.prompt('still here')
-    expect(out.systems.at(-1)).toContain('no console')
   })
   it('openCli is the same path the menu uses', () => {
     const out = fakeOut(); const h = fakeHandoff()
-    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: { ...settings(), sessionId: 'old' }, handoff: h })
+    const c = new ChatController({ brain: scriptedBrain([]), actions: fakeActions(), pack, out, settings: settings(), handoff: h })
     c.openCli()
-    expect(h.starts).toHaveLength(1)
-    expect(out.systems.at(-1)).toBe(STAND_DOWN)
+    expect(h.opens).toHaveLength(1)
   })
 })
 
